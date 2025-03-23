@@ -1,4 +1,4 @@
-import { saveChunk, cleanUp } from "../hooks/indexdb"
+// import { saveChunk, cleanUp } from "../hooks/indexdb"
 
 export default defineBackground(async () => {
   // console.log('Hello background!', { id: browser.runtime.id })

@@ -2,15 +2,12 @@ import { saveChunk, getChunkByKey, getAllChunks, cleanUpOldData } from "../../ho
 import { saveTemp, deleteTempByKeys, getAllTemps, cleanUpAllTemps } from "../../hooks/indexedDB/temps"
 import './style.css'
 
-const BUFFER_FLUSH_INTERVAL_MS = 10 * 60 * 1000 // 10 * 60 * 1000
-const CHUNK_UPLOAD_INTERVAL_MS = 1 * 10 * 1000 // 1 * 60 * 1000
-const MAX_STORAGE_SIZE = 1 * 1024 * 1024 * 1024 // GB
+const CHUNK_RESTART_INTERVAL_MS = 1 * 60 * 1000 // 1 * 60 * 1000
+const MAX_STORAGE_SIZE = 10 * 1024 * 1024 * 1024 // GB
 
 let video: HTMLVideoElement = {} as HTMLVideoElement
 let stream: MediaStream = {} as MediaStream
 let mediaRecorder: MediaRecorder = {} as MediaRecorder
-let screenShot: string = ""
-// let port = {} as chrome.runtime.Port
 
 export default defineContentScript({
   matches: ["*://live.nicovideo.jp/watch/*"],
@@ -30,6 +27,9 @@ async function handleUiMount() {
   // await cleanUp()
 
   insertRecordedMovieAria()
+
+  // 初回実行時にモーダルを作成
+  createModal()
 
   // 録画を開始
   startRec()
@@ -55,128 +55,108 @@ const startRec = () => {
   }
 }
 
-// indexedDBをすべてクリア
-// const cleanUp = async () => {
-//   await chrome.runtime.sendMessage({
-//     action: "cleanUp"
-//   })
-//   console.log("Cleanup completed!!!!!!")
-// }
-
 const startMediaRecorder = async () => {
 
   try {
-    mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm; codecs=vp9" })
+    const startNewRecorder = () => {
 
-    mediaRecorder.ondataavailable = async (event: BlobEvent) => {
-      // 録画データを保存
-      await saveTempToIndexedDB(event.data)
+      mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm; codecs=vp9" })
+
+      mediaRecorder.ondataavailable = async (event: BlobEvent) => {
+        // 録画データを保存
+        await saveTempToIndexedDB(event.data)
+      }
+
+      mediaRecorder.onstop = async () => {
+        console.log("🎥 録画停止、チャンクを結合して WebM を作成")
+        await mergeWebMChunks()
+      }
+
+      // 録画を開始
+      mediaRecorder.start(1000)
+      console.log("録画を開始しました")
     }
 
-    // 録画を開始
-    mediaRecorder.start(1000)
-    console.log("録画を開始しました")
+    // 前回のtempファイルを取得・削除し結合して保存
+    await mergeWebMChunks()
 
-    screenShot = await getScreenShot()
-
-    // ◯分ごとに MediaRecorder を再作成
-    setInterval(async () => {
-      await restartRecording()
-    }, BUFFER_FLUSH_INTERVAL_MS)
-
-    // ◯分ごとに実行
-    setInterval(async () => {
-      
-      // tempファイルを取得・削除し結合して保存
-      await mergeWebMChunks()
-
-      // スクリーンショットを取得（次の録画データ用）
-      screenShot = await getScreenShot()
-
-    }, CHUNK_UPLOAD_INTERVAL_MS)
-
-    // // ◯分ごとに最新の録画データを確保
-    // setInterval(() => {
-    //   if (mediaRecorder.state === "recording") {
-    //     mediaRecorder.requestData() // 🎯 最新の録画データを確保
-    //   }
-    // }, CHUNK_UPLOAD_INTERVAL_MS)
+    // 最初の録画を開始
+    startNewRecorder()
 
     // ミュート対策
     fixAudioTrack()
+
+    // ◯分ごとに新しい録画を開始
+    setInterval(() => {
+      if (mediaRecorder) {
+        const oldRecorder = mediaRecorder
+        startNewRecorder()
+
+        // 50ms 後に古い録画を停止
+        setTimeout(() => {
+          oldRecorder.stop()
+          // oldRecorder.ondataavailable = null
+          // oldRecorder.onstop = null
+        }, 50)
+      }
+    }, CHUNK_RESTART_INTERVAL_MS)
 
   } catch (error) {
     console.error("録画の開始に失敗しました:", error)
   }
 }
 
+const downloadBlob = (blob: Blob, fileName: string) => {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
 const mergeWebMChunks = async () => {
   const chunks_: Blob[] = []
   const keys: number[] = []
 
-  // 容量超過分を削除
-  const deletedKeys = await cleanUpOldData(MAX_STORAGE_SIZE)
-  for (const key of deletedKeys) {
-    // keyと同じIDを持つ要素を取得してDOMから削除する
-    const element = document.getElementById(key.toString())
-    if (element) element.remove()
-  }
-
-  // tempファイルを取得
-  const temps = await getAllTemps()
-  for (const temp of temps) {
-    chunks_.push(temp.temp)
-    keys.push(temp.timestamp)
-  }
-  await deleteTempByKeys(keys)
-
-  const webmBlob = new Blob(chunks_, { type: "video/webm" })
-
-  const screenShot_ = await extractFirstFrame(webmBlob) as string
-
-  console.log("screenShot: ", screenShot_)
-
-  await saveChunk(webmBlob, screenShot_)
-
-  const chunks = await getAllChunks()
-
-  const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
-  if (recordedMovieBox) {
-    recordedMovieBox.innerHTML = ""
-    for (const chunk of chunks) {
-      insertRecordedMovie(chunk)
+  try {
+    // 容量超過分を削除
+    const deletedKeys = await cleanUpOldData(MAX_STORAGE_SIZE)
+    for (const key of deletedKeys) {
+      // keyと同じIDを持つ要素を取得してDOMから削除する
+      const element = document.getElementById(key.toString())
+      if (element) element.remove()
     }
+
+    // tempファイルを取得
+    const temps = await getAllTemps()
+    for (const temp of temps) {
+      chunks_.push(temp.temp)
+      keys.push(temp.timestamp)
+    }
+    await deleteTempByKeys(keys)
+
+    const webmBlob = new Blob(chunks_, { type: "video/webm" })
+
+    const screenShot_ = await extractFirstFrame(webmBlob) as string
+    // console.log("screenShot: ", screenShot_)
+
+    // const screenShot_ = await getScreenShot()
+    await saveChunk(webmBlob, screenShot_)
+
+    // downloadBlob(webmBlob, 'recorded.webm')
+
+    const chunks = await getAllChunks()
+    const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
+    if (recordedMovieBox) {
+      recordedMovieBox.innerHTML = ""
+      for (const chunk of chunks) {
+        insertRecordedMovie(chunk)
+      }
+    }
+  } catch (error) {
+    console.error("録画データの結合に失敗しました:", error)
   }
-}
-
-const restartRecording = async () => {
-  // 新しい MediaStream を作成（元のストリームをクローン）
-  let newStream = stream.clone()
-  let newRecorder = new MediaRecorder(newStream, { mimeType: "video/webm; codecs=vp9" })
-
-  // 新しい MediaRecorder のデータ処理をセット
-  newRecorder.ondataavailable = async (event: BlobEvent) => {
-    // 録画データを保存
-    await saveTempToIndexedDB(event.data)
-  }
-
-  // 新しい MediaRecorder を開始
-  newRecorder.start(1000)
-
-  // 古い MediaRecorder を安全に停止
-  if (mediaRecorder.state !== "inactive") {
-    await new Promise((resolve) => {
-      mediaRecorder.onstop = resolve
-      mediaRecorder.stop()
-    })
-  }
-
-  // 新しい MediaRecorder に切り替え
-  mediaRecorder = newRecorder
-
-  // 古いストリームを解放（ただし、新しいストリームに影響しないか確認）
-  stream.getTracks().forEach(track => track.stop())
-  stream = newStream // クローンしたストリームを現在のストリームとしてセット
 }
 
 // 録画一時データを保存
@@ -219,14 +199,21 @@ const insertRecordedMovie = (chunk: { timestamp: number, chunk: Blob, imgUrl: st
 
   // 新しい要素を作成してスクリーンショットを挿入
   const newElement = document.createElement("div")
-  newElement.setAttribute("id", chunk.timestamp.toString())
   newElement.classList.add("recordedMovie")
-  newElement.innerHTML = `<img src="${chunk.imgUrl}" alt="Video Screenshot">`
+  newElement.innerHTML = `<img src="${chunk.imgUrl}" chunk-key="${chunk.timestamp}">`
 
   // recordedMovieBoxの中に挿入
   recordedMovieBox.appendChild(newElement)
   recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
+
+  // クリックイベントを追加
+  newElement.addEventListener('click', (e) => {
+    const key: number = Number((e.target as HTMLElement).getAttribute('chunk-key'))
+    if (!key) return
+    openModalWithVideo(key)
+  })
 }
+
 
 const extractFirstFrame = async (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -237,31 +224,49 @@ const extractFirstFrame = async (blob: Blob): Promise<string> => {
 
     const video = document.createElement('video')
     const objectURL = URL.createObjectURL(blob)
+
     video.src = objectURL
     video.muted = true
     video.autoplay = false
     video.playsInline = true
 
-    video.onloadedmetadata = () => {
-      video.currentTime = 0.001
+    // CORS制限がある場合に必要
+    video.crossOrigin = "anonymous"
+
+    const cleanUp = () => {
+      URL.revokeObjectURL(objectURL)
+      video.remove()
     }
 
-    video.onseeked = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
-      const ctx = canvas.getContext('2d')
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        resolve(canvas.toDataURL('image/png'))
-      } else {
-        reject(new Error('Canvas context is not available'))
-      }
-      URL.revokeObjectURL(objectURL) // 解放は最後に
+    video.onloadeddata = () => {
+      video.currentTime = 0 // 最初のフレームへ移動
+    }
+
+    video.oncanplay = () => {
+      // 再生してすぐ止めることで、確実にフレームを取得
+      video.play().then(() => {
+        setTimeout(() => {
+          video.pause()
+
+          const canvas = document.createElement('canvas')
+          canvas.width = video.videoWidth
+          canvas.height = video.videoHeight
+          const ctx = canvas.getContext('2d')
+
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+            resolve(canvas.toDataURL('image/png'))
+          } else {
+            reject(new Error('Canvas context is not available'))
+          }
+
+          cleanUp()
+        }, 100) // 100ms 待つことでフレーム描画を確実にする
+      }).catch(reject)
     }
 
     video.onerror = (e) => {
-      URL.revokeObjectURL(objectURL) // エラー時も解放
+      cleanUp()
       reject(new Error(`Video load error: ${JSON.stringify(e)}`))
     }
   })
@@ -333,9 +338,83 @@ const insertRecordedMovieAria = async () => {
   recordedMovieBox.setAttribute("class", "recordedMovieBox")
   recordedMovieAria.appendChild(recordedMovieBox)
   controlArea.after(recordedMovieAria)
+}
 
-  const chunks = await getAllChunks()
-  for (const chunk of chunks) {
-    insertRecordedMovie(chunk)
+
+
+
+// モーダルを作成する関数
+function createModal() {
+  if (document.getElementById('video-modal')) return // すでに作成済みならスキップ
+
+  const modal = document.createElement('div')
+  modal.id = 'video-modal'
+  modal.innerHTML = `
+        <div class="modal-content">
+            <span id="close-modal" class="close">&times;</span>
+            <video id="video-player" controls autoplay></video>
+        </div>
+    `
+  document.body.appendChild(modal)
+
+  // 閉じるボタンの処理
+  document.getElementById('close-modal')?.addEventListener('click', () => {
+    modal.style.display = 'none'
+    const video = document.getElementById('video-player') as HTMLVideoElement
+    video.pause()
+    video.src = '' // メモリ解放
+  })
+}
+
+// 動画を取得してモーダルを開く
+async function openModalWithVideo(key: number) {
+  try {
+    const chunk = await getChunkByKey(key)
+    if (!chunk) throw new Error('動画データが見つかりません')
+
+    const url = URL.createObjectURL(chunk.chunk)
+
+    const video = document.getElementById('video-player') as HTMLVideoElement
+    video.src = url
+
+    const modal = document.getElementById('video-modal') as HTMLElement
+    modal.style.display = 'block'
+  } catch (error) {
+    console.error('動画のロードに失敗しました:', error)
   }
 }
+
+
+
+
+
+
+// const restartRecording = async () => {
+//   // 新しい MediaStream を作成（元のストリームをクローン）
+//   let newStream = stream.clone()
+//   let newRecorder = new MediaRecorder(newStream, { mimeType: "video/webm; codecs=vp9" })
+
+//   // 新しい MediaRecorder のデータ処理をセット
+//   newRecorder.ondataavailable = async (event: BlobEvent) => {
+//     // 録画データを保存
+//     await saveTempToIndexedDB(event.data)
+//   }
+
+//   // 新しい MediaRecorder を開始
+//   newRecorder.start(1000)
+
+//   // 古い MediaRecorder を安全に停止
+//   if (mediaRecorder.state !== "inactive") {
+//     await new Promise((resolve) => {
+//       mediaRecorder.onstop = resolve
+//       mediaRecorder.stop()
+//     })
+//   }
+
+//   // 新しい MediaRecorder に切り替え
+//   mediaRecorder = newRecorder
+
+//   // 古いストリームを解放（ただし、新しいストリームに影響しないか確認）
+//   stream.getTracks().forEach(track => track.stop())
+//   stream = newStream // クローンしたストリームを現在のストリームとしてセット
+// }

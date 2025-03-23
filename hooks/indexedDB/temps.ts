@@ -94,13 +94,13 @@ const deleteTempByKeys = async (keys: IDBValidKey[]): Promise<void> => {
 }
 
 
-const getAllTemps = async (): Promise<Array<{ timestamp: number; temp: Blob, imgUrl: string }>> => {
+const getAllTemps = async (): Promise<Array<{ timestamp: number; temp: Blob }>> => {
     const db = await openDB()
     const tx = db.transaction(STORE_NAME, "readonly")
     const store = tx.objectStore(STORE_NAME)
 
     return new Promise((resolve, reject) => {
-        const temps: Array<{ timestamp: number; temp: Blob, imgUrl: string }> = []
+        const temps: Array<{ timestamp: number; temp: Blob }> = []
         const request = store.openCursor()
 
         request.onsuccess = (event) => {
