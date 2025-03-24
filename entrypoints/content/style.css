@@ -1,13 +1,21 @@
 #recordedMovieAria {
     position: relative;
-    /* width: 100%; */
+    width: 100%;
     height: 85px;
 }
-.recordedMovieBox {
+
+.recordedMovieWrapper {
     position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 85px;
+    display: flex;
+}
+.recordedMovieBox {
+    width: 100%;
     padding: 5px;
     padding-right: 10px;
-    width: 100%;
     /* display: flex; */
     /* justify-content: flex-end; */
     /* gap: 10px; */
@@ -65,4 +73,54 @@
 #video-modal video {
     width: 100%;
     max-height: 300px;
+}
+
+
+
+.control-panel {
+  height: 60px;
+}
+.control-buttons {
+  display: flex;
+  gap: 10px;
+  padding: 10px;
+}
+
+#recordedMovieAria button {
+  padding: 2px 7px;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: x-small;
+}
+
+#recordedMovieAria button:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#startButton {
+  background: red;
+  color: white;
+}
+
+#stopButton {
+  background: cornflowerblue;
+  color: white;
+}
+
+#stopButton:disabled {
+  background: gray;
+  cursor: not-allowed;
+}
+
+#recordStatus {
+  font-size: small;
+  text-align: center;
+  color: #ccc;
+}
+
+.recording {
+  color: red !important;
 }

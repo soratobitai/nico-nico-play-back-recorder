@@ -8,6 +8,10 @@ let video: HTMLVideoElement = {} as HTMLVideoElement
 let stream: MediaStream = {} as MediaStream
 let mediaRecorder: MediaRecorder = {} as MediaRecorder
 
+let startButton = null as HTMLButtonElement | null
+let stopButton = null as HTMLButtonElement | null
+let recordStatus = null as HTMLDivElement | null
+
 export default defineContentScript({
   matches: ["*://live.nicovideo.jp/watch/*"],
   main(ctx) {
@@ -76,6 +80,10 @@ const startMediaRecorder = async () => {
       // 録画を開始
       mediaRecorder.start(1000)
       console.log("録画を開始しました")
+      if (startButton) startButton.disabled = true
+      if (stopButton) stopButton.disabled = false
+      if (recordStatus) recordStatus.textContent = "録画中"
+      if (recordStatus) recordStatus.classList.add("recording")
     }
 
     // 前回のtempファイルを取得・削除し結合して保存
@@ -92,7 +100,7 @@ const startMediaRecorder = async () => {
 
     // ◯分ごとに新しい録画を開始
     setInterval(() => {
-      if (mediaRecorder) {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
         const oldRecorder = mediaRecorder
         startNewRecorder()
 
@@ -348,12 +356,50 @@ const fixAudioTrack = () => {
 const insertRecordedMovieAria = async () => {
   const controlArea = document.querySelector('[class*="_player-controller_"]')
   if (!controlArea) return
-  const recordedMovieAria = document.createElement("div")
-  const recordedMovieBox = document.createElement("div")
-  recordedMovieAria.setAttribute("id", "recordedMovieAria")
-  recordedMovieBox.setAttribute("class", "recordedMovieBox")
-  recordedMovieAria.appendChild(recordedMovieBox)
-  controlArea.after(recordedMovieAria)
+
+  const recordedMovieHTML = `
+  <div id="recordedMovieAria">
+    <div class="recordedMovieWrapper">
+      <div class="recordedMovieBox"></div>
+      <div class="control-panel">
+        <div class="control-buttons">
+          <button type="button" id="startButton" disabled>●Rec</button>
+          <button type="button" id="stopButton">STOP</button>
+        </div>
+        <div id="recordStatus"></div>
+      </div>
+    </div>
+  </div>
+`
+  controlArea.insertAdjacentHTML("beforeend", recordedMovieHTML)
+
+  startButton = document.getElementById("startButton") as HTMLButtonElement
+  stopButton = document.getElementById("stopButton") as HTMLButtonElement
+  recordStatus = document.getElementById("recordStatus") as HTMLDivElement
+
+  startButton.addEventListener("click", async () => {
+    if (mediaRecorder && mediaRecorder.state === "inactive") {
+      mediaRecorder.start(1000)
+      if (startButton) startButton.disabled = true
+      if (stopButton) stopButton.disabled = false
+      if (recordStatus) recordStatus.textContent = "録画中"
+      if (recordStatus) recordStatus.classList.add("recording")
+    }
+  })
+
+  stopButton.addEventListener("click", () => {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+      mediaRecorder.stop()
+      if (stopButton) stopButton.disabled = true
+      if (startButton) startButton.disabled = false
+      if (recordStatus) recordStatus.textContent = "停止中"
+      if (recordStatus) recordStatus.classList.remove("recording")
+    }
+  })
+
+  setInterval(() => {
+    console.log("startButton.disabled:", startButton?.disabled)
+  }, 1000)
 }
 
 // モーダルを作成する関数
