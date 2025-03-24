@@ -223,10 +223,10 @@ const insertRecordedMovie = (key: number, imgUrl: string | null, insertPosition:
   recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
 
   // クリックイベントを追加
-  newElement.addEventListener('click', (e) => {
-    const key: number = Number((e.target as HTMLElement).getAttribute('chunk-key'))
+  newElement.addEventListener('click', (event) => {
+    const key: number = Number((event.target as HTMLElement).getAttribute('chunk-key'))
     if (!key) return
-    openModalWithVideo(key)
+    openModalWithVideo(key, event)
   })
 }
 
@@ -356,12 +356,11 @@ const insertRecordedMovieAria = async () => {
   controlArea.after(recordedMovieAria)
 }
 
-
-
-
 // モーダルを作成する関数
 function createModal() {
   if (document.getElementById('video-modal')) return // すでに作成済みならスキップ
+
+  const root = document.getElementById('root')
 
   const modal = document.createElement('div')
   modal.id = 'video-modal'
@@ -371,19 +370,28 @@ function createModal() {
             <video id="video-player" controls autoplay></video>
         </div>
     `
+  modal.style.width = `${root?.offsetWidth}px`
+  modal.style.height = `${root?.offsetHeight}px`
   document.body.appendChild(modal)
 
-  // 閉じるボタンの処理
-  document.getElementById('close-modal')?.addEventListener('click', () => {
+    // 閉じるボタンの処理
+  const closeButton = document.getElementById('close-modal')
+  closeButton?.addEventListener('click', () => {
     modal.style.display = 'none'
     const video = document.getElementById('video-player') as HTMLVideoElement
     video.pause()
     video.src = '' // メモリ解放
   })
+
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) {
+      closeButton?.click()
+    }
+  })
 }
 
 // 動画を取得してモーダルを開く
-async function openModalWithVideo(key: number) {
+async function openModalWithVideo(key: number, event: MouseEvent) {
   try {
     const chunk = await getChunkByKey('Chunks', key)
     if (!chunk) throw new Error('動画データが見つかりません')
@@ -394,7 +402,28 @@ async function openModalWithVideo(key: number) {
     video.src = url
 
     const modal = document.getElementById('video-modal') as HTMLElement
+    const modalContent = modal.querySelector('.modal-content') as HTMLElement
     modal.style.display = 'block'
+    modalContent.style.width = '300px'
+    modalContent.style.height = '250px'
+
+    // クリック位置を考慮してモーダルの位置を設定
+    const { clientX, clientY } = event
+    const modalWidth = modalContent.offsetWidth
+    const modalHeight = modalContent.offsetHeight
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+
+    let posX = clientX - (modalWidth / 2)
+    let posY = clientY - modalHeight
+
+    // はみ出さないように調整
+    if (posX + modalWidth > viewportWidth) posX = viewportWidth - modalWidth - 10
+    if (posY + modalHeight > viewportHeight) posY = viewportHeight - modalHeight - 10
+
+    modalContent.style.position = 'absolute'
+    modalContent.style.left = `${posX}px`
+    modalContent.style.top = `${posY}px`
   } catch (error) {
     console.error('動画のロードに失敗しました:', error)
   }
