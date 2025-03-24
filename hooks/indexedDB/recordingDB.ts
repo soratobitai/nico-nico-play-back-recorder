@@ -1,5 +1,5 @@
 const DB_NAME = "RecordingDB"
-const DB_VERSION = 2
+const DB_VERSION = 1
 const STORE_NAMES = ["Chunks", "Temps"]
 
 const openDB = (): Promise<IDBDatabase> => {
