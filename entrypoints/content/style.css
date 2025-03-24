@@ -1,19 +1,23 @@
 #recordedMovieAria {
     position: relative;
     /* width: 100%; */
-    height: 80px;
+    height: 85px;
 }
 .recordedMovieBox {
     position: absolute;
     padding: 5px;
     padding-right: 10px;
     width: 100%;
-    display: flex;
-    gap: 10px;
+    /* display: flex; */
+    /* justify-content: flex-end; */
+    /* gap: 10px; */
     overflow-x: scroll;
     box-sizing: border-box;
+    text-align: right;
+    white-space: nowrap;
 }
 .recordedMovie {
+    margin-left: 10px;
     width: 90px;
     min-width: 90px;
     height: 50px;
@@ -21,6 +25,7 @@
     /* aspect-ratio: 16 / 9; */
     overflow: hidden;
     border-radius: 5px;
+    display: inline-block;
 }
 .recordedMovie img {
     width: 100%;

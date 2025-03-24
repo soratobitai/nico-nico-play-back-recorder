@@ -1,25 +1,27 @@
 const DB_NAME = "RecordingDB"
 const DB_VERSION = 2
-const STORE_NAME = "Chunks"
+const STORE_NAMES = ["Chunks", "Temps"]
 
 const openDB = (): Promise<IDBDatabase> => {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION)
         request.onupgradeneeded = (event) => {
-            const db = (event.target as IDBRequest).result as IDBDatabase
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME, { keyPath: "timestamp" })
-            }
-        }
+            const db = (event.target as IDBOpenDBRequest).result;
+            STORE_NAMES.forEach((storeName) => {
+                if (!db.objectStoreNames.contains(storeName)) {
+                    db.createObjectStore(storeName, { keyPath: "timestamp" });
+                }
+            });
+        };
         request.onsuccess = () => resolve(request.result)
         request.onerror = () => reject(request.error)
     })
 }
 
-const saveChunk = async (blob: Blob, imgUrl: string): Promise<IDBValidKey> => {
+const saveChunk = async (storeName: string, blob: Blob, imgUrl: string | null): Promise<IDBValidKey> => {
     const db = await openDB()
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const store = tx.objectStore(STORE_NAME)
+    const tx = db.transaction(storeName, "readwrite")
+    const store = tx.objectStore(storeName)
 
     return new Promise((resolve, reject) => {
         const request = store.put({
@@ -45,10 +47,10 @@ const saveChunk = async (blob: Blob, imgUrl: string): Promise<IDBValidKey> => {
     })
 }
 
-const getChunkByKey = async (key: IDBValidKey): Promise<{ timestamp: number, chunk: Blob, imgUrl: string } | undefined> => {
+const getChunkByKey = async (storeName: string, key: IDBValidKey): Promise<{ timestamp: number, chunk: Blob, imgUrl: string | null } | undefined> => {
     const db = await openDB()
-    const tx = db.transaction(STORE_NAME, "readonly")
-    const store = tx.objectStore(STORE_NAME)
+    const tx = db.transaction(storeName, "readonly")
+    const store = tx.objectStore(storeName)
 
     return new Promise((resolve, reject) => {
         const request = store.get(key)
@@ -71,10 +73,10 @@ const getChunkByKey = async (key: IDBValidKey): Promise<{ timestamp: number, chu
 }
 
 
-const getAllChunks = async (): Promise<Array<{ timestamp: number; chunk: Blob, imgUrl: string }>> => {
+const getAllChunks = async (storeName: string): Promise<Array<{ timestamp: number; chunk: Blob, imgUrl: string | null }>> => {
     const db = await openDB()
-    const tx = db.transaction(STORE_NAME, "readonly")
-    const store = tx.objectStore(STORE_NAME)
+    const tx = db.transaction(storeName, "readonly")
+    const store = tx.objectStore(storeName)
 
     return new Promise((resolve, reject) => {
         const chunks: Array<{ timestamp: number; chunk: Blob, imgUrl: string }> = []
@@ -96,7 +98,38 @@ const getAllChunks = async (): Promise<Array<{ timestamp: number; chunk: Blob, i
     })
 }
 
-const cleanUpOldData = async (maxStorageSize: number): Promise<IDBValidKey[]> => {
+const deleteChunkByKeys = async (storeName: string, keys: IDBValidKey[]): Promise<void> => {
+    const db = await openDB()
+    const tx = db.transaction(storeName, "readwrite")
+    const store = tx.objectStore(storeName)
+
+    return new Promise((resolve, reject) => {
+        let remaining = keys.length
+
+        if (remaining === 0) {
+            resolve()
+            return
+        }
+
+        keys.forEach(key => {
+            const request = store.delete(key)
+
+            request.onsuccess = () => {
+                remaining--
+                if (remaining === 0) {
+                    resolve()
+                }
+            }
+
+            request.onerror = () => {
+                console.error("Failed to delete temp for key:", key, request.error)
+                reject(request.error)
+            }
+        })
+    })
+}
+
+const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Promise<IDBValidKey[]> => {
     try {
         const { usage } = await navigator.storage.estimate()
         const deletedKeys: IDBValidKey[] = [] // 削除したキーを格納する配列
@@ -105,8 +138,8 @@ const cleanUpOldData = async (maxStorageSize: number): Promise<IDBValidKey[]> =>
             // console.warn(`ストレージ超過: ${usage} バイト使用中（上限: ${maxStorageSize} バイト）`)
 
             const db = await openDB()
-            const tx = db.transaction(STORE_NAME, "readwrite")
-            const store = tx.objectStore(STORE_NAME)
+            const tx = db.transaction(storeName, "readwrite")
+            const store = tx.objectStore(storeName)
 
             return new Promise<IDBValidKey[]>((resolve, reject) => { // 型を明示
                 let totalSize = usage
@@ -147,11 +180,11 @@ const cleanUpOldData = async (maxStorageSize: number): Promise<IDBValidKey[]> =>
     }
 }
 
-const cleanUp = async (): Promise<void> => {
+const cleanUpAllChunks = async (storeName: string): Promise<void> => {
     const db = await openDB()
-    const chunks = await getAllChunks()
-    const tx = db.transaction(STORE_NAME, "readwrite")
-    const store = tx.objectStore(STORE_NAME)
+    const chunks = await getAllChunks(storeName)
+    const tx = db.transaction(storeName, "readwrite")
+    const store = tx.objectStore(storeName)
 
     for (const item of chunks) {
         const deleteRequest = store.delete(item.timestamp)
@@ -166,4 +199,4 @@ const cleanUp = async (): Promise<void> => {
     }
 }
 
-export { saveChunk, getChunkByKey, getAllChunks, cleanUpOldData, cleanUp }
+export { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks }
