@@ -15,7 +15,8 @@ export default defineConfig({
     "web_accessible_resources": [
       {
         "resources": [
-          "assets/lib/*"
+          "assets/lib/*",
+          "assets/images/*"
         ],
         "matches": [
           "<all_urls>"

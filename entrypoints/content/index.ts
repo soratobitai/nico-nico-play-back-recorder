@@ -1,4 +1,4 @@
-import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks } from "../../hooks/indexedDB/recordingDB"
+import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB } from "../../hooks/indexedDB/recordingDB"
 import './style.css'
 
 const CHUNK_RESTART_INTERVAL_MS = 1 * 60 * 1000 // 1 * 60 * 1000
@@ -18,6 +18,8 @@ export default defineContentScript({
 
 async function handleUiMount() {
 
+  const sessionId = crypto.randomUUID()  // タブごとの識別子
+
   let video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
   let stream: MediaStream = {} as MediaStream
   let mediaRecorder: MediaRecorder = {} as MediaRecorder
@@ -26,10 +28,9 @@ async function handleUiMount() {
   let stopButton = null as HTMLButtonElement | null
   let recordStatus = null as HTMLDivElement | null
   // let isRecordOn = true
+  let chunkIndex = 0
 
-  const getVideo = () => video
-  const getStream = () => stream
-  const getMediaRecorder = () => mediaRecorder
+  const defaultScreenshot = chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
 
   const startRec = () => {
     if (!video) return
@@ -52,7 +53,7 @@ async function handleUiMount() {
 
   const startMediaRecorder = async () => {
     try {
-      await mergeWebMChunks() // 前回のtempファイルを取得・削除し結合して保存
+      await mergeStaleChunks() // 前回のtempファイルを取得・削除し結合して保存
       startNewRecorder() // 最初の録画を開始
       fixAudioTrack() // ミュート対策
     } catch (error) {
@@ -74,8 +75,7 @@ async function handleUiMount() {
 
       setTimeout(async () => {
         // チャンクを結合して保存
-        const { timestamp, screenShot_ } = await mergeWebMChunks() as { timestamp: number, screenShot_: string }
-        insertRecordedMovie(timestamp, screenShot_, 'end')
+        await mergeWebMChunksBySession()
       }, 500) // 0.5秒待ってから実行
     }
 
@@ -114,8 +114,7 @@ async function handleUiMount() {
 
             setTimeout(async () => {
               // チャンクを結合して保存
-              const { timestamp, screenShot_ } = await mergeWebMChunks() as { timestamp: number, screenShot_: string }
-              insertRecordedMovie(timestamp, screenShot_, 'end')
+              await mergeWebMChunksBySession()
             }, 500) // 0.5秒待ってから実行
           }
         }
@@ -151,33 +150,138 @@ async function handleUiMount() {
     document.body.removeChild(a)
   }
 
-  const mergeWebMChunks = async () => {
-    const chunks_: Blob[] = []
-    const keys: number[] = []
-
+  const mergeWebMChunksBySession = async () => {
     try {
-      // tempファイルを取得し削除
-      const temps = await getAllChunks('Temps')
+      // 特定の sessionId のデータのみ取得
+      const temps = (await getAllChunks('Temps')).filter(temp => temp.sessionId === sessionId)
       if (temps.length === 0) return
-      for (const temp of temps) {
-        chunks_.push(temp.chunk)
-        keys.push(temp.timestamp)
-      }
+
+      // 削除するキーを準備
+      const keys = temps.map(temp => [temp.sessionId, temp.chunkIndex])
       await deleteChunkByKeys('Temps', keys)
 
-      // 結合して保存
-      const webmBlob = new Blob(chunks_, { type: "video/webm" })
+      // チャンクを結合
+      const webmBlob = new Blob(temps.map(temp => temp.blob), { type: "video/webm" })
       const screenShot_ = await extractFirstFrame(webmBlob) as string
-      const key = await saveChunk('Chunks', webmBlob, screenShot_) as number
-      const timestamp = key
 
-      console.log("チャンクを結合して保存しました")
+      // `Chunks` に保存
+      const key = await saveChunk('Chunks', sessionId, Date.now(), webmBlob, screenShot_)
+      console.log(`sessionId: ${sessionId} のチャンクを結合して保存しました`)
 
-      return { timestamp, screenShot_ }
+      // UIに挿入
+      insertRecordedMovie(key, screenShot_, 'end')
     } catch (error) {
-      console.error("録画データの結合に失敗しました:", error)
+      console.error(`sessionId: ${sessionId} の録画データの結合に失敗しました:`, error)
     }
   }
+
+  const mergeStaleChunks = async () => {
+    try {
+      const now = Date.now()
+      const threshold = now - 5000 // 5 秒前
+
+      // すべてのデータを取得して sessionId ごとにグループ化
+      const temps = await getAllChunks('Temps')
+      const groupedChunks: Record<string, { blobs: Blob[], keys: IDBValidKey[][], latestCreatedAt: number }> = {}
+
+      for (const temp of temps) {
+        if (!groupedChunks[temp.sessionId]) {
+          groupedChunks[temp.sessionId] = { blobs: [], keys: [], latestCreatedAt: 0 }
+        }
+        groupedChunks[temp.sessionId].blobs.push(temp.blob)
+        groupedChunks[temp.sessionId].keys.push([temp.sessionId, temp.chunkIndex])
+        groupedChunks[temp.sessionId].latestCreatedAt = Math.max(groupedChunks[temp.sessionId].latestCreatedAt, temp.createdAt)
+      }
+
+      // `createdAt` が 5 秒以上前のグループのみ処理
+      for (const sessionId in groupedChunks) {
+        if (groupedChunks[sessionId].latestCreatedAt < threshold) {
+          const { blobs, keys } = groupedChunks[sessionId]
+
+          // 削除
+          await deleteChunkByKeys('Temps', keys)
+
+          // チャンクを結合
+          const webmBlob = new Blob(blobs, { type: "video/webm" })
+          const screenShot_ = await extractFirstFrame(webmBlob) as string
+
+          // `Chunks` に保存
+          const key = await saveChunk('Chunks', sessionId, Date.now(), webmBlob, screenShot_)
+          console.log(`不良チャンク: ${sessionId} のチャンクを結合して保存しました`)
+
+          // UIに挿入
+          insertRecordedMovie(key, screenShot_, 'end')
+        }
+      }
+    } catch (error) {
+      console.error("不良チャンクの結合に失敗しました:", error)
+    }
+  }
+
+
+  // const mergeWebMChunks = async () => {
+  //   try {
+  //     // tempファイルを取得
+  //     const temps = await getAllChunks('Temps')
+  //     if (temps.length === 0) return
+
+  //     // sessionId ごとにチャンクをグループ化
+  //     const groupedChunks: Record<string, { blobs: Blob[], keys: IDBValidKey[][] }> = {}
+
+  //     for (const temp of temps) {
+  //       if (!groupedChunks[temp.sessionId]) {
+  //         groupedChunks[temp.sessionId] = { blobs: [], keys: [] }
+  //       }
+  //       groupedChunks[temp.sessionId].blobs.push(temp.blob)
+  //       groupedChunks[temp.sessionId].keys.push([temp.sessionId, temp.chunkIndex])
+  //     }
+
+  //     // sessionId ごとに処理
+  //     for (const sessionId in groupedChunks) {
+  //       const { blobs, keys } = groupedChunks[sessionId]
+
+  //       // チャンクを削除
+  //       await deleteChunkByKeys('Temps', keys)
+
+  //       // チャンクを結合
+  //       const webmBlob = new Blob(blobs, { type: "video/webm" })
+  //       const screenShot_ = await extractFirstFrame(webmBlob) as string
+
+  //       // Chunks に保存
+  //       const key = await saveChunk('Chunks', sessionId, Date.now(), webmBlob, screenShot_)
+  //       console.log(`sessionId: ${sessionId} のチャンクを結合して保存しました`)
+  //     }
+  //   } catch (error) {
+  //     console.error("録画データの結合に失敗しました:", error)
+  //   }
+  // }
+
+  // const mergeWebMChunks = async () => {
+  //   const chunks_: Blob[] = []
+  //   const keys: IDBValidKey[][] = []
+
+  //   try {
+  //     // tempファイルを取得し削除
+  //     const temps = await getAllChunks('Temps')
+  //     if (temps.length === 0) return
+  //     for (const temp of temps) {
+  //       chunks_.push(temp.blob)
+  //       keys.push([temp.sessionId, temp.chunkIndex])
+  //     }
+  //     await deleteChunkByKeys('Temps', keys)
+
+  //     // 結合して保存
+  //     const webmBlob = new Blob(chunks_, { type: "video/webm" })
+  //     const screenShot_ = await extractFirstFrame(webmBlob) as string
+  //     const key = await saveChunk('Chunks', sessionId, chunkIndex++, webmBlob, screenShot_)
+
+  //     console.log("チャンクを結合して保存しました")
+
+  //     return { key, screenShot_ }
+  //   } catch (error) {
+  //     console.error("録画データの結合に失敗しました:", error)
+  //   }
+  // }
 
   const reloadRecordedMovieList = async () => {
     const chunks = await getAllChunks('Chunks')
@@ -187,8 +291,8 @@ async function handleUiMount() {
     recordedMovieBox.innerHTML = ""
 
     for (const chunk of chunks.reverse()) {
-      insertRecordedMovie(chunk.timestamp, chunk.imgUrl)
-      await new Promise(resolve => setTimeout(resolve, 100)) // ライブ画面のフリーズを回避するためにインターバルを入れる
+      insertRecordedMovie([chunk.sessionId, chunk.chunkIndex], chunk.imgUrl)
+      await new Promise(resolve => setTimeout(resolve, 10)) // ライブ画面のフリーズを回避するためにインターバルを入れる
     }
   }
 
@@ -209,11 +313,18 @@ async function handleUiMount() {
 
     if (data.size <= 0) return
 
-    await saveChunk('Temps', data, null)
+    await saveChunk('Temps', sessionId, chunkIndex++, data, null)
   }
 
 
-  const insertRecordedMovie = (key: number, imgUrl: string | null, insertPosition: string = 'start') => {
+  const insertRecordedMovie = (key: IDBValidKey, imgUrl: string | null, insertPosition: string = 'start') => {
+
+    let sessionId_ = "" as IDBValidKey
+    let chunkIndex_ = 0 as IDBValidKey
+    if (Array.isArray(key)) {
+      sessionId_ = key[0]
+      chunkIndex_ = key[1]
+    }
 
     const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
     if (!recordedMovieBox) return
@@ -221,12 +332,14 @@ async function handleUiMount() {
     // 新しい要素を作成してスクリーンショットを挿入
     const recordedMovie = document.createElement("div")
     recordedMovie.classList.add("recordedMovie")
-    recordedMovie.innerHTML = `<img src="${imgUrl}" id="${key}">`
-    // recordedMovie.innerHTML = `<img src="${chrome.runtime.getURL('assets/lib/image.jpg')}" id="${key}">`
+    recordedMovie.innerHTML = `<img src="${imgUrl}" sessionId="${sessionId_}" chunkIndex="${chunkIndex_}" />`
 
     // クリックイベントを追加
     recordedMovie.addEventListener('click', (event) => {
-      const key: number = Number((event.target as HTMLImageElement).id)
+      const key = [
+        (event.target as HTMLElement).getAttribute('sessionId') as IDBValidKey,
+        Number((event.target as HTMLElement).getAttribute('chunkIndex')) as IDBValidKey
+      ]
       if (!key) return
       openModalWithVideo(key, event)
     })
@@ -258,7 +371,7 @@ async function handleUiMount() {
         </div>
       </div>
     `
-    controlArea.insertAdjacentHTML("beforeend", recordedMovieHTML)
+    controlArea.insertAdjacentHTML("afterend", recordedMovieHTML)
 
     startButton = document.getElementById("startButton") as HTMLButtonElement
     stopButton = document.getElementById("stopButton") as HTMLButtonElement
@@ -312,12 +425,12 @@ async function handleUiMount() {
   }
 
   // 動画を取得してモーダルを開く
-  async function openModalWithVideo(key: number, event: MouseEvent) {
+  async function openModalWithVideo(key: IDBValidKey, event: MouseEvent) {
     try {
       const chunk = await getChunkByKey('Chunks', key)
       if (!chunk) throw new Error('動画データが見つかりません')
 
-      const url = URL.createObjectURL(chunk.chunk)
+      const url = URL.createObjectURL(chunk.blob)
 
       const video = document.getElementById('video-player') as HTMLVideoElement
       video.src = url
@@ -350,63 +463,118 @@ async function handleUiMount() {
     }
   }
 
+  // 動画の最初のフレームを取得する関数
   const extractFirstFrame = async (blob: Blob) => {
     if (!blob.type.startsWith('video/')) {
-      throw new Error(`Invalid blob type: ${blob.type}`)
+      console.warn(`Invalid blob type: ${blob.type}, returning default image`)
+      return defaultScreenshot
     }
 
     const video = document.createElement('video')
     const objectURL = URL.createObjectURL(blob)
     video.src = objectURL
     video.muted = true
-    video.autoplay = false
     video.playsInline = true
     video.crossOrigin = "anonymous"
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const cleanUp = () => {
         URL.revokeObjectURL(objectURL)
         video.remove()
       }
 
       video.onloadeddata = () => {
-        video.currentTime = 0 // 最初のフレームを確実に設定
+        video.currentTime = 0
       }
 
-      video.oncanplay = async () => {
+      video.onseeked = () => {
         try {
-          await video.play()
-          setTimeout(() => {
-            video.pause()
+          const canvas = document.createElement('canvas')
+          const aspectRatio = video.videoHeight / video.videoWidth
+          canvas.width = 100
+          canvas.height = Math.round(100 * aspectRatio)
 
-            requestAnimationFrame(() => {
-              const canvas = document.createElement('canvas')
-              const aspectRatio = video.videoHeight / video.videoWidth
-              canvas.width = 100 // 幅を100pxに固定
-              canvas.height = Math.round(100 * aspectRatio) // 高さをアスペクト比に応じて調整
-
-              const ctx = canvas.getContext('2d', { willReadFrequently: true })
-              if (ctx) {
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-                resolve(canvas.toDataURL('image/jpeg', 0.7)) // JPEGで軽量化し、品質70%に設定
-              } else {
-                reject(new Error('Canvas context is not available'))
-              }
-
-              cleanUp()
-            })
-          }, 100) // 100ms 待機して確実にフレームがセットされるようにする
+          const ctx = canvas.getContext('2d', { willReadFrequently: true })
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+            resolve(canvas.toDataURL('image/jpeg', 0.7)) // 成功時はJPEGデータを返す
+          } else {
+            console.warn('Canvas context is not available, returning default image')
+            resolve(defaultScreenshot) // エラー時はデフォルト画像を返す
+          }
         } catch (err) {
-          reject(err)
+          console.error('Error capturing first frame:', err)
+          resolve(defaultScreenshot) // エラー時はデフォルト画像を返す
+        } finally {
+          cleanUp()
         }
       }
 
       video.onerror = (e) => {
+        console.error('Video load error:', e)
         cleanUp()
-        reject(new Error(`Video load error: ${JSON.stringify(e)}`))
+        resolve(defaultScreenshot) // エラー時はデフォルト画像を返す
       }
     })
   }
+
+  // const extractFirstFrame = async (blob: Blob) => {
+  //   if (!blob.type.startsWith('video/')) {
+  //     throw new Error(`Invalid blob type: ${blob.type}`)
+  //   }
+
+  //   const video = document.createElement('video')
+  //   const objectURL = URL.createObjectURL(blob)
+  //   video.src = objectURL
+  //   video.muted = true
+  //   video.autoplay = false
+  //   video.playsInline = true
+  //   video.crossOrigin = "anonymous"
+
+  //   return new Promise((resolve, reject) => {
+  //     const cleanUp = () => {
+  //       URL.revokeObjectURL(objectURL)
+  //       video.remove()
+  //     }
+
+  //     video.onloadeddata = () => {
+  //       video.currentTime = 0 // 最初のフレームを確実に設定
+  //     }
+
+  //     video.oncanplay = async () => {
+  //       try {
+  //         await video.play()
+  //         setTimeout(() => {
+  //           video.pause()
+
+  //           requestAnimationFrame(() => {
+  //             const canvas = document.createElement('canvas')
+  //             const aspectRatio = video.videoHeight / video.videoWidth
+  //             canvas.width = 100 // 幅を100pxに固定
+  //             canvas.height = Math.round(100 * aspectRatio) // 高さをアスペクト比に応じて調整
+
+  //             const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  //             if (ctx) {
+  //               ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+  //               resolve(canvas.toDataURL('image/jpeg', 0.7)) // JPEGで軽量化し、品質70%に設定
+  //             } else {
+  //               reject(new Error('Canvas context is not available'))
+  //             }
+
+  //             cleanUp()
+  //           })
+  //         }, 100) // 100ms 待機して確実にフレームがセットされるようにする
+  //       } catch (err) {
+  //         reject(err)
+  //       }
+  //     }
+
+  //     video.onerror = (e) => {
+  //       cleanUp()
+  //       reject(new Error(`Video load error: ${JSON.stringify(e)}`))
+  //     }
+  //   })
+  // }
 
 
 
@@ -563,6 +731,11 @@ async function handleUiMount() {
   /////////////////////////////////////////////////////////////////////
   
   // indexedDBをすべてクリア
+  // deleteDB('RecordingDB').then(() => {
+  //   console.log('Database deleted successfully.')
+  // }).catch(error => {
+  //   console.error('Error deleting database:', error)
+  // })
   // await cleanUpAllChunks('Chunks')
   // await cleanUpAllChunks('Temps')
 
