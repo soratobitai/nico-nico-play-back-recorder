@@ -18,7 +18,7 @@ const openDB = (): Promise<IDBDatabase> => {
     })
 }
 
-const saveChunk = async (storeName: string, sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null, createdAt:number = Date.now()): Promise<[string, number]> => {
+const saveChunk = async (storeName: string, sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null, createdAt:number | null): Promise<[string, number]> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readwrite")
     const store = tx.objectStore(storeName)
@@ -29,7 +29,7 @@ const saveChunk = async (storeName: string, sessionId: string, chunkIndex: numbe
             chunkIndex,
             blob,
             imgUrl,
-            createdAt
+            createdAt: createdAt || Date.now()
         }
 
         const request = store.put(data)
@@ -66,7 +66,7 @@ const getChunkByKey = async (storeName: string, key: IDBValidKey): Promise<{ ses
                 // console.log("Chunk retrieved:", request.result)
                 resolve(request.result)
             } else {
-                console.warn("No chunk found for key:", key)
+                console.log("No chunk found for key:", key)
                 resolve(undefined)
             }
         }
@@ -173,53 +173,92 @@ const deleteChunkByKeys = async (storeName: string, keys: IDBValidKey[]): Promis
 const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Promise<IDBValidKey[]> => {
     try {
         const { usage } = await navigator.storage.estimate()
-        const deletedKeys: IDBValidKey[] = [] // 削除したキーを格納する配列
+        const deletedKeys: IDBValidKey[] = []
 
         if (usage && usage > maxStorageSize) {
-            // console.warn(`ストレージ超過: ${usage} バイト使用中（上限: ${maxStorageSize} バイト）`)
+            console.log(`ストレージ超過: ${usage} バイト使用中（上限: ${maxStorageSize} バイト）`)
 
-            const db = await openDB()
-            const tx = db.transaction(storeName, "readwrite")
-            const store = tx.objectStore(storeName)
+            const chunks = await getAllChunks(storeName) // getAllChunksを使って全データを取得
+            let totalSize = usage
 
-            return new Promise<IDBValidKey[]>((resolve, reject) => { // 型を明示
-                let totalSize = usage
-                const request = store.openCursor()
+            for (const chunk of chunks) {
+                if (totalSize <= maxStorageSize) break // 削除が不要になったら終了
 
-                request.onsuccess = (event) => {
-                    const cursor = (event.target as IDBRequest<IDBCursorWithValue | null>).result
-                    if (cursor && totalSize > maxStorageSize) {
-                        const value = cursor.value
-
-                        if (value.blob instanceof Blob) {
-                            totalSize -= value.blob.size // Blob のサイズ分を減算
-                        } else {
-                            totalSize -= new Blob([JSON.stringify(value)]).size
-                        }
-
-                        console.log(`ストレージ超過のため削除:`, cursor.key)
-                        deletedKeys.push(cursor.key) // 削除したキーを保存
-                        cursor.delete() // 古いデータから削除
-                        cursor.continue() // 次のデータへ
-                    } else {
-                        resolve(deletedKeys) // 削除処理が完了したらキーを返す
-                    }
+                // データサイズを計算して減算
+                if (chunk.blob instanceof Blob) {
+                    totalSize -= chunk.blob.size
+                } else {
+                    totalSize -= new Blob([JSON.stringify(chunk)]).size
                 }
 
-                request.onerror = () => {
-                    console.error("IndexedDB のクリーンアップ中にエラーが発生しました:", request.error)
-                    reject(request.error)
-                }
-            })
+                const key = [chunk.sessionId, chunk.chunkIndex] as [string, number]  // 複合キーを取得
+                // console.log(`ストレージ超過のため削除:`, key)
+                deletedKeys.push(key) // 複合キーを保存
+            }
+
+            await deleteChunkByKeys(storeName, deletedKeys) // 既存の削除関数を利用
+
+            return deletedKeys
         } else {
-            // console.log("ストレージは問題なし。削除不要。")
-            return Promise.resolve([]) // Promise を返すことで型を統一
+            console.log("ストレージは問題なし。削除不要。")
+            return []
         }
     } catch (error) {
         console.error("ストレージ管理エラー:", error)
-        return Promise.resolve([]) // 例外時も Promise を返して型を統一
+        return []
     }
 }
+
+// const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Promise<IDBValidKey[]> => {
+//     try {
+//         const { usage } = await navigator.storage.estimate()
+//         const deletedKeys: IDBValidKey[] = [] // 削除したキーを格納する配列
+
+//         if (usage && usage > maxStorageSize) {
+//             // console.log(`ストレージ超過: ${usage} バイト使用中（上限: ${maxStorageSize} バイト）`)
+
+//             const db = await openDB()
+//             const tx = db.transaction(storeName, "readwrite")
+//             const store = tx.objectStore(storeName)
+
+//             return new Promise<IDBValidKey[]>((resolve, reject) => { // 型を明示
+//                 let totalSize = usage
+//                 const request = store.openCursor()
+
+//                 request.onsuccess = (event) => {
+//                     const cursor = (event.target as IDBRequest<IDBCursorWithValue | null>).result
+//                     if (cursor && totalSize > maxStorageSize) {
+//                         const value = cursor.value
+
+//                         if (value.blob instanceof Blob) {
+//                             totalSize -= value.blob.size // Blob のサイズ分を減算
+//                         } else {
+//                             totalSize -= new Blob([JSON.stringify(value)]).size
+//                         }
+
+//                         console.log(`ストレージ超過のため削除:`, cursor.key)
+//                         deletedKeys.push(cursor.key) // 削除したキーを保存
+//                         cursor.delete() // 古いデータから削除
+//                         cursor.continue() // 次のデータへ
+//                     } else {
+//                         resolve(deletedKeys) // 削除処理が完了したらキーを返す
+//                     }
+//                 }
+
+//                 request.onerror = () => {
+//                     console.error("IndexedDB のクリーンアップ中にエラーが発生しました:", request.error)
+//                     reject(request.error)
+//                 }
+//             })
+//         } else {
+//             // console.log("ストレージは問題なし。削除不要。")
+//             return Promise.resolve([]) // Promise を返すことで型を統一
+//         }
+//     } catch (error) {
+//         console.error("ストレージ管理エラー:", error)
+//         return Promise.resolve([]) // 例外時も Promise を返して型を統一
+//     }
+// }
 
 const cleanUpAllChunks = async (storeName: string): Promise<void> => {
     const db = await openDB()
@@ -255,7 +294,7 @@ const deleteDB = (dbName: string): Promise<void> => {
         }
 
         request.onblocked = () => {
-            console.warn(`Database deletion is blocked. Close all connections to the database.`)
+            console.log(`Database deletion is blocked. Close all connections to the database.`)
         }
     })
 }
