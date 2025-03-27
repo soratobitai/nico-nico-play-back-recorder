@@ -18,7 +18,7 @@ const openDB = (): Promise<IDBDatabase> => {
     })
 }
 
-const saveChunk = async (storeName: string, sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null): Promise<[string, number]> => {
+const saveChunk = async (storeName: string, sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null, createdAt:number = Date.now()): Promise<[string, number]> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readwrite")
     const store = tx.objectStore(storeName)
@@ -29,7 +29,7 @@ const saveChunk = async (storeName: string, sessionId: string, chunkIndex: numbe
             chunkIndex,
             blob,
             imgUrl,
-            createdAt: Date.now()
+            createdAt
         }
 
         const request = store.put(data)
