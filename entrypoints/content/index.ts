@@ -142,7 +142,7 @@ async function handleUiMount() {
     if (isRecording) {
       if (startButton) startButton.disabled = true
       if (stopButton) stopButton.disabled = false
-      if (recordStatus) recordStatus.textContent = "録画中"
+      if (recordStatus) recordStatus.textContent = "🔴録画中"
       if (recordStatus) recordStatus.classList.add("recording")
       console.log("録画を開始しました")
     } else {
@@ -390,10 +390,14 @@ async function handleUiMount() {
           <div class="recordedMovieBox"></div>
           <div class="control-panel">
             <div class="control-buttons">
-              <button type="button" id="startButton" disabled>●Rec</button>
+              <button type="button" id="startButton" disabled>START</button>
               <button type="button" id="stopButton" disabled>STOP</button>
             </div>
             <div id="recordStatus">準備中</div>
+            <div class="control-buttons">
+              <button type="button" id="reloadButton">リスト更新</button>
+              <button type="button" id="clearButton">リセット</button>
+            </div>
           </div>
         </div>
       </div>
@@ -403,6 +407,8 @@ async function handleUiMount() {
     startButton = document.getElementById("startButton") as HTMLButtonElement
     stopButton = document.getElementById("stopButton") as HTMLButtonElement
     recordStatus = document.getElementById("recordStatus") as HTMLDivElement
+    const reloadButton = document.getElementById("reloadButton") as HTMLButtonElement
+    const clearButton = document.getElementById("clearButton") as HTMLButtonElement
 
     startButton.addEventListener("click", async () => {
       if (mediaRecorder && mediaRecorder.state === "inactive") {
@@ -413,6 +419,41 @@ async function handleUiMount() {
     stopButton.addEventListener("click", () => {
       if (mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop()
+      }
+    })
+
+    reloadButton.addEventListener("click", async () => {
+      // 録画リストを更新
+      await reloadRecordedMovieList()
+    })
+
+    clearButton.addEventListener("click", () => {
+      const confirmDelete = window.confirm("すべての録画データを削除しますか？")
+      if (confirmDelete) {
+        // 録画を停止
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+          // recorder を停止
+          mediaRecorder.stop()
+
+          // `onstop` の実行が完全に終わるのを待つ
+          mediaRecorder.onstop = async () => {
+            console.log("🛑 録画を停止しました。")
+
+            // DB削除
+            deleteDB('RecordingDB').then(() => {
+              // 録画を再開
+              startNewRecorder()
+
+              setTimeout(() => {
+                // 録画リストを更新
+                reloadRecordedMovieList()
+              }, 3000)
+
+            }).catch(error => {
+              console.log('Error deleting database:', error)
+            })
+          }
+        }
       }
     })
   }

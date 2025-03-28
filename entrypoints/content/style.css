@@ -112,15 +112,13 @@
     object-fit: contain;
 }
 
-
-
 .control-panel {
-  height: 60px;
+  min-width: 120px;
+  padding: 0 5px;
 }
 .control-buttons {
   display: flex;
-  gap: 10px;
-  padding: 10px;
+  justify-content: space-around;
 }
 
 #recordedMovieAria button {
@@ -151,8 +149,20 @@
   background: gray;
   cursor: not-allowed;
 }
+#reloadButton {
+  background: transparent;
+  color: #ccc;
+  border: 1px solid white;
+}
+
+#clearButton {
+  background: transparent;
+  color: #999;
+  border: 1px solid white;
+}
 
 #recordStatus {
+  padding: 10px;
   font-size: small;
   text-align: center;
   color: #ccc;
