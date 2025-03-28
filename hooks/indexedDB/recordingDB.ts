@@ -2,6 +2,16 @@ const DB_NAME = "RecordingDB"
 const DB_VERSION = 1
 const STORE_NAMES = ["Chunks", "Temps"]
 
+// 型定義
+type ChunkData = {
+    sessionId: string
+    chunkIndex: number
+    blob: Blob
+    imgUrl: string | null
+    createdAt: number | null
+    downloadFileName: string | null
+}
+
 const openDB = (): Promise<IDBDatabase> => {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION)
@@ -18,7 +28,15 @@ const openDB = (): Promise<IDBDatabase> => {
     })
 }
 
-const saveChunk = async (storeName: string, sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null, createdAt:number | null): Promise<[string, number]> => {
+const saveChunk = async (
+    storeName: string,
+    sessionId: string,
+    chunkIndex: number,
+    blob: Blob,
+    imgUrl: string | null,
+    createdAt: number | null,
+    downloadFileName: string | null = null
+    ): Promise<[string, number]> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readwrite")
     const store = tx.objectStore(storeName)
@@ -29,7 +47,8 @@ const saveChunk = async (storeName: string, sessionId: string, chunkIndex: numbe
             chunkIndex,
             blob,
             imgUrl,
-            createdAt: createdAt || Date.now()
+            createdAt: createdAt || Date.now(),
+            downloadFileName: downloadFileName || null
         }
 
         const request = store.put(data)
@@ -53,7 +72,17 @@ const saveChunk = async (storeName: string, sessionId: string, chunkIndex: numbe
 }
 
 
-const getChunkByKey = async (storeName: string, key: IDBValidKey): Promise<{ sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null } | undefined> => {
+const getChunkByKey = async (
+    storeName: string,
+    key: IDBValidKey
+): Promise<{
+    sessionId: string,
+    chunkIndex: number,
+    blob: Blob,
+    imgUrl: string | null,
+    createdAt: number,
+    downloadFileName: string | null
+} | undefined> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readonly")
     const store = tx.objectStore(storeName)
@@ -78,13 +107,22 @@ const getChunkByKey = async (storeName: string, key: IDBValidKey): Promise<{ ses
     })
 }
 
-const getAllChunks = async (storeName: string): Promise<Array<{ sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null, createdAt: number }>> => {
+const getAllChunks = async (
+    storeName: string
+): Promise<Array<{
+    sessionId: string,
+    chunkIndex: number,
+    blob: Blob,
+    imgUrl: string | null,
+    createdAt: number,
+    downloadFileName: string | null
+}>> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readonly")
     const store = tx.objectStore(storeName)
 
     return new Promise((resolve, reject) => {
-        const chunks: Array<{ sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null, createdAt: number }> = []
+        const chunks: Array<{ sessionId: string, chunkIndex: number, blob: Blob, imgUrl: string | null, createdAt: number, downloadFileName: string | null }> = []
         const request = store.openCursor()
 
         request.onsuccess = (event) => {
@@ -98,7 +136,8 @@ const getAllChunks = async (storeName: string): Promise<Array<{ sessionId: strin
                     chunkIndex,
                     blob: data.blob,
                     imgUrl: data.imgUrl || null,
-                    createdAt: data.createdAt
+                    createdAt: data.createdAt,
+                    downloadFileName: data.downloadFileName || null
                 })
 
                 cursor.continue()
@@ -200,7 +239,7 @@ const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Prom
 
             return deletedKeys
         } else {
-            console.log("ストレージは問題なし。削除不要。")
+            console.log("ストレージ容量超過はありません")
             return []
         }
     } catch (error) {
