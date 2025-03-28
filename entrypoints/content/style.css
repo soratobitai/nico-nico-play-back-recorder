@@ -58,6 +58,7 @@
   width: 20px;
   height: 20px;
   cursor: pointer;
+  display: none;
 }
 
 /* 右下の↓ボタン */
@@ -71,7 +72,15 @@
   border-radius: 5px;
   width: 20px;
   height: 20px;
+  padding: 2px !important;
   cursor: pointer;
+  display: none;
+}
+
+/* ホバー時に表示 */
+.recordedMovie:hover .closeButton,
+.recordedMovie:hover .downloadButton {
+  display: block;
 }
 
 #video-modal {
@@ -80,7 +89,7 @@
     left: 0;
     /* width: 100%;
     height: 100vh; */
-    background: rgba(0, 0, 0, 0.5);
+    /* background: rgba(0, 0, 0, 0.5); */
     z-index: 10000;
     display: none;
 }
