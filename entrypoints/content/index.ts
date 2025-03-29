@@ -25,11 +25,14 @@ async function handleUiMount() {
   let stream: MediaStream = {} as MediaStream
   let mediaRecorder: MediaRecorder = {} as MediaRecorder
 
+  let capButton = null as HTMLButtonElement | null
   let startButton = null as HTMLButtonElement | null
   let stopButton = null as HTMLButtonElement | null
   let recordStatus = null as HTMLDivElement | null
   // let isRecordOn = true
   let chunkIndex = 0
+
+  let recordingTimeout: any // ondataavailable の発火を監視する関数
 
   const startRec = () => {
     if (!video) return
@@ -64,14 +67,16 @@ async function handleUiMount() {
       if (event.data.size <= 0) return
 
       // ダウンロード用ファイル名を生成
-      const latestCreatedAt = Date.now()
-      const downloadFileName = `${userName}_${title}_${new Date(latestCreatedAt).toLocaleString()}.mp4`
+      const now = Date.now()
+      const downloadFileName = `${userName}_${title}_${new Date(now).toLocaleString()}.mp4`
 
       await saveChunk('Temps', sessionId, chunkIndex++, event.data, null, Date.now(), downloadFileName)
+
+      resetTimeoutCheck()
     }
 
     mediaRecorder.onstop = async () => {
-      setRecordingStatus(false)
+      setRecordingStatus(true, false, '停止中')
 
       setTimeout(async () => {
         // チャンクを結合して保存
@@ -81,7 +86,8 @@ async function handleUiMount() {
 
     // 録画を開始
     mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
-    setRecordingStatus(true)
+    resetTimeoutCheck()
+    setRecordingStatus(false, true, "🔴録画中")
   }
 
   const resetRecording = () => {
@@ -130,20 +136,16 @@ async function handleUiMount() {
     }
   }
 
-  const setRecordingStatus = (isRecording: boolean) => {
-    if (isRecording) {
-      if (startButton) startButton.disabled = true
-      if (stopButton) stopButton.disabled = false
-      if (recordStatus) recordStatus.textContent = "🔴録画中"
-      if (recordStatus) recordStatus.classList.add("recording")
-      console.log("録画を開始しました")
+  // コントロールパネルのボタンの状態を設定
+  const setRecordingStatus = (isStartBtn: boolean, isStopBtn: boolean, message: string) => {
+    if (startButton) startButton.disabled = !isStartBtn
+    if (stopButton) stopButton.disabled = !isStopBtn
+    if (isStartBtn) {
+      if (recordStatus) recordStatus.classList.remove("textRed")
     } else {
-      if (stopButton) stopButton.disabled = true
-      if (startButton) startButton.disabled = false
-      if (recordStatus) recordStatus.textContent = "停止中"
-      if (recordStatus) recordStatus.classList.remove("recording")
-      console.log("録画を停止しました")
+      if (recordStatus) recordStatus.classList.add("textRed")
     }
+    if (recordStatus) recordStatus.textContent = message
   }
 
   const mergeChunksBySession = async () => {
@@ -152,9 +154,15 @@ async function handleUiMount() {
       const temps = (await getAllChunks('Temps')).filter(temp => temp.sessionId === sessionId)
       if (temps.length === 0) return
 
-      // 削除するキーを準備
+      // チャンクを削除
       const keys = temps.map(temp => [temp.sessionId, temp.chunkIndex])
       await deleteChunkByKeys('Temps', keys)
+
+      // チャンク数のチェック
+      if (temps.length <= 2) {
+        throw new Error("チャンク数が少ないので保存をスキップします")
+      }
+      console.log(`sessionId: ${sessionId} のチャンク数: ${temps.length}`)
 
       // チャンクを結合
       const blob = new Blob(temps.map(temp => temp.blob), { type: "video/mp4" })
@@ -196,13 +204,18 @@ async function handleUiMount() {
         groupedChunks[temp.sessionId].downloadFileName = temp.downloadFileName
       }
 
-      // `createdAt` が ◯ 秒以上前のグループのみ処理
       for (const sessionId in groupedChunks) {
+        // `createdAt` が ◯ 秒以上前のグループのみ処理
         if (groupedChunks[sessionId].latestCreatedAt < threshold) {
           const { blobs, keys, latestCreatedAt, downloadFileName } = groupedChunks[sessionId]
 
           // 削除
           await deleteChunkByKeys('Temps', keys)
+
+          // チャンク数のチェック
+          if (blobs.length <= 2) {
+            throw new Error("チャンク数が少ないので保存をスキップします")
+          }
 
           // チャンクを結合
           const blob = new Blob(blobs, { type: "video/mp4" })
@@ -350,6 +363,9 @@ async function handleUiMount() {
           <div class="recordedMovieBox"></div>
           <div class="control-panel">
             <div class="control-buttons">
+              <div class="capbutton" id="capButton">
+                <img src="${chrome.runtime.getURL("assets/images/camera.png")}" alt="キャプチャ" title="キャプチャ" />
+              </div>
               <button type="button" id="startButton" disabled>START</button>
               <button type="button" id="stopButton" disabled>STOP</button>
             </div>
@@ -364,57 +380,72 @@ async function handleUiMount() {
     `
     controlArea.insertAdjacentHTML("afterend", recordedMovieHTML)
 
+    capButton = document.getElementById("capButton") as HTMLButtonElement
     startButton = document.getElementById("startButton") as HTMLButtonElement
     stopButton = document.getElementById("stopButton") as HTMLButtonElement
     recordStatus = document.getElementById("recordStatus") as HTMLDivElement
     const reloadButton = document.getElementById("reloadButton") as HTMLButtonElement
     const clearButton = document.getElementById("clearButton") as HTMLButtonElement
 
-    startButton.addEventListener("click", async () => {
-      if (mediaRecorder && mediaRecorder.state === "inactive") {
-        mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
+    // キャプチャボタン
+    capButton.addEventListener("click", async () => {
+      if (video) {
+        getScreenShotAndDownload()
       }
     })
 
+    // 録画ボタン
+    startButton.addEventListener("click", async () => {
+      if (mediaRecorder && mediaRecorder.state === "inactive") {
+        mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
+        resetTimeoutCheck()
+        setRecordingStatus(false, true, "🔴録画中")
+      }
+    })
+
+    // 停止ボタン
     stopButton.addEventListener("click", () => {
       if (mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop()
       }
     })
 
+    // 録画リスト更新ボタン
     reloadButton.addEventListener("click", async () => {
       // 録画リストを更新
       await reloadRecordedMovieList()
     })
 
-    clearButton.addEventListener("click", () => {
+    // リセットボタン
+    clearButton.addEventListener("click", async () => {
       const confirmDelete = window.confirm("すべての録画データを削除しますか？")
       if (confirmDelete) {
-        // 録画を停止
+        setRecordingStatus(false, false, 'リセット中')
         try {
+          const cleanUp = async () => {
+            // リセット（すべてのチャンクを削除）
+            await cleanUpAllChunks('Chunks')
+            await cleanUpAllChunks('Temps')
+
+            reloadRecordedMovieList() // 録画リストを更新
+          }
+
           if (mediaRecorder && mediaRecorder.state === "recording") {
-            
             // `onstop` の実行が完全に終わるのを待つ
             mediaRecorder.onstop = async () => {
-              console.log("🛑 録画を停止しました。")
-              setRecordingStatus(false)
-
-              // リセット（すべてのチャンクを削除）
-              await cleanUpAllChunks('Chunks')
-              await cleanUpAllChunks('Temps')
-
-              reloadRecordedMovieList() // 録画リストを更新
+              await cleanUp() // リセット
               startNewRecorder() // 録画を再開
             }
-
             // recorder を停止
             mediaRecorder.stop()
+          } else {
+            await cleanUp() // リセット
+            setRecordingStatus(true, false, 'リセット完了')
           }
         }
         catch (error) {
           console.log("リセットに失敗しました:", error)
         }
-        
       }
     })
   }
@@ -482,14 +513,14 @@ async function handleUiMount() {
       modalContent.style.height = '250px'
 
       // クリック位置を考慮してモーダルの位置を設定
-      const { clientX, clientY } = event
+      const { pageX, pageY } = event
       const modalWidth = modalContent.offsetWidth
       const modalHeight = modalContent.offsetHeight
       const viewportWidth = window.innerWidth
       const viewportHeight = window.innerHeight
 
-      let posX = clientX - (modalWidth / 2)
-      let posY = clientY - modalHeight - 50
+      let posX = pageX - (modalWidth / 2)
+      let posY = pageY - modalHeight - 50
 
       // はみ出さないように調整
       if (posX + modalWidth > viewportWidth) posX = viewportWidth - modalWidth - 10
@@ -561,24 +592,47 @@ async function handleUiMount() {
     })
   }
 
-  // const getScreenShot = async () => {
+  const getScreenShotAndDownload = () => {
+    // canvas要素を作成
+    const canvas = document.createElement("canvas")
+    const ctx = canvas.getContext("2d")
 
-  //   // canvas要素を作成
-  //   const canvas = document.createElement("canvas")
-  //   const ctx = canvas.getContext("2d")
+    // canvasのサイズをvideoのサイズに設定
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
 
-  //   // canvasのサイズをvideoのサイズに設定
-  //   canvas.width = video.videoWidth
-  //   canvas.height = video.videoHeight
+    // videoの現在のフレームをcanvasに描画
+    ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-  //   // videoの現在のフレームをcanvasに描画
-  //   ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
+    // 画像データを取得
+    const imgUrl = canvas.toDataURL("image/png")
 
-  //   // 画像データを取得
-  //   const imgUrl = canvas.toDataURL("image/png")
+    // ダウンロード用の<a>タグを作成
+    const a = document.createElement("a")
+    a.href = imgUrl
 
-  //   return imgUrl
-  // }
+    // ダウンロード用ファイル名を生成
+    const now = Date.now()
+    a.download = `${userName}_${title}_${new Date(now).toLocaleString()}.png`
+
+    // 自動クリックでダウンロードを実行
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
+
+  // ondataavailable の発火が止まったことを検知する
+  const resetTimeoutCheck = () => {
+    clearTimeout(recordingTimeout)
+    recordingTimeout = setTimeout(() => {
+      console.log('一定時間データが来なかったため録画を停止します')
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop()
+      }
+      clearTimeout(recordingTimeout)
+    }, SAVE_CHUNK_INTERVAL_MS * 3)
+  }
 
   // ミュート対策
   const fixAudioTrack = () => {
@@ -675,5 +729,48 @@ async function handleUiMount() {
       }, 1000)
     })
   }
+
+  // 定期実行
+  setInterval(() => {
+    // console.log(stream.active) // false になっていないか
+    // console.log(mediaRecorder.state)
+    // stream.getTracks().forEach(t => console.log(t.readyState)) // ended になってないか
+    
+    // const liveStatus = (window as any).__INITIAL_STATE__?.program?.broadcasterProgram?.programStatus
+
+    // if (liveStatus === 'ON_AIR') {
+    //   console.log('ライブ配信中')
+    // } else if (liveStatus === 'ENDED') {
+    //   console.log('ライブは終了しました')
+    // } else {
+    //   console.log('ライブの状態が不明です:', liveStatus)
+    // }
+
+    // const liveButton = document.querySelector('[data-live-status]')
+    // const liveStatus = liveButton?.getAttribute('data-live-status')
+
+    // if (liveStatus === 'live') {
+    //   console.log('🎥 ライブ配信中（DOMから検出）')
+    // } else if (liveStatus === 'end') {
+    //   console.log('📺 配信終了（DOMから検出）')
+    // } else {
+    //   console.log('❓ 状態が不明です:', liveStatus)
+    // }
+
+
+
+    // if (!stream.active) {
+    //   console.log('ストリームが非アクティブになったため録画停止')
+    //   mediaRecorder.stop()
+    //   clearInterval(interval)
+    // }
+  }, 3000)
+
+  // const allKeys = Object.keys((window as any).__REACT_QUERY_STATE__?.queries ?? {})
+  // console.log(allKeys)
+  // for (const key of allKeys) {
+  //   const query = (window as any).__REACT_QUERY_STATE__.queries[key]
+  //   console.log(key, query)
+  // }
 }
 
