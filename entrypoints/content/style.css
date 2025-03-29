@@ -123,11 +123,22 @@
 
 .control-panel {
   min-width: 120px;
-  padding: 0 5px;
+  padding: 0 5px 0 0;
 }
 .control-buttons {
   display: flex;
   justify-content: space-around;
+}
+.control-status {
+  margin: 10px 0;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+}
+
+#recordTime {
+  font-size: x-small;
+  color: #ccc;
 }
 
 #recordedMovieAria button {
@@ -184,7 +195,6 @@
 }
 
 #recordStatus {
-  padding: 10px;
   font-size: small;
   text-align: center;
   color: #ccc;

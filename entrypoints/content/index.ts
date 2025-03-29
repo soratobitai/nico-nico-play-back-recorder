@@ -1,9 +1,32 @@
 import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB } from "../../hooks/indexedDB/recordingDB"
 import './style.css'
 
+// 初期値（fallback）
 const SAVE_CHUNK_INTERVAL_MS = 3 * 1000 // 1 * 1000
-const RESTART_MEDIARECORDER_INTERVAL_MS = 1 * 60 * 1000 // 1 * 60 * 1000
-const MAX_STORAGE_SIZE = 1 * 1024 * 1024 * 1024 // GB
+let RESTART_MEDIARECORDER_INTERVAL_MS = 1 * 60 * 1000
+let MAX_STORAGE_SIZE = 1 * 1024 * 1024 * 1024
+
+// 設定を取得して初期値を更新
+chrome.storage.sync.get(['RESTART_MEDIARECORDER_INTERVAL_MS', 'MAX_STORAGE_SIZE'], (result) => {
+  if (typeof result.RESTART_MEDIARECORDER_INTERVAL_MS === 'number') {
+    RESTART_MEDIARECORDER_INTERVAL_MS = result.RESTART_MEDIARECORDER_INTERVAL_MS
+  }
+  if (typeof result.MAX_STORAGE_SIZE === 'number') {
+    MAX_STORAGE_SIZE = result.MAX_STORAGE_SIZE
+  }
+})
+
+// 設定がリアルタイムに変更されたときに反映
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'sync') {
+    if (changes.RESTART_MEDIARECORDER_INTERVAL_MS) {
+      RESTART_MEDIARECORDER_INTERVAL_MS = changes.RESTART_MEDIARECORDER_INTERVAL_MS.newValue
+    }
+    if (changes.MAX_STORAGE_SIZE) {
+      MAX_STORAGE_SIZE = changes.MAX_STORAGE_SIZE.newValue
+    }
+  }
+})
 
 export default defineContentScript({
   matches: ["*://live.nicovideo.jp/watch/*"],
@@ -31,6 +54,9 @@ async function handleUiMount() {
   let recordStatus = null as HTMLDivElement | null
   // let isRecordOn = true
   let chunkIndex = 0
+
+  let startTime: number | null = null
+  let recordTimer: ReturnType<typeof setInterval> | null = null
 
   let recordingTimeout: any // ondataavailable の発火を監視する関数
 
@@ -82,12 +108,40 @@ async function handleUiMount() {
         // チャンクを結合して保存
         await mergeChunksBySession()
       }, 500) // 0.5秒待ってから実行
+
+      if (recordTimer) {
+        clearInterval(recordTimer)
+        recordTimer = null
+      }
+      startTime = null
+
+      const recordTimeElem = document.getElementById('recordTime')
+      if (recordTimeElem) recordTimeElem.textContent = '00:00:00'
+
     }
 
     // 録画を開始
     mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
     resetTimeoutCheck()
     setRecordingStatus(false, true, "🔴録画中")
+
+    console.log("タイマーを開始しました")
+    startTime = Date.now()
+    recordTimer = setInterval(() => {
+      if (startTime) {
+        const now = Date.now()
+        const elapsed = now - startTime
+        const minutes = Math.floor(elapsed / 60000)
+        const seconds = Math.floor((elapsed % 60000) / 1000)
+        const hours = Math.floor(minutes / 60)
+        const mm = (minutes % 60).toString().padStart(2, '0')
+        const ss = seconds.toString().padStart(2, '0')
+        const hh = hours.toString().padStart(2, '0')
+        const timeString = `${hh}:${mm}:${ss}`
+        const recordTimeElem = document.getElementById('recordTime')
+        if (recordTimeElem) recordTimeElem.textContent = `${timeString}`
+      }
+    }, 1000)
   }
 
   const resetRecording = () => {
@@ -104,6 +158,14 @@ async function handleUiMount() {
 
         // チャンクを結合して保存
         await mergeChunksBySession()
+
+        if (recordTimer) {
+          clearInterval(recordTimer)
+          recordTimer = null
+        }
+        startTime = null
+        const recordTimeElem = document.getElementById('recordTime')
+        if (recordTimeElem) recordTimeElem.textContent = '00:00:00'
 
         // ✅ 新しい recorder を開始
         startNewRecorder()
@@ -364,12 +426,15 @@ async function handleUiMount() {
           <div class="control-panel">
             <div class="control-buttons">
               <div class="capbutton" id="capButton">
-                <img src="${chrome.runtime.getURL("assets/images/camera.png")}" alt="キャプチャ" title="キャプチャ" />
+                <img src="${chrome.runtime.getURL("assets/images/camera.png")}" title="スクリーンショット" />
               </div>
-              <button type="button" id="startButton" disabled>START</button>
-              <button type="button" id="stopButton" disabled>STOP</button>
+              <button type="button" id="startButton" disabled>録画開始</button>
+              <button type="button" id="stopButton" disabled>停止</button>
             </div>
-            <div id="recordStatus">準備中</div>
+            <div class="control-status">
+              <div id="recordStatus">準備中</div>
+              <div id="recordTime">00:00:00</div>
+            </div>
             <div class="control-buttons">
               <button type="button" id="reloadButton">リスト更新</button>
               <button type="button" id="clearButton">リセット</button>
