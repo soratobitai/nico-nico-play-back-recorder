@@ -98,6 +98,7 @@ function App() {
       </div>
 
       <button onClick={handleSave}>保存</button>
+      <p className="description">保存した設定内容は番組ページを更新するまで反映されません。</p>
 
       {saved && <p className="success-message">✅ 保存しました</p>}
     </div>

@@ -1,3 +1,8 @@
+import { defineConfig } from "vite";
+export default defineConfig({
+    sourcemap: true,
+})
+
 // import { defineConfig } from "vite";
 // export default defineConfig({
 //     // optimizeDeps: {
@@ -20,7 +25,6 @@
 //         }
 //     }
 // });
-
 
 // export default defineConfig({
 //     optimizeDeps: {

@@ -36,6 +36,7 @@
     min-height: 50px;
     /* aspect-ratio: 16 / 9; */
     overflow: hidden;
+    border: 1px solid #333;
     border-radius: 5px;
     display: inline-block;
 }
@@ -58,7 +59,8 @@
   width: 20px;
   height: 20px;
   cursor: pointer;
-  display: none;
+  opacity: 0;
+  transition: opacity 0.5s ease-in;
 }
 
 /* 右下の↓ボタン */
@@ -74,13 +76,14 @@
   height: 20px;
   padding: 2px !important;
   cursor: pointer;
-  display: none;
+  opacity: 0;
+  transition: opacity 0.5s ease-in;
 }
 
 /* ホバー時に表示 */
 .recordedMovie:hover .closeButton,
 .recordedMovie:hover .downloadButton {
-  display: block;
+  opacity: 1;
 }
 
 #video-modal {
@@ -138,7 +141,7 @@
 
 #recordTime {
   font-size: x-small;
-  color: #ccc;
+  color: #fff;
 }
 
 #recordedMovieAria button {
