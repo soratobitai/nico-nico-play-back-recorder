@@ -100,40 +100,38 @@ const downloadRecordedMovie = async (key: [string, number]) => {
 }
 
 // 動画のスクリーンショットを取得してダウンロードする関数
-const getScreenShotAndDownload = () => {
+const getScreenShotAndDownload = async () => {
+    const video = document.querySelector("video") as HTMLVideoElement
+    if (!video) return
+    if (video.readyState < 2) return // 動画が準備完了していない場合は何もしない
 
-    let video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
-    if (!video) {
-        console.error("Video element not found")
-        return
+    try {
+        const canvas = document.createElement("canvas")
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        const ctx = canvas.getContext("2d")
+        if (!ctx) throw new Error("Canvas 2D context not available")
+
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+        // toBlobの使用（非同期でUIフリーズ回避）
+        canvas.toBlob((blob) => {
+            if (!blob) return
+
+            const a = document.createElement("a")
+            const url = URL.createObjectURL(blob)
+
+            const { userName, title } = getProgramData()
+            const timeString = new Date().toLocaleString().replace(/[\/\\:\*?"<>|]/g, "_")
+            a.download = `${userName}_${title}_${timeString}.png`
+            a.href = url
+            a.click()
+
+            URL.revokeObjectURL(url)
+        }, "image/png")
+    } catch (err) {
+        console.error("スクリーンショット処理中にエラー:", err)
     }
-    // canvas要素を作成
-    const canvas = document.createElement("canvas")
-    const ctx = canvas.getContext("2d")
-
-    // canvasのサイズをvideoのサイズに設定
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-
-    // videoの現在のフレームをcanvasに描画
-    ctx?.drawImage(video, 0, 0, canvas.width, canvas.height)
-
-    // 画像データを取得
-    const imgUrl = canvas.toDataURL("image/png")
-
-    // ダウンロード用の<a>タグを作成
-    const a = document.createElement("a")
-    a.href = imgUrl
-
-    // ダウンロード用ファイル名を生成
-    const { userName, title } = getProgramData()
-    const now = Date.now()
-    a.download = `${userName}_${title}_${new Date(now).toLocaleString()}.png`
-
-    // 自動クリックでダウンロードを実行
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
 }
 
 export { getProgramData, extractFirstFrame, downloadRecordedMovie, getScreenShotAndDownload }

@@ -65,7 +65,7 @@ function App() {
 
       <div className="setting-block">
         <label htmlFor="intervalRange">
-          保存間隔: {Math.round(interval / 60000)} 分
+          録画時間: {Math.round(interval / 60000)} 分
         </label>
         <p className="description">録画を定期的に分割保存する間隔です。</p>
         <input
@@ -98,7 +98,7 @@ function App() {
       </div>
 
       <button onClick={handleSave}>保存</button>
-      <p className="description">保存した設定内容は番組ページを更新するまで反映されません。</p>
+      <p className="description">保存した設定を確実に反映させるにはページを更新してください。</p>
 
       {saved && <p className="success-message">✅ 保存しました</p>}
     </div>

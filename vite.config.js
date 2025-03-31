@@ -1,6 +1,14 @@
 import { defineConfig } from "vite";
 export default defineConfig({
     sourcemap: true,
+    build: {
+        minify: 'terser',
+        terserOptions: {
+            compress: {
+                drop_console: true,
+            },
+        },
+    },
 })
 
 // import { defineConfig } from "vite";
