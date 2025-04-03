@@ -22,18 +22,22 @@ async function handleUiMount() {
   const SAVE_CHUNK_INTERVAL_MS = 3 * 1000 // 1 * 1000
   let RESTART_MEDIARECORDER_INTERVAL_MS = 1 * 60 * 1000
   let MAX_STORAGE_SIZE = 1 * 1024 * 1024 * 1024
+  let AUTO_START = true
 
-  // 設定を取得して初期値を更新
-  chrome.storage.sync.get(['RESTART_MEDIARECORDER_INTERVAL_MS', 'MAX_STORAGE_SIZE'], (result) => {
+  // 起動時に設定を読み込む
+  chrome.storage.sync.get(['RESTART_MEDIARECORDER_INTERVAL_MS', 'MAX_STORAGE_SIZE', 'AUTO_START'], (result) => {
     if (typeof result.RESTART_MEDIARECORDER_INTERVAL_MS === 'number') {
       RESTART_MEDIARECORDER_INTERVAL_MS = result.RESTART_MEDIARECORDER_INTERVAL_MS
     }
     if (typeof result.MAX_STORAGE_SIZE === 'number') {
       MAX_STORAGE_SIZE = result.MAX_STORAGE_SIZE
     }
+    if (typeof result.AUTO_START === 'boolean') {
+      AUTO_START = result.AUTO_START
+    }    
   })
 
-  // 設定がリアルタイムに変更されたときに反映
+  // 設定変更の反映（オートスタートは対象外）
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'sync') {
       if (changes.RESTART_MEDIARECORDER_INTERVAL_MS) {
@@ -144,6 +148,8 @@ async function handleUiMount() {
   }
 
   const start = () => {
+    // if (stream === {} as MediaStream) initStream()
+    
     if (mediaRecorder && mediaRecorder.state === "inactive") {
       mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
       startRecordingActions(
@@ -152,6 +158,8 @@ async function handleUiMount() {
         RESTART_MEDIARECORDER_INTERVAL_MS,
         SAVE_CHUNK_INTERVAL_MS
       )
+    } else {
+      initStream()
     }
   }
   const stop = () => {
@@ -239,11 +247,16 @@ async function handleUiMount() {
     // 不完全なtempファイルを取得・削除し結合して保存
     await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
 
+    // 録画を開始
+    if (AUTO_START) {
+      initStream()
+    } else {
+      setRecordingStatus(true, false, '停止中')
+    }
+
     // 録画リストを更新
     await reloadRecordedMovieList()
-
-    // 録画を開始
-    initStream()
+    // setupScrollHandler()
 
     // ミュート対策
     fixAudioTrack(video)

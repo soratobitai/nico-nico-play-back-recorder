@@ -2,13 +2,17 @@ import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldCh
 
 const getProgramData = () => {
     // ユーザー名を取得
-    const userName_ = document.querySelector('[class*="_user-name_"]') as HTMLSpanElement | null
-    const userName = (userName_?.textContent || '').replace(/[\\/:*?"<>|]/g, '')
+    const ldJson = document.querySelector('script[type="application/ld+json"]')
+    const data = JSON.parse(ldJson!.textContent!)
+    const userName_ = data.author?.name
+    const userName = (userName_ || '').replace(/[\\/:*?"<>|]/g, '')
 
     // タイトルを取得
-    const title_ = document.querySelector('[class*="_program-title_"]') as HTMLSpanElement | null
-    const title = (title_?.textContent || '').replace(/[\\/:*?"<>|]/g, '')
-    
+    let title_ = ''
+    const meta = document.querySelector('meta[property="og:title"]') as HTMLMetaElement | null
+    if (meta) title_ = meta.content
+    const title = (title_ || '').replace(/[\\/:*?"<>|]/g, '')
+
     return { userName, title }
 }
 

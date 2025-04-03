@@ -70,7 +70,7 @@ const insertRecordedMovieAria = async (
 const insertRecordedMovie = (
     key: IDBValidKey,
     imgUrl: string | null,
-    insertPosition: string = 'start'
+    insertPosition: "start" | "end" = "start" // ← "start"（左に追加）または "end"（右に追加）
 ) => {
     const [sessionId_, chunkIndex_] = key as [string, string]
 
@@ -84,7 +84,7 @@ const insertRecordedMovie = (
 
     // メイン画像
     const img = document.createElement("img")
-    if (imgUrl) img.src = imgUrl || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
+    img.src = imgUrl || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
     recordedMovie.appendChild(img)
 
     // ✕ボタン（削除）
@@ -96,10 +96,8 @@ const insertRecordedMovie = (
         e.stopPropagation()
         const confirmDelete = window.confirm("この動画データを削除しますか？")
         if (confirmDelete) {
-            // UIから削除
-            recordedMovie.remove()
-            // indexedDBから削除
-            await deleteChunkByKeys('Chunks', [key])
+            recordedMovie.remove() // UIから削除
+            await deleteChunkByKeys('Chunks', [key]) // indexedDBから削除
         }
     })
     recordedMovie.appendChild(closeButton)
@@ -131,6 +129,7 @@ const insertRecordedMovie = (
         openModalWithVideo(key, event)
     })
 
+    // UIに追加（右端 or 左端）
     if (insertPosition === "start") {
         recordedMovieBox.prepend(recordedMovie)
     } else {

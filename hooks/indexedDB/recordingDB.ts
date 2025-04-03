@@ -100,6 +100,42 @@ const getChunkByKey = async (
     })
 }
 
+// const getChunksByLimit = async (
+//     storeName: string,
+//     limit: number = 10,
+//     beforeCreatedAt: number | null = null
+// ): Promise<any[]> => {
+//     const db = await openDB()
+//     const tx = db.transaction(storeName, "readonly")
+//     const store = tx.objectStore(storeName)
+
+//     const chunks: any[] = []
+
+//     return new Promise((resolve, reject) => {
+//         const request = store.openCursor(null, "next")
+//         request.onsuccess = (event) => {
+//             const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+//             if (cursor && chunks.length < limit) {
+//                 const value = cursor.value
+
+//                 if (beforeCreatedAt === null || value.createdAt < beforeCreatedAt) {
+//                     chunks.push(value)
+//                 }
+
+//                 if (chunks.length < limit) {
+//                     cursor.continue()
+//                 } else {
+//                     resolve(chunks)
+//                 }
+//             } else {
+//                 resolve(chunks)
+//             }
+//         }
+
+//         request.onerror = () => reject(request.error)
+//     })
+// }
+
 const getAllChunks = async (
     storeName: string
 ): Promise<Array<{

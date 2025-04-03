@@ -1,35 +1,35 @@
 import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
-const DEFAULT_INTERVAL = 1 * 60 * 1000
-const DEFAULT_STORAGE = 1 * 1024 * 1024 * 1024
+const DEFAULT_SETTINGS = {
+  RESTART_MEDIARECORDER_INTERVAL_MS: 1 * 60 * 1000,
+  MAX_STORAGE_SIZE: 1 * 1024 * 1024 * 1024,
+  AUTO_START: true
+}
 
 function App() {
-  const [interval, setInterval] = useState<number>(DEFAULT_INTERVAL)
-  const [storage, setStorage] = useState<number>(DEFAULT_STORAGE)
-  const [saved, setSaved] = useState(false)
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS)
+  const [isInitialized, setIsInitialized] = useState(false)
 
   const intervalRef = useRef<HTMLInputElement>(null)
   const storageRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    chrome.storage.sync.get(['RESTART_MEDIARECORDER_INTERVAL_MS', 'MAX_STORAGE_SIZE'], (result) => {
-      setInterval(result.RESTART_MEDIARECORDER_INTERVAL_MS ?? DEFAULT_INTERVAL)
-      setStorage(result.MAX_STORAGE_SIZE ?? DEFAULT_STORAGE)
+    chrome.storage.sync.get(Object.keys(DEFAULT_SETTINGS), (result) => {
+      setSettings({ ...DEFAULT_SETTINGS, ...result })
+      setIsInitialized(true)
     })
   }, [])
 
-  const handleSave = () => {
-    chrome.storage.sync.set({
-      RESTART_MEDIARECORDER_INTERVAL_MS: interval,
-      MAX_STORAGE_SIZE: storage
-    }, () => {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    })
+  useEffect(() => {
+    if (!isInitialized) return
+    chrome.storage.sync.set(settings)
+  }, [settings, isInitialized])
+
+  const updateSetting = <K extends keyof typeof DEFAULT_SETTINGS>(key: K, value: typeof DEFAULT_SETTINGS[K]) => {
+    setSettings(prev => ({ ...prev, [key]: value }))
   }
 
-  // スクロールで増減させるロジック
   const attachWheelHandler = (
     ref: React.RefObject<HTMLInputElement | null>,
     value: number,
@@ -55,9 +55,23 @@ function App() {
     }, [value])
   }
 
-  // それぞれにスクロールイベントを設定
-  attachWheelHandler(intervalRef, interval, setInterval, 60 * 1000, 1 * 60 * 1000, 60 * 60 * 1000)
-  attachWheelHandler(storageRef, storage, setStorage, 1 * 1024 * 1024 * 1024, 1 * 1024 * 1024 * 1024, 100 * 1024 * 1024 * 1024)
+  attachWheelHandler(
+    intervalRef,
+    settings.RESTART_MEDIARECORDER_INTERVAL_MS,
+    (v) => updateSetting('RESTART_MEDIARECORDER_INTERVAL_MS', v),
+    60 * 1000,
+    1 * 60 * 1000,
+    60 * 60 * 1000
+  )
+
+  attachWheelHandler(
+    storageRef,
+    settings.MAX_STORAGE_SIZE,
+    (v) => updateSetting('MAX_STORAGE_SIZE', v),
+    1 * 1024 * 1024 * 1024,
+    1 * 1024 * 1024 * 1024,
+    100 * 1024 * 1024 * 1024
+  )
 
   return (
     <div className="popup-container">
@@ -65,7 +79,7 @@ function App() {
 
       <div className="setting-block">
         <label htmlFor="intervalRange">
-          録画時間: {Math.round(interval / 60000)} 分
+          録画時間: {Math.round(settings.RESTART_MEDIARECORDER_INTERVAL_MS / 60000)} 分
         </label>
         <p className="description">録画を定期的に分割保存する間隔です。</p>
         <input
@@ -75,14 +89,14 @@ function App() {
           min={1 * 60 * 1000}
           max={60 * 60 * 1000}
           step={1 * 60 * 1000}
-          value={interval}
-          onChange={(e) => setInterval(Number(e.target.value))}
+          value={settings.RESTART_MEDIARECORDER_INTERVAL_MS}
+          onChange={(e) => updateSetting('RESTART_MEDIARECORDER_INTERVAL_MS', Number(e.target.value))}
         />
       </div>
 
       <div className="setting-block">
         <label htmlFor="storageRange">
-          ストレージ使用量: {Math.round(storage / (1024 * 1024 * 1024))} GB
+          ストレージ使用量: {Math.round(settings.MAX_STORAGE_SIZE / (1024 * 1024 * 1024))} GB
         </label>
         <p className="description">録画リストの合計サイズが設定値を超えた場合、古いものから削除されます。</p>
         <input
@@ -92,15 +106,25 @@ function App() {
           min={1 * 1024 * 1024 * 1024}
           max={100 * 1024 * 1024 * 1024}
           step={1 * 1024 * 1024 * 1024}
-          value={storage}
-          onChange={(e) => setStorage(Number(e.target.value))}
+          value={settings.MAX_STORAGE_SIZE}
+          onChange={(e) => updateSetting('MAX_STORAGE_SIZE', Number(e.target.value))}
         />
       </div>
 
-      <button onClick={handleSave}>保存</button>
-      <p className="description">保存した設定を確実に反映させるにはページを更新してください。</p>
+      <div className="setting-block">
+        <label htmlFor="autostartCheckbox">
+          <input
+            id="autostartCheckbox"
+            type="checkbox"
+            checked={settings.AUTO_START}
+            onChange={(e) => updateSetting('AUTO_START', e.target.checked)}
+          />
+          オートスタート
+        </label>
+        <p className="description">ページを開いた時に自動的に録画を開始します。</p>
+      </div>
 
-      {saved && <p className="success-message">✅ 保存しました</p>}
+      <p className="description">確実に設定内容を反映させるには、ページを更新してください。</p>
     </div>
   )
 }
