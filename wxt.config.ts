@@ -3,6 +3,8 @@ import type { WxtViteConfig } from 'wxt'
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
+
+  // Production 用の設定
   // vite: ({ mode }): WxtViteConfig => {
   //   const isDev = mode === 'development'
 
@@ -17,6 +19,8 @@ export default defineConfig({
   //       : {},
   //   }
   // },
+
+  // Development 用の設定
   vite: ({ mode }): WxtViteConfig => {
     return {
       build: {
@@ -24,20 +28,20 @@ export default defineConfig({
       }
     }
   },
+
   extensionApi: 'chrome',
-  modules: ['@wxt-dev/module-react'],
+  modules: [
+    '@wxt-dev/module-react',
+    '@wxt-dev/auto-icons'
+  ],
   manifest: {
     "permissions": [
       "storage",
       "scripting"
     ],
-    // "host_permissions": [
-    //   "*://live.nicovideo.jp/watch/*"
-    // ],
     "web_accessible_resources": [
       {
         "resources": [
-          "assets/lib/*",
           "assets/images/*"
         ],
         "matches": [
@@ -45,15 +49,5 @@ export default defineConfig({
         ]
       }
     ]
-  },
-  // hooks: {
-  //   'build:manifestGenerated': (wxt, manifest) => {
-  //     manifest.content_scripts ??= []
-  //     manifest.content_scripts.push({
-  //       // Build extension once to see where your CSS get's written to
-  //       css: ['content/style.css'],
-  //       matches: ['*://live.nicovideo.jp/watch/*'],
-  //     })
-  //   },
-  // },
+  }
 })

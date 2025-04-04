@@ -1,8 +1,8 @@
 {
-  "name": "wxt-react-starter",
-  "description": "manifest.json description",
+  "name": "ニコ生プレイバックレコーダー",
+  "description": "ニコニコ生放送の視聴中の番組を録画し、後で見返すことができるツールです。",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -24,6 +24,7 @@
     "@types/chrome": "^0.0.280",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
+    "@wxt-dev/auto-icons": "^1.0.2",
     "@wxt-dev/module-react": "^1.1.2",
     "typescript": "^5.6.3",
     "wxt": "^0.19.29"
