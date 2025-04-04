@@ -1,7 +1,7 @@
 import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startTimer, startRecordingActions, stopRecordingActions, mergeChunksBySession, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
 import { getProgramData, extractFirstFrame, getScreenShotAndDownload } from "../../utils/feature"
-import { insertRecordedMovieAria, insertRecordedMovie, createModal, openModalWithVideo, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, getTimeString } from "../../utils/ui"
+import { insertRecordedMovieAria, insertRecordedMovie, createModal, confirmModal, openModalWithVideo, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, getTimeString } from "../../utils/ui"
 import './style.css'
 
 export default defineContentScript({
@@ -70,12 +70,12 @@ async function handleUiMount() {
       stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
 
       if (video.readyState >= 3) {
-        console.log("動画が準備完了、録画を開始します")
+        console.log("動画が準備完了")
         startNewRecorder()
       } else {
         console.log("動画の準備が完了していないため、待機します...")
         video.addEventListener("canplay", () => {
-          console.log("動画が再生可能になりました。録画を開始します")
+          console.log("動画が再生可能になりました。")
           startNewRecorder()
         }, { once: true })
       }
@@ -87,7 +87,7 @@ async function handleUiMount() {
   const startNewRecorder = () => {
 
     const options = {
-      // mimeType: 'video/webm; codecs="vp8, opus"',
+      // mimeType: 'video/webm; codecs="vp8, opus"'
       mimeType: 'video/mp4; codecs="avc1.640028, mp4a.40.2"'
     }
     mediaRecorder = new MediaRecorder(stream, options)
@@ -176,8 +176,8 @@ async function handleUiMount() {
     await reloadRecordedMovieList()
   }
   const clear = async () => {
-    const confirmDelete = window.confirm("すべての録画データを削除しますか？")
-    if (confirmDelete) {
+    const confirmed = await confirmModal('すべての録画データを削除しますか？')
+    if (confirmed) {
       setRecordingStatus(false, false, '準備中')
       try {
         if (mediaRecorder && mediaRecorder.state === "recording") {
@@ -233,30 +233,31 @@ async function handleUiMount() {
     })
   }
 
+  // UI類を作成
+  insertRecordedMovieAria(
+    start,
+    stop,
+    reload,
+    clear
+  )
+  createModal()
+
+  // 不完全なtempファイルを取得・削除し結合して保存
+  await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
+
   setTimeout(async () => {
-
-    // UI類を作成
-    insertRecordedMovieAria(
-      start,
-      stop,
-      reload,
-      clear
-    )
-    createModal()
-
-    // 不完全なtempファイルを取得・削除し結合して保存
-    await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
-
-    // 録画を開始
-    if (AUTO_START) {
-      initStream()
-    } else {
-      setRecordingStatus(true, false, '停止中')
-    }
 
     // 録画リストを更新
     await reloadRecordedMovieList()
-    // setupScrollHandler()
+
+    // 録画を開始
+    setTimeout(() => {
+      if (AUTO_START) {
+        initStream()
+      } else {
+        setRecordingStatus(true, false, '停止中')
+      }
+    }, 2000)
 
     // ミュート対策
     fixAudioTrack(video)
@@ -264,21 +265,5 @@ async function handleUiMount() {
     // video の track 変更を監視
     observeVideoResize()
   }, 2000)
-
-  /////////////////////////////////////////////////////////////////////
-  
-  // indexedDBをすべてクリア
-  // deleteDB('RecordingDB').then(() => {
-  //   console.log('Database deleted successfully.')
-  // }).catch(error => {
-  //   console.log('Error deleting database:', error)
-  // })
-  // await cleanUpAllChunks('Chunks')
-  // await cleanUpAllChunks('Temps')
-
-  // 定期実行
-  setInterval(async() => {
-
-  }, 3000)
 }
 

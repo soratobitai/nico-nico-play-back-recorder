@@ -36,7 +36,7 @@
 .recordedMovie img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     cursor: pointer;
 }
 
@@ -53,7 +53,7 @@
   height: 20px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.5s ease-in;
+  transition: opacity 0.3s ease;
 }
 
 /* 右下の↓ボタン */
@@ -70,7 +70,7 @@
   padding: 2px !important;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.5s ease-in;
+  transition: opacity 0.3s ease;
 }
 
 /* ホバー時に表示 */
@@ -199,4 +199,75 @@
 
 .textRed {
   color: red !important;
+}
+
+
+
+
+/* モーダル全体の背景 */
+#custom-confirm-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+/* モーダルの中身 */
+#custom-confirm-modal .modal-dialog {
+  background-color: white;
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+  max-width: 300px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* メッセージ部分 */
+#custom-confirm-modal .modal-message {
+  margin-bottom: 20px;
+  font-size: 16px;
+  color: #333;
+}
+
+/* ボタンコンテナ */
+#custom-confirm-modal .modal-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* 各ボタン */
+#custom-confirm-modal button {
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+/* はいボタンのスタイル */
+#custom-confirm-modal .confirm-yes {
+  background-color: #dc2626;
+  color: white;
+}
+
+#custom-confirm-modal .confirm-yes:hover {
+  background-color: #b91c1c;
+}
+
+/* いいえボタンのスタイル */
+#custom-confirm-modal .confirm-no {
+  background-color: #e5e7eb;
+  color: #111827;
+}
+
+#custom-confirm-modal .confirm-no:hover {
+  background-color: #d1d5db;
 }

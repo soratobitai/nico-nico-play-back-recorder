@@ -36,7 +36,7 @@ const insertRecordedMovieAria = async (
             </div>
             <div class="control-buttons">
               <button type="button" id="reloadButton">リスト更新</button>
-              <button type="button" id="clearButton">リセット</button>
+              <button type="button" id="clearButton">クリア</button>
             </div>
           </div>
         </div>
@@ -94,8 +94,8 @@ const insertRecordedMovie = (
     closeButton.title = "削除"
     closeButton.addEventListener("click", async (e) => {
         e.stopPropagation()
-        const confirmDelete = window.confirm("この動画データを削除しますか？")
-        if (confirmDelete) {
+        const confirmed = await confirmModal('この動画データを削除しますか？')
+        if (confirmed) {
             recordedMovie.remove() // UIから削除
             await deleteChunkByKeys('Chunks', [key]) // indexedDBから削除
         }
@@ -182,6 +182,47 @@ function createModal() {
         }
     })
 }
+
+function confirmModal(message: string = '本当に削除してもよろしいですか？'): Promise<boolean> {
+    return new Promise((resolve) => {
+        const existing = document.getElementById('custom-confirm-modal')
+        if (existing) existing.remove()
+
+        // モーダル全体の作成
+        const modal = document.createElement('div')
+        modal.id = 'custom-confirm-modal'
+        modal.innerHTML = `
+      <div class="modal-dialog">
+        <p class="modal-message">${message}</p>
+        <div class="modal-buttons">
+          <button class="confirm-yes">はい</button>
+          <button class="confirm-no">いいえ</button>
+        </div>
+      </div>
+    `
+        document.body.appendChild(modal)
+
+        // ボタン取得とイベント登録
+        const yesBtn = modal.querySelector('.confirm-yes') as HTMLButtonElement
+        const noBtn = modal.querySelector('.confirm-no') as HTMLButtonElement
+
+        yesBtn.addEventListener('click', () => {
+            modal.remove()
+            resolve(true)
+        })
+
+        noBtn.addEventListener('click', () => {
+            modal.remove()
+            resolve(false)
+        })
+
+        modal.addEventListener('click', () => {
+            modal.remove()
+            resolve(false)
+        })
+    })
+}
+
 
 // 動画を取得してモーダルを開く
 const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
@@ -280,6 +321,7 @@ export {
     insertRecordedMovieAria,
     insertRecordedMovie,
     createModal,
+    confirmModal,
     openModalWithVideo,
     reloadRecordedMovieList,
     deleteMovieIcon,
