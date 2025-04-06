@@ -1,5 +1,4 @@
-import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB } from "../hooks/indexedDB/recordingDB"
-import { cleanUp } from '../utils/recording'
+import { getChunkByKey, getAllChunks, deleteChunkByKeys } from "../hooks/indexedDB/recordingDB"
 import { downloadRecordedMovie, getScreenShotAndDownload } from "../utils/feature"
 
 let capButton = null as HTMLButtonElement | null
@@ -21,7 +20,9 @@ const insertRecordedMovieAria = async (
     const recordedMovieHTML = `
       <div id="recordedMovieAria">
         <div class="recordedMovieWrapper">
-          <div class="recordedMovieBox"></div>
+          <div class="recordedMovieBox">
+            <div class="loading-spinner"></div>
+          </div>
           <div class="control-panel">
             <div class="control-buttons">
               <div class="capbutton" id="capButton">
@@ -129,6 +130,10 @@ const insertRecordedMovie = (
         openModalWithVideo(key, event)
     })
 
+    // .no-video があれば、取り除く
+    const noVideo = recordedMovieBox.querySelector('.no-video')
+    if (noVideo) noVideo.remove()
+    
     // UIに追加（右端 or 左端）
     if (insertPosition === "start") {
         recordedMovieBox.prepend(recordedMovie)
@@ -265,16 +270,26 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
 
 // 録画リストを更新
 const reloadRecordedMovieList = async () => {
-
     const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
     if (!recordedMovieBox) return
 
+    // ローディング表示を追加
+    recordedMovieBox.innerHTML = `<div class="loading-spinner"></div>`
+
     const chunks = await getAllChunks('Chunks')
 
+    // 表示リセット
     recordedMovieBox.innerHTML = ""
+
+    if (chunks.length === 0) {
+        // データがなければメッセージ表示
+        recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
+        return
+    }
+
     for (const chunk of chunks.reverse()) {
         insertRecordedMovie([chunk.sessionId, chunk.chunkIndex], chunk.imgUrl)
-        await new Promise(resolve => setTimeout(resolve, 10)) // ライブ画面のフリーズを回避するためにインターバルを入れる
+        await new Promise(resolve => setTimeout(resolve, 10))
     }
 }
 

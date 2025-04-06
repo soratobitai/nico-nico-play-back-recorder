@@ -1,14 +1,15 @@
-import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startTimer, startRecordingActions, stopRecordingActions, mergeChunksBySession, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
-import { getProgramData, extractFirstFrame, getScreenShotAndDownload } from "../../utils/feature"
-import { insertRecordedMovieAria, insertRecordedMovie, createModal, confirmModal, openModalWithVideo, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, getTimeString } from "../../utils/ui"
-import {
-    RESTART_MEDIARECORDER_INTERVAL_MS,
-    MAX_STORAGE_SIZE,
-    AUTO_START,
-} from '../../utils/storage'
+import { saveChunk, cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
+import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
+import { getProgramData } from "../../utils/feature"
+import { insertRecordedMovieAria, createModal, confirmModal, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus } from "../../utils/ui"
+import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START } from '../../utils/storage'
+import { checkLiveStatus } from '../../services/api'
 
 export default async () => {
+
+    // ステータスを確認
+    const liveStatus = await checkLiveStatus()
+    if (liveStatus !== 'ON_AIR') return
     
     let restartInterval = 1 * 60 * 1000
     let maxStorageSize = 1 * 1024 * 1024 * 1024
@@ -130,9 +131,8 @@ export default async () => {
     }
 
     const start = () => {
-        // if (stream === {} as MediaStream) initStream()
-
         if (mediaRecorder && mediaRecorder.state === "inactive") {
+            setRecordingStatus(false, false, '準備中')
             mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
             startRecordingActions(
                 resetRecording,
@@ -145,8 +145,8 @@ export default async () => {
         }
     }
     const stop = () => {
-        console.log("録画を停止します", mediaRecorder)
         if (mediaRecorder && mediaRecorder.state === "recording") {
+            setRecordingStatus(false, false, '停止中')
             mediaRecorder.stop()
         }
     }
@@ -247,6 +247,4 @@ export default async () => {
         // video の track 変更を監視
         observeVideoResize()
     }, 2000)
-
-    return ('')
 }

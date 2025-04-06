@@ -1,4 +1,4 @@
-import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB } from "../hooks/indexedDB/recordingDB"
+import { saveChunk, getAllChunks, deleteChunkByKeys, cleanUpAllChunks } from "../hooks/indexedDB/recordingDB"
 import { checkLiveStatus } from '../services/api'
 
 let recordingTimeout: any // ondataavailable の発火を監視する関数
@@ -48,8 +48,6 @@ const startRecordingActions = async (
 
 const stopRecordingActions = async (sessionId: string) => {
 
-    setRecordingStatus(true, false, '停止中')
-
     // チャンクを結合して保存
     await mergeChunksBySession(sessionId)
 
@@ -66,6 +64,7 @@ const stopRecordingActions = async (sessionId: string) => {
     }
     resetRecordingTimer()
 
+    setRecordingStatus(true, false, '停止中')
     console.log('録画を停止しました')
 }
 

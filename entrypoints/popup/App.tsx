@@ -108,26 +108,11 @@ function App() {
       <h2>録画設定</h2>
 
       <div className="setting-block">
-        <label htmlFor="autostartCheckbox">
-          <input
-            id="autostartCheckbox"
-            type="checkbox"
-            checked={settings.AUTO_START}
-            onChange={(e) => updateSetting('AUTO_START', e.target.checked)}
-          />
-          オートスタート
-        </label>
-        <p className="description">
-          ページを開いた時に自動的に録画を開始します。
-        </p>
-      </div>
-
-      <div className="setting-block">
         <label htmlFor="intervalRange">
           分割間隔: {Math.round(settings.RESTART_MEDIARECORDER_INTERVAL_MS / 60000)} 分
         </label>
         <p className="description">
-          録画を定期的に分割保存する間隔です。
+          この値で録画を定期的に分割保存します。
         </p>
         <input
           ref={intervalRef}
@@ -162,6 +147,21 @@ function App() {
             updateSetting('MAX_STORAGE_SIZE', Number(e.target.value))
           }
         />
+      </div>
+
+      <div className="setting-block">
+        <label htmlFor="autostartCheckbox">
+          <input
+            id="autostartCheckbox"
+            type="checkbox"
+            checked={settings.AUTO_START}
+            onChange={(e) => updateSetting('AUTO_START', e.target.checked)}
+          />
+          オートスタート
+        </label>
+        <p className="description">
+          ページを開いたら自動的に録画を開始します。
+        </p>
       </div>
 
       <p className="description">

@@ -1,4 +1,4 @@
-import { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB } from "../hooks/indexedDB/recordingDB"
+import { getChunkByKey } from "../hooks/indexedDB/recordingDB"
 
 const getProgramData = () => {
     // ユーザー名を取得
@@ -85,7 +85,8 @@ const downloadRecordedMovie = async (key: [string, number]) => {
         const url = URL.createObjectURL(chunk.blob)
 
         // ダウンロードファイル名を生成
-        const filename = `${chunk.userName}_${chunk.title}_${chunk.createdAt}.mp4`
+        const formattedDate = formatDate(chunk.createdAt)
+        const filename = `${chunk.userName}_${chunk.title}_${formattedDate}.mp4`
 
         // 一時的にaタグを作成して自動クリック
         const a = document.createElement('a')
@@ -126,7 +127,7 @@ const getScreenShotAndDownload = async () => {
             const url = URL.createObjectURL(blob)
 
             const { userName, title } = getProgramData()
-            const timeString = new Date().toLocaleString().replace(/[\/\\:\*?"<>|]/g, "_")
+            const timeString = formatDate(Date.now())
             a.download = `${userName}_${title}_${timeString}.png`
             a.href = url
             a.click()
@@ -137,5 +138,21 @@ const getScreenShotAndDownload = async () => {
         console.error("スクリーンショット処理中にエラー:", err)
     }
 }
+
+const formatDate = (input: string | number) => {
+    const date = new Date(input)
+
+    const pad = (n: number) => n.toString().padStart(2, '0')
+
+    const year = date.getFullYear()
+    const month = pad(date.getMonth() + 1)
+    const day = pad(date.getDate())
+    const hours = pad(date.getHours())
+    const minutes = pad(date.getMinutes())
+    const seconds = pad(date.getSeconds())
+
+    return `${year}年${month}月${day}日_${hours}時${minutes}分${seconds}秒`
+}
+
 
 export { getProgramData, extractFirstFrame, downloadRecordedMovie, getScreenShotAndDownload }
