@@ -5,29 +5,29 @@ import type { WxtViteConfig } from 'wxt'
 export default defineConfig({
 
   // Production 用の設定
-  // vite: ({ mode }): WxtViteConfig => {
-  //   const isDev = mode === 'development'
-
-  //   return {
-  //     build: {
-  //       sourcemap: isDev, // ← dev のときのみ true、本番は false
-  //     },
-  //     esbuild: !isDev
-  //       ? {
-  //         drop: ['console'],
-  //       }
-  //       : {},
-  //   }
-  // },
-
-  // Development 用の設定
   vite: ({ mode }): WxtViteConfig => {
+    const isDev = mode === 'development'
+
     return {
       build: {
-        sourcemap: true,
-      }
+        sourcemap: isDev, // ← dev の時のみ true、本番は false
+      },
+      esbuild: !isDev
+        ? {
+          drop: ['console'],
+        }
+        : {},
     }
   },
+
+  // Development 用の設定
+  // vite: ({ mode }): WxtViteConfig => {
+  //   return {
+  //     build: {
+  //       sourcemap: true,
+  //     }
+  //   }
+  // },
 
   extensionApi: 'chrome',
   modules: [
@@ -35,9 +35,9 @@ export default defineConfig({
     '@wxt-dev/auto-icons'
   ],
   manifest: {
+    "name": "ニコ生プレイバックレコーダー",
     "permissions": [
-      "storage",
-      "scripting"
+      "storage"
     ],
     "web_accessible_resources": [
       {
