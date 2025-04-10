@@ -8,6 +8,8 @@ let recordStatus = null as HTMLDivElement | null
 let reloadButton = null as HTMLButtonElement | null
 let clearButton = null as HTMLButtonElement | null
 
+let userScrolledAway = false
+
 const insertRecordedMovieAria = async (
     start: () => void,
     stop: () => void,
@@ -43,7 +45,7 @@ const insertRecordedMovieAria = async (
         </div>
       </div>
     `
-    controlArea.insertAdjacentHTML("afterend", recordedMovieHTML)
+    controlArea.insertAdjacentHTML("beforeend", recordedMovieHTML) // afterend
 
     capButton = document.getElementById("capButton") as HTMLButtonElement
     startButton = document.getElementById("startButton") as HTMLButtonElement
@@ -66,6 +68,24 @@ const insertRecordedMovieAria = async (
 
     // リセットボタン
     clearButton.addEventListener("click", clear)
+
+    // 録画リストのスクロール制御
+    const setupScrollWatcher = () => {
+        const box = document.querySelector('.recordedMovieBox') as HTMLElement
+        if (!box) return
+
+        box.addEventListener('scroll', () => {
+            const scrollRight = box.scrollWidth - box.scrollLeft - box.clientWidth
+            const isAtRightEdge = scrollRight < 20
+
+            if (isAtRightEdge) {
+                userScrolledAway = false // 右端に戻ってきた
+            } else {
+                userScrolledAway = true // ユーザーが左へスクロールした
+            }
+        })
+    }
+    setupScrollWatcher()
 }
 
 const insertRecordedMovie = (
@@ -137,11 +157,18 @@ const insertRecordedMovie = (
     // UIに追加（右端 or 左端）
     if (insertPosition === "start") {
         recordedMovieBox.prepend(recordedMovie)
+        recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
     } else {
         recordedMovieBox.appendChild(recordedMovie)
-    }
 
-    recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
+        // 右端にいる、またはユーザーがスクロールしていなければスクロールする
+        const scrollRight = recordedMovieBox.scrollWidth - recordedMovieBox.scrollLeft - recordedMovieBox.clientWidth
+        const isAtRightEdge = scrollRight < 20
+
+        if (!userScrolledAway || isAtRightEdge) {
+            recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
+        }
+    }
 }
 
 // モーダルを作成する関数
@@ -332,6 +359,32 @@ const getTimeString = (startTime: number) => {
     return timeString
 }
 
+// フルスクリーン時に非表示
+function watchFullscreenChange() {
+    const recordedMovieAria = document.getElementById('recordedMovieAria')
+    const recordedMovieWrapper = document.getElementsByClassName('recordedMovieWrapper')[0] as HTMLElement
+
+    if (!recordedMovieAria || !recordedMovieWrapper) return
+
+    const observer = new ResizeObserver(entries => {
+        for (const entry of entries) {
+            const elementWidth = entry.contentRect.width
+            const windowWidth = window.innerWidth
+
+            if (elementWidth === windowWidth) {
+                recordedMovieAria.style.height = '0px'
+                recordedMovieWrapper.style.height = '0px'
+            } else {
+                recordedMovieAria.style.height = '90px'
+                recordedMovieWrapper.style.height = '90px'
+            }
+        }
+    })
+
+    const elements = document.querySelectorAll('[class*="_player-display-footer-area_"]')
+    elements.forEach(el => observer.observe(el))
+}
+
 export {
     insertRecordedMovieAria,
     insertRecordedMovie,
@@ -341,5 +394,6 @@ export {
     reloadRecordedMovieList,
     deleteMovieIcon,
     setRecordingStatus,
-    getTimeString
+    getTimeString,
+    watchFullscreenChange
 }
