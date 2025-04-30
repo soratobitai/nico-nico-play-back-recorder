@@ -366,12 +366,16 @@ function watchFullscreenChange() {
 
     if (!recordedMovieAria || !recordedMovieWrapper) return
 
+    const target = document.querySelector('[class*="_leo-player_"]')
+    if (!target) return
+
     const observer = new ResizeObserver(entries => {
         for (const entry of entries) {
             const elementWidth = entry.contentRect.width
             const windowWidth = window.innerWidth
+            const tolerance = 5
 
-            if (elementWidth === windowWidth) {
+            if (Math.abs(elementWidth - windowWidth) <= tolerance) {
                 recordedMovieAria.style.height = '0px'
                 recordedMovieWrapper.style.height = '0px'
             } else {
@@ -381,8 +385,7 @@ function watchFullscreenChange() {
         }
     })
 
-    const elements = document.querySelectorAll('[class*="_player-display-footer-area_"]')
-    elements.forEach(el => observer.observe(el))
+    observer.observe(target)
 }
 
 export {
