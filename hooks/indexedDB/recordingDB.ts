@@ -263,5 +263,31 @@ const deleteDB = (dbName: string): Promise<void> => {
     })
 }
 
+// IndexedDBの実際の使用量を計算する関数
+const getStorageUsage = async (): Promise<number> => {
+    try {
+        let totalUsage = 0
+        
+        // 各ストアの使用量を計算
+        for (const storeName of STORE_NAMES) {
+            const chunks = await getAllChunks(storeName)
+            
+            for (const chunk of chunks) {
+                if (chunk.blob instanceof Blob) {
+                    totalUsage += chunk.blob.size
+                } else {
+                    // Blobでない場合はJSONとして計算
+                    totalUsage += new Blob([JSON.stringify(chunk)]).size
+                }
+            }
+        }
+        
+        console.log(`IndexedDB使用量: ${totalUsage} バイト`)
+        return totalUsage
+    } catch (error) {
+        console.error('ストレージ使用量の計算に失敗しました:', error)
+        return 0
+    }
+}
 
-export { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB }
+export { saveChunk, getChunkByKey, getAllChunks, deleteChunkByKeys, cleanUpOldChunks, cleanUpAllChunks, deleteDB, getStorageUsage }

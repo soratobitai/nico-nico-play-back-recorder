@@ -166,15 +166,24 @@ const resetTimeoutCheck = (
 
         // ライブが続いているか確認
         const liveStatus = await checkLiveStatus()
-        if (liveStatus === 'ON_AIR') return
+        if (liveStatus === 'ON_AIR') {
+            if (mediaRecorder.state === 'recording') {
+                // ライブが続いていて、かつ録画中の場合のみリロードボタンを押す
+                const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
+                if (reloadButton) {
+                    console.log('ライブが続いていて録画中のためリロードボタンを押します')
+                    reloadButton.click()
+                }
+            }
+        } else {
+            // 録画を停止
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop()
+            }
+            console.log('ライブが終了したため録画を停止します')
 
-        // 録画を停止
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop()
+            clearTimeout(recordingTimeout)
         }
-        console.log('ライブが終了したため録画を停止します')
-
-        clearTimeout(recordingTimeout)
     }, SAVE_CHUNK_INTERVAL_MS * 3)
 }
 

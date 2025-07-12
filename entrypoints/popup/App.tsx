@@ -13,8 +13,56 @@ function App() {
     AUTO_START: true,
   })
 
+  const [currentStorageUsage, setCurrentStorageUsage] = useState<number | null>(
+    null
+  )
+  const [storageQuota, setStorageQuota] = useState(0)
+
   const intervalRef = useRef<HTMLInputElement>(null)
   const storageRef = useRef<HTMLInputElement>(null)
+
+  // ストレージ使用量を取得する関数
+  const getStorageUsageData = async () => {
+    try {
+      // Content Scriptを経由してIndexedDBから使用量を取得
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      })
+
+      if (!tab.id) {
+        console.error('アクティブなタブが見つかりません')
+        setCurrentStorageUsage(null)
+        return
+      }
+
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        type: 'GET_STORAGE_USAGE',
+      })
+
+      if (response && response.usage !== undefined) {
+        console.log('Popup - Received storage usage:', response.usage, 'bytes')
+        setCurrentStorageUsage(response.usage)
+      } else if (response && response.error) {
+        console.error('Popup - Storage usage error:', response.error)
+        setCurrentStorageUsage(null)
+      } else {
+        console.log('Popup - No storage data available, using null')
+        setCurrentStorageUsage(null)
+      }
+
+      // navigator.storage.estimate()も取得（参考用）
+      try {
+        const { quota } = await navigator.storage.estimate()
+        setStorageQuota(quota || 0)
+      } catch (estimateError) {
+        console.warn('navigator.storage.estimate() failed:', estimateError)
+      }
+    } catch (error) {
+      console.error('ストレージ使用量の取得に失敗しました:', error)
+      setCurrentStorageUsage(null)
+    }
+  }
 
   // 初期値読み込み
   useEffect(() => {
@@ -34,9 +82,27 @@ function App() {
         MAX_STORAGE_SIZE: size,
         AUTO_START: autoStart,
       })
+
+      // ストレージ使用量も取得
+      await getStorageUsageData()
     }
 
     loadSettings()
+  }, [])
+
+  // ストレージ使用量を定期的に更新
+  useEffect(() => {
+    const updateStorageUsage = () => {
+      getStorageUsageData()
+    }
+
+    // 初回取得
+    updateStorageUsage()
+
+    // 5秒ごとに更新
+    const interval = setInterval(updateStorageUsage, 5000)
+
+    return () => clearInterval(interval)
   }, [])
 
   // 設定更新関数
@@ -106,6 +172,25 @@ function App() {
   return (
     <div className="popup-container">
       <h2>録画設定</h2>
+      
+      <p className="description">
+        設定内容を確実に反映させるには、ページを更新する必要があります。
+      </p>
+
+      <div className="setting-block">
+        <label htmlFor="autostartCheckbox">
+          <input
+            id="autostartCheckbox"
+            type="checkbox"
+            checked={settings.AUTO_START}
+            onChange={(e) => updateSetting('AUTO_START', e.target.checked)}
+          />
+          オートスタート
+        </label>
+        <p className="description">
+          ページを開いたら自動的に録画を開始します。
+        </p>
+      </div>
 
       <div className="setting-block">
         <label htmlFor="intervalRange">
@@ -149,24 +234,49 @@ function App() {
         />
       </div>
 
-      <div className="setting-block">
-        <label htmlFor="autostartCheckbox">
-          <input
-            id="autostartCheckbox"
-            type="checkbox"
-            checked={settings.AUTO_START}
-            onChange={(e) => updateSetting('AUTO_START', e.target.checked)}
-          />
-          オートスタート
-        </label>
-        <p className="description">
-          ページを開いたら自動的に録画を開始します。
-        </p>
+      {/* 現在の使用量バー */}
+      <div className="current-usage">
+        <div className="usage-info">
+          <span>
+            現在の使用量:{' '}
+            {currentStorageUsage !== null
+              ? `${Math.round(
+                  (currentStorageUsage / (1024 * 1024 * 1024)) * 100
+                ) / 100} GB`
+              : '---'}
+          </span>
+          <span>
+            設定上限:{' '}
+            {Math.round(settings.MAX_STORAGE_SIZE / (1024 * 1024 * 1024))}{' '}
+            GB
+          </span>
+        </div>
+        <div className="usage-bar-container">
+          <div
+            className="usage-bar"
+            style={{
+              width: `${
+                currentStorageUsage !== null
+                  ? Math.min(
+                      (currentStorageUsage / settings.MAX_STORAGE_SIZE) * 100,
+                      100
+                    )
+                  : 0
+              }%`,
+              backgroundColor:
+                currentStorageUsage !== null &&
+                currentStorageUsage > settings.MAX_STORAGE_SIZE * 0.8
+                  ? '#ff6b6b'
+                  : '#4CAF50',
+            }}
+          ></div>
+        </div>
+        {currentStorageUsage === null && (
+          <p className="description" style={{ textAlign: 'center', marginTop: '8px' }}>
+            ライブ視聴ページでのみ動作します
+          </p>
+        )}
       </div>
-
-      <p className="description">
-        設定内容を確実に反映させるには、ページを更新する必要があります。
-      </p>
     </div>
   )
 }

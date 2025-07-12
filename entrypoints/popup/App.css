@@ -12,77 +12,133 @@
   font-family: 'Segoe UI', 'Roboto', sans-serif;
   background-color: #fff;
   color: #1f1f1f;
-  padding: 0.5rem 1rem;
+  padding: 0.75rem;
   margin: 0;
-  width: 300px;
-  overflow-x: hidden;
-  font-size: 15px;
+  width: 350px;
+  font-size: 14px;
   text-align: left;
+  line-height: 1.4;
+  max-height: 600px;
+  overflow: hidden;
 }
 
 h2 {
-  font-size: 1.3rem;
-  margin-bottom: 1.5rem;
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem 0;
   color: #222;
+  font-weight: 700;
 }
 
 .setting-block {
-  margin-bottom: 1.8rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  border-radius: 8px;
 }
 
 label {
   display: block;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.3rem;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  color: #333;
 }
 
 .description {
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   color: #666;
   margin: 0 0 0.5rem 0;
+  line-height: 1.3;
 }
 
 input[type="range"] {
   width: 100%;
   appearance: none;
-  height: 6px;
-  border-radius: 3px;
-  background: #ddd;
+  height: 8px;
+  border-radius: 4px;
+  background: #e0e0e0;
   outline: none;
   transition: background 0.3s;
+  margin: 0.3rem 0;
 }
 
 input[type="range"]::-webkit-slider-thumb {
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   background: #0078d4;
   border-radius: 50%;
   cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 button {
   display: block;
   width: 100%;
   padding: 0.6rem;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
   background-color: #0078d4;
   color: #fff;
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  transition: background-color 0.2s ease;
-  margin-bottom: 0.5rem;
+  transition: all 0.2s ease;
+  margin-bottom: 0.6rem;
+  box-shadow: 0 2px 4px rgba(0, 120, 212, 0.3);
 }
 
 button:hover {
   background-color: #005ea2;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 120, 212, 0.4);
 }
 
 .success-message {
-  margin-top: 1rem;
+  margin-top: 0.75rem;
   color: #28a745;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  padding: 0.6rem;
+  background-color: #d4edda;
+  border-radius: 6px;
+}
+
+/* 現在の使用量バー */
+.current-usage {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  background-color: #fff;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.usage-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.75rem;
+  color: #555;
+  font-weight: 500;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.usage-info span {
+  white-space: nowrap;
+}
+
+.usage-bar-container {
+  width: 100%;
+  height: 12px;
+  background-color: #f0f0f0;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+
+.usage-bar {
+  height: 100%;
+  background-color: #4CAF50;
+  border-radius: 6px;
+  transition: width 0.3s ease, background-color 0.3s ease;
 }

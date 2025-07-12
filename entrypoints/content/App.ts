@@ -1,4 +1,4 @@
-import { saveChunk, cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
+import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, confirmModal, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, watchFullscreenChange } from "../../utils/ui"
@@ -11,6 +11,19 @@ export default async () => {
     const liveStatus = await checkLiveStatus()
     if (liveStatus !== 'ON_AIR') return
     
+    // メッセージハンドラーを追加
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        if (message.type === 'GET_STORAGE_USAGE') {
+            getStorageUsage().then(usage => {
+                sendResponse({ usage })
+            }).catch(error => {
+                console.error('ストレージ使用量の取得に失敗しました:', error)
+                sendResponse({ error: error.message })
+            })
+            return true // 非同期レスポンスを示す
+        }
+    })
+
     let restartInterval = 1 * 60 * 1000
     let maxStorageSize = 1 * 1024 * 1024 * 1024
     let autoStart = true
@@ -49,17 +62,46 @@ export default async () => {
         if (mediaRecorder && mediaRecorder.state === "recording") return
 
         try {
-            // 動画ストリームを取得
-            stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-
-            if (video.readyState >= 3) {
-                console.log("動画が準備完了")
+            // 動画の準備状態をより厳密にチェック
+            if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
+                console.log("動画が完全に準備完了し、再生中です")
+                // 動画ストリームを取得
+                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
                 startNewRecorder()
+            } else if (video.readyState >= 3) {
+                console.log("動画が準備完了しましたが、再生状態を確認中...")
+                // 少し待ってから再生状態を再確認
+                setTimeout(() => {
+                    if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
+                        console.log("動画の再生状態が確認できました")
+                        stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                        startNewRecorder()
+                    } else {
+                        console.log("動画の準備が完了していないため、待機します...")
+                        video.addEventListener("canplay", () => {
+                            console.log("動画が再生可能になりました。")
+                            // 再生開始を少し待ってからストリームを取得
+                            setTimeout(() => {
+                                if (!video.paused && video.currentTime > 0) {
+                                    stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                                    startNewRecorder()
+                                }
+                            }, 500)
+                        }, { once: true })
+
+                    }
+                }, 1000)
             } else {
                 console.log("動画の準備が完了していないため、待機します...")
                 video.addEventListener("canplay", () => {
                     console.log("動画が再生可能になりました。")
-                    startNewRecorder()
+                    // 再生開始を少し待ってからストリームを取得
+                    setTimeout(() => {
+                        if (!video.paused && video.currentTime > 0) {
+                            stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                            startNewRecorder()
+                        }
+                    }, 500)
                 }, { once: true })
             }
         } catch (error) {
@@ -196,22 +238,27 @@ export default async () => {
         if (!video) return
 
         video.addEventListener("resize", () => {
-            console.log("video の track 変更を検知しました！")
+            console.log("video の track 変更を検知しました！", mediaRecorder.state)
+
+            // 停止中は何もしない
+            if (mediaRecorder && mediaRecorder instanceof MediaRecorder && mediaRecorder.state === "inactive") {
+                return
+            }
 
             // recorder を停止
-            if (mediaRecorder && mediaRecorder instanceof MediaRecorder && mediaRecorder.state !== "inactive") {
+            if (mediaRecorder && mediaRecorder instanceof MediaRecorder && mediaRecorder.state === "recording") {
                 mediaRecorder.stop()
-            }
 
-            // stream を解放
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop())
-            }
+                // stream を解放
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop())
+                }
 
-            // 新しいストリームを取得し録画を開始
-            setTimeout(() => {
-                initStream()
-            }, 1000)
+                // 新しいストリームを取得し録画を開始
+                setTimeout(() => {
+                    initStream()
+                }, 1000)
+            }
         })
     }
 
@@ -230,22 +277,23 @@ export default async () => {
 
     setTimeout(async () => {
 
+        // ミュート対策
+        fixAudioTrack(video)
+
         // 録画リストを更新
         await reloadRecordedMovieList()
 
         // 録画を開始
-        setTimeout(() => {
-            if (autoStart) {
+        if (autoStart) {
+            setTimeout(() => {
                 initStream()
-            } else {
-                setRecordingStatus(true, false, '停止中')
-            }
-        }, 2000)
-
-        // ミュート対策
-        fixAudioTrack(video)
+            }, 2000)
+        } else {
+            setRecordingStatus(true, false, '停止中')
+        }
 
         // video の track 変更を監視
         observeVideoResize()
-    }, 2000)
+
+    }, 0)
 }

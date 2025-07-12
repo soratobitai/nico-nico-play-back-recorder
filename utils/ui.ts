@@ -316,7 +316,6 @@ const reloadRecordedMovieList = async () => {
 
     for (const chunk of chunks.reverse()) {
         insertRecordedMovie([chunk.sessionId, chunk.chunkIndex], chunk.imgUrl)
-        await new Promise(resolve => setTimeout(resolve, 10))
     }
 }
 
