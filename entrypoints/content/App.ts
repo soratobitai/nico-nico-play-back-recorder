@@ -61,52 +61,67 @@ export default async () => {
         if (!video) return
         if (mediaRecorder && mediaRecorder.state === "recording") return
 
-        try {
-            // 動画の準備状態をより厳密にチェック
-            if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
-                console.log("動画が完全に準備完了し、再生中です")
-                // 動画ストリームを取得
-                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                startNewRecorder()
-            } else if (video.readyState >= 3) {
-                console.log("動画が準備完了しましたが、再生状態を確認中...")
-                // 少し待ってから再生状態を再確認
-                setTimeout(() => {
-                    if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
-                        console.log("動画の再生状態が確認できました")
-                        stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                        startNewRecorder()
-                    } else {
-                        console.log("動画の準備が完了していないため、待機します...")
-                        video.addEventListener("canplay", () => {
-                            console.log("動画が再生可能になりました。")
-                            // 再生開始を少し待ってからストリームを取得
-                            setTimeout(() => {
-                                if (!video.paused && video.currentTime > 0) {
-                                    stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                                    startNewRecorder()
-                                }
-                            }, 500)
-                        }, { once: true })
-
-                    }
-                }, 1000)
+        // ページが忙しい場合は少し待つ
+        const executeWhenReady = (callback: () => void) => {
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', callback, { once: true })
+            } else if (document.readyState === 'interactive') {
+                // 少し待ってから実行
+                setTimeout(callback, 100)
             } else {
-                console.log("動画の準備が完了していないため、待機します...")
-                video.addEventListener("canplay", () => {
-                    console.log("動画が再生可能になりました。")
-                    // 再生開始を少し待ってからストリームを取得
+                // 完全に読み込み完了している場合は即座に実行
+                callback()
+            }
+        }
+
+        executeWhenReady(() => {
+            try {
+                // 動画の準備状態をより厳密にチェック
+                if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
+                    console.log("動画が完全に準備完了し、再生中です")
+                    // 動画ストリームを取得
+                    stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                    startNewRecorder()
+                } else if (video.readyState >= 3) {
+                    console.log("動画が準備完了しましたが、再生状態を確認中...")
+                    // 少し待ってから再生状態を再確認
                     setTimeout(() => {
-                        if (!video.paused && video.currentTime > 0) {
+                        if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
+                            console.log("動画の再生状態が確認できました")
                             stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
                             startNewRecorder()
+                        } else {
+                            console.log("動画の準備が完了していないため、待機します...")
+                            video.addEventListener("canplay", () => {
+                                console.log("動画が再生可能になりました。")
+                                // 再生開始を少し待ってからストリームを取得
+                                setTimeout(() => {
+                                    if (!video.paused && video.currentTime > 0) {
+                                        stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                                        startNewRecorder()
+                                    }
+                                }, 500)
+                            }, { once: true })
+
                         }
-                    }, 500)
-                }, { once: true })
+                    }, 1000)
+                } else {
+                    console.log("動画の準備が完了していないため、待機します...")
+                    video.addEventListener("canplay", () => {
+                        console.log("動画が再生可能になりました。")
+                        // 再生開始を少し待ってからストリームを取得
+                        setTimeout(() => {
+                            if (!video.paused && video.currentTime > 0) {
+                                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                                startNewRecorder()
+                            }
+                        }, 500)
+                    }, { once: true })
+                }
+            } catch (error) {
+                console.log("録画の開始に失敗しました:", error)
             }
-        } catch (error) {
-            console.log("録画の開始に失敗しました:", error)
-        }
+        })
     }
 
     const startNewRecorder = () => {
@@ -272,28 +287,41 @@ export default async () => {
     createModal()
     watchFullscreenChange()
 
+    // ミュート対策
+    fixAudioTrack(video)
+
+    // video の track 変更を監視
+    observeVideoResize()
+
     // 不完全なtempファイルを取得・削除し結合して保存
     await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
 
-    setTimeout(async () => {
+    // ページの他のスクリプトが忙しい時期を避けて、アイドル時間に実行
+    const executeWhenIdle = (callback: () => void) => {
+        if ('requestIdleCallback' in window) {
+            requestIdleCallback(callback, { timeout: 5000 })
+        } else {
+            // requestIdleCallbackがサポートされていない場合は、少し長めの遅延で代替
+            setTimeout(callback, 1000)
+        }
+    }
 
-        // ミュート対策
-        fixAudioTrack(video)
+    executeWhenIdle(async () => {
 
         // 録画リストを更新
         await reloadRecordedMovieList()
 
+        // 2秒待つ
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        
         // 録画を開始
         if (autoStart) {
-            setTimeout(() => {
+            // 録画開始もアイドル時間に実行
+            executeWhenIdle(() => {
                 initStream()
-            }, 2000)
+            })
         } else {
             setRecordingStatus(true, false, '停止中')
         }
-
-        // video の track 変更を監視
-        observeVideoResize()
-
-    }, 0)
+    })
 }

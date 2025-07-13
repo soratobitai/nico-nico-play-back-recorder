@@ -151,7 +151,7 @@ const formatDate = (input: string | number) => {
     const minutes = pad(date.getMinutes())
     const seconds = pad(date.getSeconds())
 
-    return `${year}年${month}月${day}日_${hours}時${minutes}分${seconds}秒`
+    return `${year}-${month}-${day}-${hours}${minutes}${seconds}`
 }
 
 
