@@ -99,8 +99,19 @@ const mergeChunksBySession = async (sessionId: string) => {
         const key = await saveChunk('Chunks', sessionId, Date.now(), blob, screenShot_, Date.now(), userName, title)
         console.log(`sessionId: ${sessionId} のチャンクを結合して保存しました`)
 
+        const [sessionId_, chunkIndex_] = key
+
         // UIに挿入
-        insertRecordedMovie(key, screenShot_, 'end')
+        const chunkData = {
+            sessionId: sessionId_,
+            chunkIndex: chunkIndex_,
+            blob,
+            imgUrl: screenShot_,
+            createdAt: Date.now(),
+            userName,
+            title
+        }
+        insertRecordedMovie(chunkData, 'end')
     } catch (error) {
         console.log(`sessionId: ${sessionId} の録画データの結合に失敗しました:`, error)
     }

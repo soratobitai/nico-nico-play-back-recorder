@@ -108,23 +108,33 @@ const insertRecordedMovieAria = async (
 }
 
 const insertRecordedMovie = (
-    key: IDBValidKey,
-    imgUrl: string | null,
+    chunk: {
+        sessionId: string,
+        chunkIndex: number,
+        blob: Blob,
+        imgUrl: string | null,
+        createdAt: number,
+        userName: string | null,
+        title: string | null
+    },
     insertPosition: "start" | "end" = "start" // ← "start"（左に追加）または "end"（右に追加）
 ) => {
-    const [sessionId_, chunkIndex_] = key as [string, string]
-
     const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
     if (!recordedMovieBox) return
 
     const recordedMovie = document.createElement("div")
     recordedMovie.classList.add("recordedMovie")
-    recordedMovie.setAttribute('sessionId', sessionId_)
-    recordedMovie.setAttribute('chunkIndex', chunkIndex_)
+    recordedMovie.setAttribute('sessionId', chunk.sessionId)
+    recordedMovie.setAttribute('chunkIndex', chunk.chunkIndex.toString())
 
     // メイン画像
     const img = document.createElement("img")
-    img.src = imgUrl || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
+    img.src = chunk.imgUrl || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
+    // title属性を設定（ユーザー名_タイトルの形式）
+    const titleText = chunk.userName && chunk.title ? `${chunk.userName}_${chunk.title}` : (chunk.userName || chunk.title || '')
+    if (titleText) {
+        img.title = titleText
+    }
     recordedMovie.appendChild(img)
 
     // ✕ボタン（削除）
@@ -137,7 +147,7 @@ const insertRecordedMovie = (
         const confirmed = await confirmModal('この動画データを削除しますか？')
         if (confirmed) {
             recordedMovie.remove() // UIから削除
-            await deleteChunkByKeys('Chunks', [key]) // indexedDBから削除
+            await deleteChunkByKeys('Chunks', [[chunk.sessionId, chunk.chunkIndex]]) // indexedDBから削除
         }
     })
     recordedMovie.appendChild(closeButton)
@@ -149,7 +159,7 @@ const insertRecordedMovie = (
     downloadButton.title = "ダウンロード"
     downloadButton.addEventListener("click", (e) => {
         e.stopPropagation()
-        downloadRecordedMovie(key as [string, number])
+        downloadRecordedMovie([chunk.sessionId, chunk.chunkIndex])
     })
     recordedMovie.appendChild(downloadButton)
 
@@ -202,8 +212,16 @@ function createModal() {
     modal.id = 'video-modal'
     modal.innerHTML = `
       <div class="modal-content">
-          <span id="close-modal" class="close">&times;</span>
-          <video id="video-player" controls autoplay></video>
+          <div class="modal-header">
+              <span id="modal-user-name" class="modal-user-name"></span>
+              <span id="close-modal" class="close">&times;</span>
+          </div>
+          <div class="modal-body">
+              <video id="video-player" controls autoplay></video>
+          </div>
+          <div class="modal-footer">
+              <span id="modal-title" class="modal-title"></span>
+          </div>
       </div>
   `
 
@@ -286,25 +304,49 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
         const video = document.getElementById('video-player') as HTMLVideoElement
         video.src = url
 
+        // ユーザー名とタイトルをモーダルに表示
+        const userNameElement = document.getElementById('modal-user-name') as HTMLElement
+        const titleElement = document.getElementById('modal-title') as HTMLElement
+        
+        if (userNameElement && chunk.userName) {
+            userNameElement.textContent = chunk.userName
+        }
+        if (titleElement && chunk.title) {
+            titleElement.textContent = chunk.title
+        }
+
+        // クリックされたサムネイル要素を取得
+        const clickedElement = (event.target as HTMLElement).closest('.recordedMovie') as HTMLElement
+        if (!clickedElement) return
+
+        const rect = clickedElement.getBoundingClientRect()
+        const thumbnailCenterX = rect.left + rect.width / 2
+        const thumbnailTopY = rect.top
+
+        // モーダルサイズを固定
+        const modalWidth = 400
+        const modalHeight = 300
+
         const modal = document.getElementById('video-modal') as HTMLElement
         const modalContent = modal.querySelector('.modal-content') as HTMLElement
+        
+        // モーダルサイズを設定
+        modalContent.style.width = `${modalWidth}px`
+        modalContent.style.height = `${modalHeight}px`
+        
         modal.style.display = 'block'
-        modalContent.style.width = '300px'
-        modalContent.style.height = '250px'
 
-        // クリック位置を考慮してモーダルの位置を設定
-        const { pageX, pageY } = event
-        const modalWidth = modalContent.offsetWidth
-        const modalHeight = modalContent.offsetHeight
+        // サムネイルの中心とモーダルの中心が一致するように位置計算
+        let posX = thumbnailCenterX - modalWidth / 2
+        let posY = thumbnailTopY - 50 - modalHeight
+
+        // ビューポート境界チェック
         const viewportWidth = window.innerWidth
         const viewportHeight = window.innerHeight
 
-        let posX = pageX - (modalWidth / 2)
-        let posY = pageY - modalHeight - 50
-
-        // はみ出さないように調整
         if (posX + modalWidth > viewportWidth) posX = viewportWidth - modalWidth - 10
-        if (posY + modalHeight > viewportHeight) posY = viewportHeight - modalHeight - 10
+        if (posY < 10) posY = 10
+        if (posX < 10) posX = 10
 
         modalContent.style.position = 'absolute'
         modalContent.style.left = `${posX}px`
@@ -423,7 +465,7 @@ const loadOlderRecordings = async () => {
             
             // 古い録画を左端に追加
             for (const chunk of olderChunks.reverse()) {
-                insertRecordedMovie([chunk.sessionId, chunk.chunkIndex], chunk.imgUrl, "start")
+                insertRecordedMovie(chunk, "start")
                 
                 // タイムスタンプを更新
                 if (chunk.createdAt < oldestLoadedTimestamp) {
@@ -487,7 +529,7 @@ const initializeRecordedMovieList = async () => {
 
         // 録画を表示（最新のものから右端に）
         for (const chunk of latestChunks.reverse()) {
-            insertRecordedMovie([chunk.sessionId, chunk.chunkIndex], chunk.imgUrl, "end")
+            insertRecordedMovie(chunk, "end")
         }
     } catch (error) {
         console.error('録画リストの初期化に失敗しました:', error)

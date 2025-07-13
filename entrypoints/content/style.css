@@ -122,22 +122,62 @@
 #video-modal .modal-content {
     position: relative;
     display: flex;
-    padding: 10px;
-    justify-content: center;
-    align-items: center;
-    background: rgba(0, 0, 0, 1);
+    flex-direction: column;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.7);
     border-radius: 5px;
     overflow: hidden;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+#video-modal .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+}
+
+#video-modal .modal-user-name {
+    color: #ccc;
+    font-size: 14px;
+    font-weight: bold;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#video-modal .modal-body {
+    height: 200px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#video-modal .modal-footer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 10px;
+}
+
+#video-modal .modal-title {
+    color: #ccc;
+    font-size: 13px;
+    font-weight: bold;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #video-modal .close {
-    position: absolute;
-    right: 10px;
-    top: 5px;
-    font-size: 24px;
+    font-size: 20px;
     cursor: pointer;
     color: white;
-    z-index: 2;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
 }
 
 #video-modal video {
