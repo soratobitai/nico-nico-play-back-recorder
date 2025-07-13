@@ -43,7 +43,7 @@ const insertRecordedMovieAria = async (
             </div>
             <div class="control-status">
               <div id="recordStatus">準備中</div>
-              <div id="recordTime">00:00:00</div>
+              <div id="recordTime">00:00</div>
             </div>
             <div class="control-buttons">
               <button type="button" id="reloadButton">リスト更新</button>
@@ -202,9 +202,9 @@ const insertRecordedMovie = (
 function createModal() {
     if (document.getElementById('video-modal')) return // すでに作成済みならスキップ
 
-    // Body要素を取得
-    const body = document.querySelector('body')
-    if (!body) return
+    // 録画リストの要素を取得
+    const recordedMovieAria = document.getElementById('recordedMovieAria')
+    if (!recordedMovieAria) return
 
     const modal = document.createElement('div')
     modal.id = 'video-modal'
@@ -223,15 +223,8 @@ function createModal() {
       </div>
   `
 
-    const updateModalSize = () => {
-        modal.style.width = `${body.offsetWidth}px`
-        modal.style.height = `${body.offsetHeight}px`
-    }
-
-    updateModalSize() // 初期サイズ設定
-    window.addEventListener('resize', updateModalSize) // リサイズ時に更新
-
-    document.body.appendChild(modal)
+    // 録画リストの要素にモーダルを追加
+    recordedMovieAria.appendChild(modal)
 
     // 閉じるボタンの処理
     const closeButton = document.getElementById('close-modal')
@@ -240,12 +233,22 @@ function createModal() {
         const video = document.getElementById('video-player') as HTMLVideoElement
         video.pause()
         video.src = '' // メモリ解放
-        window.removeEventListener('resize', updateModalSize) // リスナー削除
     })
 
     modal.addEventListener('click', (event) => {
         if (event.target === modal) {
             closeButton?.click()
+        }
+    })
+
+    // モーダル以外をクリックでモーダルを閉じる
+    document.addEventListener('click', (event) => {
+        const modal = document.getElementById('video-modal')
+        if (modal && modal.style.display === 'block') {
+            const modalContent = modal.querySelector('.modal-content')
+            if (modalContent && !modalContent.contains(event.target as Node)) {
+                closeButton?.click()
+            }
         }
     })
 }
@@ -317,10 +320,6 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
         const clickedElement = (event.target as HTMLElement).closest('.recordedMovie') as HTMLElement
         if (!clickedElement) return
 
-        const rect = clickedElement.getBoundingClientRect()
-        const thumbnailCenterX = rect.left + rect.width / 2
-        const thumbnailTopY = rect.top
-
         // モーダルサイズを固定
         const modalWidth = 400
         const modalHeight = 300
@@ -334,21 +333,38 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
         
         modal.style.display = 'block'
 
-        // サムネイルの中心とモーダルの中心が一致するように位置計算
-        let posX = thumbnailCenterX - modalWidth / 2
-        let posY = thumbnailTopY - 50 - modalHeight
-
-        // ビューポート境界チェック
-        const viewportWidth = window.innerWidth
-        const viewportHeight = window.innerHeight
-
-        if (posX + modalWidth > viewportWidth) posX = viewportWidth - modalWidth - 10
-        if (posY < 10) posY = 10
-        if (posX < 10) posX = 10
-
+        // サムネイルの位置を基準に相対的に配置
+        const rect = clickedElement.getBoundingClientRect()
+        
+        // サムネイルの中心X座標を計算
+        const thumbnailCenterX = rect.left + rect.width / 2
+        
+        // 録画リストの要素の位置を取得
+        const recordedMovieAria = document.getElementById('recordedMovieAria')
+        const ariaRect = recordedMovieAria?.getBoundingClientRect()
+        
+        if (!ariaRect) return
+        
+        // 録画リストの要素を基準とした相対位置を計算
+        // サムネイルの中心X座標から録画リストの左端を引いて相対位置を算出
+        let relativeX = thumbnailCenterX - ariaRect.left - modalWidth / 2
+        
+        // 境界チェック：左端からはみ出さないように
+        if (relativeX < 10) {
+            relativeX = 10
+        }
+        
+        // 境界チェック：右端からはみ出さないように
+        const maxX = ariaRect.width - modalWidth - 10
+        if (relativeX > maxX) {
+            relativeX = maxX
+        }
+        
+        // 録画リストの要素を基準とした相対位置を設定
         modalContent.style.position = 'absolute'
-        modalContent.style.left = `${posX}px`
-        modalContent.style.top = `${posY}px`
+        modalContent.style.left = `${relativeX}px`
+        modalContent.style.top = `-${modalHeight + 45}px`
+        modalContent.style.zIndex = '9999' // 他の要素に隠れないようにz-indexを設定
     } catch (error) {
         console.log('動画のロードに失敗しました:', error)
     }
@@ -392,41 +408,10 @@ const getTimeString = (startTime: number) => {
     const elapsed = now - startTime
     const minutes = Math.floor(elapsed / 60000)
     const seconds = Math.floor((elapsed % 60000) / 1000)
-    const hours = Math.floor(minutes / 60)
-    const mm = (minutes % 60).toString().padStart(2, '0')
+    const mm = minutes.toString().padStart(2, '0')
     const ss = seconds.toString().padStart(2, '0')
-    const hh = hours.toString().padStart(2, '0')
-    const timeString = `${hh}:${mm}:${ss}`
+    const timeString = `${mm}:${ss}`
     return timeString
-}
-
-// フルスクリーン時に非表示
-function watchFullscreenChange() {
-    const recordedMovieAria = document.getElementById('recordedMovieAria')
-    const recordedMovieWrapper = document.getElementsByClassName('recordedMovieWrapper')[0] as HTMLElement
-
-    if (!recordedMovieAria || !recordedMovieWrapper) return
-
-    const target = document.querySelector('[class*="_leo-player_"]')
-    if (!target) return
-
-    const observer = new ResizeObserver(entries => {
-        for (const entry of entries) {
-            const elementWidth = entry.contentRect.width
-            const windowWidth = window.innerWidth
-            const tolerance = 5
-
-            if (Math.abs(elementWidth - windowWidth) <= tolerance) {
-                recordedMovieAria.style.height = '0px'
-                recordedMovieWrapper.style.height = '0px'
-            } else {
-                recordedMovieAria.style.height = '90px'
-                recordedMovieWrapper.style.height = '90px'
-            }
-        }
-    })
-
-    observer.observe(target)
 }
 
 // 録画リストを読み込む共通関数
@@ -562,6 +547,5 @@ export {
     deleteMovieIcon,
     setRecordingStatus,
     getTimeString,
-    watchFullscreenChange,
     initializeRecordedMovieList
 }

@@ -1,7 +1,7 @@
 import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
-import { insertRecordedMovieAria, createModal, confirmModal, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, watchFullscreenChange, initializeRecordedMovieList } from "../../utils/ui"
+import { insertRecordedMovieAria, createModal, confirmModal, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, initializeRecordedMovieList } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START } from '../../utils/storage'
 import { checkLiveStatus } from '../../services/api'
 
@@ -285,7 +285,6 @@ export default async () => {
         clear
     )
     createModal()
-    watchFullscreenChange()
 
     // ミュート対策
     fixAudioTrack(video)

@@ -60,7 +60,7 @@ const stopRecordingActions = async (sessionId: string) => {
         startTime = null
 
         const recordTimeElem = document.getElementById('recordTime')
-        if (recordTimeElem) recordTimeElem.textContent = '00:00:00'
+        if (recordTimeElem) recordTimeElem.textContent = '00:00'
     }
     resetRecordingTimer()
 
