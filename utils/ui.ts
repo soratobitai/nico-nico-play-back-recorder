@@ -14,9 +14,7 @@ let userScrolledAway = false
 let isLoadingOlder = false
 let hasMoreOlder = true
 let oldestLoadedTimestamp = Infinity
-let newestLoadedTimestamp = 0
 let loadedChunksCount = 0
-let totalChunksCount = 0
 const CHUNKS_PER_LOAD = 20
 const CHUNK_WIDTH = 102 // 固定幅（90px + 左右ボーダー2px + margin 10px）
 
@@ -356,10 +354,9 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
     }
 }
 
-// 録画リストを更新
+// 録画リストを更新（全件取得）
 const reloadRecordedMovieList = async () => {
-    // 無限スクロール用の初期化関数を使用
-    await initializeRecordedMovieList()
+    await loadRecordedMovieList('all')
 }
 
 // UIから動画サムネを削除
@@ -432,8 +429,71 @@ function watchFullscreenChange() {
     observer.observe(target)
 }
 
+// 録画リストを読み込む共通関数
+const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
+    const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
+    if (!recordedMovieBox) return
+
+    // 最初に無限スクロールを無効化（スクロールイベントを防ぐ）
+    hasMoreOlder = false
+    isLoadingOlder = false
+
+    // ローディング表示を追加
+    recordedMovieBox.innerHTML = `<div class="loading-spinner"></div>`
+
+    try {
+        let chunks: Array<{
+            sessionId: string,
+            chunkIndex: number,
+            blob: Blob,
+            imgUrl: string | null,
+            createdAt: number,
+            userName: string | null,
+            title: string | null
+        }> = []
+
+        if (mode === 'latest') {
+            // 最新の録画を取得（最初の20件のみ）
+            chunks = await getLatestChunks('Chunks', CHUNKS_PER_LOAD)
+        } else {
+            // すべての録画を取得
+            chunks = await getAllChunks('Chunks')
+        }
+        
+        if (chunks.length === 0) {
+            // データがなければメッセージ表示
+            recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
+            return
+        }
+
+        // 表示リセット
+        recordedMovieBox.innerHTML = ""
+
+        // 状態を初期化
+        oldestLoadedTimestamp = Math.min(...chunks.map(chunk => chunk.createdAt))
+        loadedChunksCount = chunks.length
+        
+        // 処理完了後に適切な状態に戻す
+        if (mode === 'latest') {
+            hasMoreOlder = chunks.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
+        } else {
+            hasMoreOlder = false // 全件表示なので古い録画の読み込みは不要
+        }
+
+        // 録画を表示（最新のものから右端に）
+        for (const chunk of chunks.reverse()) {
+            insertRecordedMovie(chunk, "end")
+        }
+    } catch (error) {
+        const errorMessage = mode === 'latest' ? '録画リストの初期化に失敗しました' : '録画リストの更新に失敗しました'
+        console.error(errorMessage + ':', error)
+        recordedMovieBox.innerHTML = `<div class="no-video">エラーが発生しました</div>`
+    }
+}
+
 // 古い録画を読み込む関数
 const loadOlderRecordings = async () => {
+    console.log("loadOlderRecordings!!!!!!!!!!")
     if (isLoadingOlder || !hasMoreOlder) return
 
     isLoadingOlder = true
@@ -447,7 +507,7 @@ const loadOlderRecordings = async () => {
         loadingIndicator.innerHTML = '<div class="loading-spinner"></div>'
         loadingIndicator.style.position = 'absolute'
         loadingIndicator.style.left = '10px'
-        loadingIndicator.style.top = '50%'
+        loadingIndicator.style.top = '40%'
         loadingIndicator.style.transform = 'translateY(-50%)'
         loadingIndicator.style.zIndex = '1000'
         box.appendChild(loadingIndicator)
@@ -455,9 +515,7 @@ const loadOlderRecordings = async () => {
         // 古い録画を取得
         const olderChunks = await getOlderChunks('Chunks', oldestLoadedTimestamp, CHUNKS_PER_LOAD)
 
-        console.log("olderChunks", olderChunks)
-
-        if (olderChunks.length === 0 || loadedChunksCount >= totalChunksCount) {
+        if (olderChunks.length === 0) {
             hasMoreOlder = false
         } else {
             // 現在のスクロール位置を記録
@@ -489,52 +547,9 @@ const loadOlderRecordings = async () => {
     }
 }
 
-
-
 // 録画リストを初期化する関数
 const initializeRecordedMovieList = async () => {
-    const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
-    if (!recordedMovieBox) return
-
-    // ローディング表示を追加
-    recordedMovieBox.innerHTML = `<div class="loading-spinner"></div>`
-
-    try {
-        // 全録画数を取得（軽量）
-        totalChunksCount = await getChunksCount('Chunks')
-        
-        if (totalChunksCount === 0) {
-            // データがなければメッセージ表示
-            recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
-            return
-        }
-
-        // 録画リストの幅を全録画データ分に設定
-        const totalWidth = totalChunksCount * CHUNK_WIDTH
-        recordedMovieBox.style.width = `${totalWidth}px`
-
-        // 最新の録画を取得（最初の20件のみ）
-        const latestChunks = await getLatestChunks('Chunks', CHUNKS_PER_LOAD)
-
-        console.log("init latestChunks", latestChunks)
-        
-        // 表示リセット
-        recordedMovieBox.innerHTML = ""
-
-        // 状態を初期化
-        oldestLoadedTimestamp = Math.min(...latestChunks.map(chunk => chunk.createdAt))
-        newestLoadedTimestamp = Math.max(...latestChunks.map(chunk => chunk.createdAt))
-        loadedChunksCount = latestChunks.length
-        hasMoreOlder = totalChunksCount > CHUNKS_PER_LOAD // 総数が20件を超えていれば古い録画がある
-
-        // 録画を表示（最新のものから右端に）
-        for (const chunk of latestChunks.reverse()) {
-            insertRecordedMovie(chunk, "end")
-        }
-    } catch (error) {
-        console.error('録画リストの初期化に失敗しました:', error)
-        recordedMovieBox.innerHTML = `<div class="no-video">エラーが発生しました</div>`
-    }
+    await loadRecordedMovieList('latest')
 }
 
 export {

@@ -1,7 +1,7 @@
 import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
-import { insertRecordedMovieAria, createModal, confirmModal, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, watchFullscreenChange } from "../../utils/ui"
+import { insertRecordedMovieAria, createModal, confirmModal, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, watchFullscreenChange, initializeRecordedMovieList } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START } from '../../utils/storage'
 import { checkLiveStatus } from '../../services/api'
 
@@ -308,8 +308,8 @@ export default async () => {
 
     executeWhenIdle(async () => {
 
-        // 録画リストを更新
-        await reloadRecordedMovieList()
+        // 録画リストを初期化（最新20件のみ）
+        await initializeRecordedMovieList()
 
         // 2秒待つ
         await new Promise(resolve => setTimeout(resolve, 2000))
