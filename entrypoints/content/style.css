@@ -150,6 +150,13 @@
     margin-left: 10px;
 }
 
+#video-modal .modal-date {
+    font-size: 11px;
+    font-weight: normal;
+    color: #999;
+    margin-right: 8px;
+}
+
 #video-modal .modal-body {
     height: 200px;
     display: flex;
@@ -167,7 +174,6 @@
 #video-modal .modal-title {
     color: #ccc;
     font-size: 13px;
-    font-weight: bold;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

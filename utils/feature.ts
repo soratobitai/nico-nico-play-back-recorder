@@ -85,8 +85,8 @@ const downloadRecordedMovie = async (key: [string, number]) => {
         const url = URL.createObjectURL(chunk.blob)
 
         // ダウンロードファイル名を生成
-        const formattedDate = formatDate(chunk.createdAt)
-        const filename = `${chunk.userName}_${chunk.title}_${formattedDate}.mp4`
+        const formattedDate = formatDateForFileName(chunk.createdAt)
+        const filename = truncateFileName(`${chunk.userName} ${formattedDate} ${chunk.title}.mp4`)
 
         // 一時的にaタグを作成して自動クリック
         const a = document.createElement('a')
@@ -127,8 +127,8 @@ const getScreenShotAndDownload = async () => {
             const url = URL.createObjectURL(blob)
 
             const { userName, title } = getProgramData()
-            const timeString = formatDate(Date.now())
-            a.download = `${userName}_${title}_${timeString}.png`
+            const timeString = formatDateForFileName(Date.now())
+            a.download = truncateFileName(`${userName} ${timeString} ${title}.png`)
             a.href = url
             a.click()
 
@@ -137,6 +137,21 @@ const getScreenShotAndDownload = async () => {
     } catch (err) {
         console.error("スクリーンショット処理中にエラー:", err)
     }
+}
+
+const formatDateForFileName = (input: string | number) => {
+    const date = new Date(input)
+
+    const pad = (n: number) => n.toString().padStart(2, '0')
+
+    const year = date.getFullYear()
+    const month = pad(date.getMonth() + 1)
+    const day = pad(date.getDate())
+    const hours = pad(date.getHours())
+    const minutes = pad(date.getMinutes())
+    const seconds = pad(date.getSeconds())
+
+    return `${year}-${month}-${day} ${hours}${minutes}${seconds}`
 }
 
 const formatDate = (input: string | number) => {
@@ -151,8 +166,42 @@ const formatDate = (input: string | number) => {
     const minutes = pad(date.getMinutes())
     const seconds = pad(date.getSeconds())
 
-    return `${year}-${month}-${day}-${hours}${minutes}${seconds}`
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+// ファイル名の長さを制限する関数
+const truncateFileName = (fileName: string, maxLength: number = 200): string => {
+    if (fileName.length <= maxLength) {
+        return fileName
+    }
+
+    // 拡張子を取得
+    const lastDotIndex = fileName.lastIndexOf('.')
+    if (lastDotIndex === -1) {
+        // 拡張子がない場合は単純に切り詰める
+        return fileName.substring(0, maxLength)
+    }
+
+    const extension = fileName.substring(lastDotIndex)
+    const nameWithoutExtension = fileName.substring(0, lastDotIndex)
+    
+    // 拡張子の長さを考慮して名前部分を切り詰める
+    const maxNameLength = maxLength - extension.length
+    if (maxNameLength <= 0) {
+        // 拡張子が長すぎる場合は拡張子も切り詰める
+        return fileName.substring(0, maxLength)
+    }
+
+    return nameWithoutExtension.substring(0, maxNameLength) + extension
 }
 
 
-export { getProgramData, extractFirstFrame, downloadRecordedMovie, getScreenShotAndDownload }
+export {
+    getProgramData,
+    extractFirstFrame,
+    downloadRecordedMovie,
+    getScreenShotAndDownload,
+    formatDateForFileName,
+    formatDate,
+    truncateFileName
+}

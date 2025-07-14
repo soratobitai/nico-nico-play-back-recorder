@@ -1,5 +1,5 @@
 import { getChunkByKey, getAllChunks, deleteChunkByKeys, getLatestChunks, getOlderChunks, getChunksCount } from "../hooks/indexedDB/recordingDB"
-import { downloadRecordedMovie, getScreenShotAndDownload } from "../utils/feature"
+import { downloadRecordedMovie, getScreenShotAndDownload, formatDate } from "../utils/feature"
 
 let capButton = null as HTMLButtonElement | null
 let startButton = null as HTMLButtonElement | null
@@ -24,7 +24,7 @@ const insertRecordedMovieAria = async (
     reload: () => void,
     clear: () => void,
 ) => {
-    const controlArea = document.querySelector('[class*="_player-controller_"]')
+    const controlArea = document.querySelector('[class*="_control-area_"]')
     if (!controlArea) return
 
     const recordedMovieHTML = `
@@ -53,7 +53,7 @@ const insertRecordedMovieAria = async (
         </div>
       </div>
     `
-    controlArea.insertAdjacentHTML("beforeend", recordedMovieHTML) // afterend
+    controlArea.insertAdjacentHTML("afterend", recordedMovieHTML) // afterend beforeend
 
     capButton = document.getElementById("capButton") as HTMLButtonElement
     startButton = document.getElementById("startButton") as HTMLButtonElement
@@ -128,8 +128,12 @@ const insertRecordedMovie = (
     // メイン画像
     const img = document.createElement("img")
     img.src = chunk.imgUrl || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
-    // title属性を設定（ユーザー名_タイトルの形式）
-    const titleText = chunk.userName && chunk.title ? `${chunk.userName}_${chunk.title}` : (chunk.userName || chunk.title || '')
+    // title属性を設定（作成日_ユーザー名_タイトルの形式）
+    const formattedDate = formatDate(chunk.createdAt)
+    const titleText = chunk.userName && chunk.title ? `${formattedDate}_${chunk.userName}_${chunk.title}` : 
+                     chunk.userName ? `${formattedDate}_${chunk.userName}` :
+                     chunk.title ? `${formattedDate}_${chunk.title}` :
+                     formattedDate
     if (titleText) {
         img.title = titleText
     }
@@ -310,7 +314,8 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
         const titleElement = document.getElementById('modal-title') as HTMLElement
         
         if (userNameElement && chunk.userName) {
-            userNameElement.textContent = chunk.userName
+            const formattedDate = formatDate(chunk.createdAt)
+            userNameElement.innerHTML = `<span class="modal-date">${formattedDate}</span> ${chunk.userName}`
         }
         if (titleElement && chunk.title) {
             titleElement.textContent = chunk.title
@@ -446,25 +451,22 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
             return
         }
 
-        // 表示リセット
-        recordedMovieBox.innerHTML = ""
-
         // 状態を初期化
         oldestLoadedTimestamp = Math.min(...chunks.map(chunk => chunk.createdAt))
         loadedChunksCount = chunks.length
-        
-        // 処理完了後に適切な状態に戻す
-        if (mode === 'latest') {
-            hasMoreOlder = chunks.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
-        } else {
-            hasMoreOlder = false // 全件表示なので古い録画の読み込みは不要
-        }
+
+        await new Promise(resolve => setTimeout(resolve, 500)) // 負荷軽減のため
+
+        // 表示リセット
+        recordedMovieBox.innerHTML = ""
 
         // 録画を表示（最新のものから右端に）
         if (mode === 'latest') {
             // 最新の録画は逆順で表示（新しいものを右端に）
             for (const chunk of chunks) {
                 insertRecordedMovie(chunk, "start")
+
+                // await new Promise(resolve => setTimeout(resolve, 20)) // 負荷軽減のため
             }
         } else {
             // 全件取得時は時系列順で表示（古いものを左端から、新しいものを右端に）
@@ -474,6 +476,14 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
                 await new Promise(resolve => setTimeout(resolve, 20)) // 負荷軽減のため
             }
         }
+
+        // 処理完了後に適切な状態に戻す
+        if (mode === 'latest') {
+            hasMoreOlder = chunks.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
+        } else {
+            hasMoreOlder = false // 全件表示なので古い録画の読み込みは不要
+        }
+
     } catch (error) {
         const errorMessage = mode === 'latest' ? '録画リストの初期化に失敗しました' : '録画リストの更新に失敗しました'
         console.error(errorMessage + ':', error)

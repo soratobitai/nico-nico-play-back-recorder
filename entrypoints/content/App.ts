@@ -28,6 +28,36 @@ export default async () => {
     let maxStorageSize = 1 * 1024 * 1024 * 1024
     let autoStart = true
 
+    // 録画を再スタート
+    const resetRecording = () => {
+
+        if (mediaRecorder && mediaRecorder.state === "recording") {
+            console.log("🔄 録画を切り替えます...")
+
+            mediaRecorder.onstop = async () => {
+                await stopRecordingActions(sessionId)
+
+                // ✅ 新しい recorder を開始
+                startNewRecorder()
+            }
+
+            // recorder を停止
+            mediaRecorder.stop()
+
+            // ✅ 容量超過分のチャンクを削除（マージとズラす）
+            setTimeout(async () => {
+                // indexedDBから削除
+                const deletedKeys = await cleanUpOldChunks('Chunks', maxStorageSize)
+                if (deletedKeys.length === 0) return
+                console.log(`容量超過分のチャンクを削除しました: ${deletedKeys.length}件`, deletedKeys)
+
+                // UIから削除
+                deleteMovieIcon(deletedKeys)
+
+            }, restartInterval / 2)
+        }
+    }
+
     // 初期設定読み込み
     const loadSettings = async () => {
         restartInterval = await RESTART_MEDIARECORDER_INTERVAL_MS.getValue()
@@ -36,7 +66,7 @@ export default async () => {
 
         startResetRecordInterval(resetRecording, restartInterval)
     }
-    loadSettings()
+    await loadSettings()
 
     // 設定変更の反映（RESTART_MEDIARECORDER_INTERVAL_MSとMAX_STORAGE_SIZEのみ監視）
     RESTART_MEDIARECORDER_INTERVAL_MS.watch((newValue) => {
@@ -46,7 +76,6 @@ export default async () => {
     MAX_STORAGE_SIZE.watch((newValue) => {
         maxStorageSize = newValue
     })
-
 
     const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
     const { userName, title } = getProgramData() // 番組情報を取得
@@ -61,67 +90,81 @@ export default async () => {
         if (!video) return
         if (mediaRecorder && mediaRecorder.state === "recording") return
 
-        // ページが忙しい場合は少し待つ
+        // ヘルパー関数をinitStream内に定義
+        const isVideoReady = (video: HTMLVideoElement): boolean => {
+            return video.readyState >= 4 && !video.paused && video.currentTime > 0
+        }
+
+        const isVideoPrepared = (video: HTMLVideoElement): boolean => {
+            return video.readyState >= 3
+        }
+
+        const startRecordingFromStream = (video: HTMLVideoElement) => {
+            try {
+                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                startNewRecorder()
+            } catch (error) {
+                console.log("録画の開始に失敗しました:", error)
+            }
+        }
+
+        const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
+            const timeoutId = setTimeout(() => {
+                // タイムアウトした場合はリロードボタンを押す
+                const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
+                if (reloadButton) {
+                    console.log("動画の準備完了待機がタイムアウトしたためリロードボタンを押します")
+                    reloadButton.click()
+                }
+            }, 3000)
+
+            video.addEventListener("canplay", () => {
+                console.log("動画が再生可能になりました。")
+                clearTimeout(timeoutId) // タイムアウトをクリア
+                setTimeout(() => {
+                    if (!video.paused && video.currentTime > 0) {
+                        callback()
+                    } else {
+                        console.log("動画が再生可能になりましたが、まだ再生されていません")
+                    }
+                }, 500)
+            }, { once: true })
+        }
+
         const executeWhenReady = (callback: () => void) => {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', callback, { once: true })
             } else if (document.readyState === 'interactive') {
-                // 少し待ってから実行
                 setTimeout(callback, 100)
             } else {
-                // 完全に読み込み完了している場合は即座に実行
                 callback()
             }
         }
 
-        executeWhenReady(() => {
-            try {
-                // 動画の準備状態をより厳密にチェック
-                if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
-                    console.log("動画が完全に準備完了し、再生中です")
-                    // 動画ストリームを取得
-                    stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                    startNewRecorder()
-                } else if (video.readyState >= 3) {
-                    console.log("動画が準備完了しましたが、再生状態を確認中...")
-                    // 少し待ってから再生状態を再確認
-                    setTimeout(() => {
-                        if (video.readyState >= 4 && !video.paused && video.currentTime > 0) {
-                            console.log("動画の再生状態が確認できました")
-                            stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                            startNewRecorder()
-                        } else {
-                            console.log("動画の準備が完了していないため、待機します...")
-                            video.addEventListener("canplay", () => {
-                                console.log("動画が再生可能になりました。")
-                                // 再生開始を少し待ってからストリームを取得
-                                setTimeout(() => {
-                                    if (!video.paused && video.currentTime > 0) {
-                                        stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                                        startNewRecorder()
-                                    }
-                                }, 500)
-                            }, { once: true })
-
-                        }
-                    }, 1000)
-                } else {
-                    console.log("動画の準備が完了していないため、待機します...")
-                    video.addEventListener("canplay", () => {
-                        console.log("動画が再生可能になりました。")
-                        // 再生開始を少し待ってからストリームを取得
-                        setTimeout(() => {
-                            if (!video.paused && video.currentTime > 0) {
-                                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                                startNewRecorder()
-                            }
-                        }, 500)
-                    }, { once: true })
-                }
-            } catch (error) {
-                console.log("録画の開始に失敗しました:", error)
+        // メインロジック
+        const handleVideoInitialization = () => {
+            if (isVideoReady(video)) {
+                console.log("動画が完全に準備完了し、再生中です")
+                startRecordingFromStream(video)
+            } else if (isVideoPrepared(video)) {
+                console.log("動画が準備完了しましたが、再生状態を確認中...")
+                setTimeout(() => {
+                    if (isVideoReady(video)) {
+                        console.log("動画の再生状態が確認できました")
+                        startRecordingFromStream(video)
+                    } else {
+                        console.log("動画の準備が完了していないため、待機します...")
+                        waitForVideoReady(video, () => startRecordingFromStream(video))
+                    }
+                }, 1000)
+            } else {
+                console.log("動画の準備が完了していないため、待機します...")
+                waitForVideoReady(video, () => startRecordingFromStream(video))
             }
-        })
+        }
+
+        // 実行開始
+        executeWhenReady(handleVideoInitialization)
     }
 
     const startNewRecorder = () => {
@@ -157,35 +200,7 @@ export default async () => {
         )
     }
 
-    // 録画を再スタート
-    const resetRecording = () => {
 
-        if (mediaRecorder && mediaRecorder.state === "recording") {
-            console.log("🔄 録画を切り替えます...")
-
-            mediaRecorder.onstop = async () => {
-                await stopRecordingActions(sessionId)
-
-                // ✅ 新しい recorder を開始
-                startNewRecorder()
-            }
-
-            // recorder を停止
-            mediaRecorder.stop()
-
-            // ✅ 容量超過分のチャンクを削除（マージとズラす）
-            setTimeout(async () => {
-                // indexedDBから削除
-                const deletedKeys = await cleanUpOldChunks('Chunks', maxStorageSize)
-                if (deletedKeys.length === 0) return
-                console.log(`容量超過分のチャンクを削除しました: ${deletedKeys.length}件`, deletedKeys)
-
-                // UIから削除
-                deleteMovieIcon(deletedKeys)
-
-            }, restartInterval / 2)
-        }
-    }
 
     const start = () => {
         if (mediaRecorder && mediaRecorder.state === "inactive") {
@@ -277,6 +292,16 @@ export default async () => {
         })
     }
 
+    // ページの他のスクリプトが忙しい時期を避けて、アイドル時間に実行
+    const executeWhenIdle = (callback: () => void) => {
+        if ('requestIdleCallback' in window) {
+            requestIdleCallback(callback) // { timeout: 5000 }
+        } else {
+            // requestIdleCallbackがサポートされていない場合は、少し長めの遅延で代替
+            setTimeout(callback, 1000)
+        }
+    }
+
     // UI類を作成
     insertRecordedMovieAria(
         start,
@@ -285,42 +310,29 @@ export default async () => {
         clear
     )
     createModal()
-
-    // ミュート対策
-    fixAudioTrack(video)
-
-    // video の track 変更を監視
-    observeVideoResize()
-
-    // 不完全なtempファイルを取得・削除し結合して保存
-    await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
-
-    // ページの他のスクリプトが忙しい時期を避けて、アイドル時間に実行
-    const executeWhenIdle = (callback: () => void) => {
-        if ('requestIdleCallback' in window) {
-            requestIdleCallback(callback, { timeout: 5000 })
-        } else {
-            // requestIdleCallbackがサポートされていない場合は、少し長めの遅延で代替
-            setTimeout(callback, 1000)
-        }
-    }
+    fixAudioTrack(video) // ミュート対策
 
     executeWhenIdle(async () => {
+        // 不完全なtempファイルを取得・削除し結合して保存
+        await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
 
-        // 録画を開始
-        if (autoStart) {
-            // 録画開始もアイドル時間に実行
-            executeWhenIdle(async () => {
-                initStream()
+        await new Promise(resolve => setTimeout(resolve, 500))
 
-                // 2秒待つ
-                await new Promise(resolve => setTimeout(resolve, 2000))
+        // 録画リストを取得（最新20件のみ）
+        await loadRecordedMovieList('latest')
 
-                // 録画リストを初期化（最新20件のみ）
-                await loadRecordedMovieList('latest')
-            })
-        } else {
-            setRecordingStatus(true, false, '停止中')
-        }
+        await new Promise(resolve => setTimeout(resolve, 500))
+
+        executeWhenIdle(async () => {
+            if (autoStart) {
+                initStream() // 録画を開始
+            } else {
+                setRecordingStatus(true, false, '停止中')
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 500))
+
+            observeVideoResize() // video の track 変更を監視
+        })
     })
 }
