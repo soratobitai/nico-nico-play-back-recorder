@@ -1,7 +1,7 @@
 import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
-import { insertRecordedMovieAria, createModal, confirmModal, reloadRecordedMovieList, deleteMovieIcon, setRecordingStatus, initializeRecordedMovieList } from "../../utils/ui"
+import { insertRecordedMovieAria, createModal, confirmModal, loadRecordedMovieList, deleteMovieIcon, setRecordingStatus } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START } from '../../utils/storage'
 import { checkLiveStatus } from '../../services/api'
 
@@ -212,7 +212,7 @@ export default async () => {
         await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
 
         // 録画リストを更新
-        await reloadRecordedMovieList()
+        await loadRecordedMovieList('latest')
     }
     const clear = async () => {
         const confirmed = await confirmModal('すべての録画データを削除しますか？')
@@ -307,17 +307,17 @@ export default async () => {
 
     executeWhenIdle(async () => {
 
-        // 録画リストを初期化（最新20件のみ）
-        await initializeRecordedMovieList()
-
-        // 2秒待つ
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        
         // 録画を開始
         if (autoStart) {
             // 録画開始もアイドル時間に実行
-            executeWhenIdle(() => {
+            executeWhenIdle(async () => {
                 initStream()
+
+                // 2秒待つ
+                await new Promise(resolve => setTimeout(resolve, 2000))
+
+                // 録画リストを初期化（最新20件のみ）
+                await loadRecordedMovieList('latest')
             })
         } else {
             setRecordingStatus(true, false, '停止中')

@@ -240,7 +240,7 @@ const cleanUp = async (sessionId: string) => {
     await cleanUpAllChunks('Temps')
 
     // stopRecordingActions(sessionId)
-    reloadRecordedMovieList() // 録画リストを更新
+    loadRecordedMovieList('latest') // 録画リストを更新
 }
 
 export {

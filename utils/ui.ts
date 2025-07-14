@@ -370,11 +370,6 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
     }
 }
 
-// 録画リストを更新（全件取得）
-const reloadRecordedMovieList = async () => {
-    await loadRecordedMovieList('all')
-}
-
 // UIから動画サムネを削除
 const deleteMovieIcon = (deletedKeys: IDBValidKey[]) => {
     for (const key of deletedKeys) {
@@ -466,8 +461,18 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
         }
 
         // 録画を表示（最新のものから右端に）
-        for (const chunk of chunks.reverse()) {
-            insertRecordedMovie(chunk, "end")
+        if (mode === 'latest') {
+            // 最新の録画は逆順で表示（新しいものを右端に）
+            for (const chunk of chunks) {
+                insertRecordedMovie(chunk, "start")
+            }
+        } else {
+            // 全件取得時は時系列順で表示（古いものを左端から、新しいものを右端に）
+            for (const chunk of chunks.reverse()) {
+                insertRecordedMovie(chunk, "start")
+
+                await new Promise(resolve => setTimeout(resolve, 20)) // 負荷軽減のため
+            }
         }
     } catch (error) {
         const errorMessage = mode === 'latest' ? '録画リストの初期化に失敗しました' : '録画リストの更新に失敗しました'
@@ -478,7 +483,6 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
 
 // 古い録画を読み込む関数
 const loadOlderRecordings = async () => {
-    console.log("loadOlderRecordings!!!!!!!!!!")
     if (isLoadingOlder || !hasMoreOlder) return
 
     isLoadingOlder = true
@@ -507,7 +511,7 @@ const loadOlderRecordings = async () => {
             const currentScrollLeft = box.scrollLeft
             
             // 古い録画を左端に追加
-            for (const chunk of olderChunks.reverse()) {
+            for (const chunk of olderChunks) {
                 insertRecordedMovie(chunk, "start")
                 
                 // タイムスタンプを更新
@@ -532,20 +536,14 @@ const loadOlderRecordings = async () => {
     }
 }
 
-// 録画リストを初期化する関数
-const initializeRecordedMovieList = async () => {
-    await loadRecordedMovieList('latest')
-}
-
 export {
     insertRecordedMovieAria,
     insertRecordedMovie,
     createModal,
     confirmModal,
     openModalWithVideo,
-    reloadRecordedMovieList,
+    loadRecordedMovieList,
     deleteMovieIcon,
     setRecordingStatus,
-    getTimeString,
-    initializeRecordedMovieList
+    getTimeString
 }
