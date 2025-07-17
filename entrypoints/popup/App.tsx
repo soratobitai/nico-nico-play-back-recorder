@@ -6,6 +6,9 @@ import {
 } from '../../utils/storage'
 import './App.css'
 
+// ストレージ設定の定数
+const MAX_STORAGE_SIZE_LIMIT = 30 * 1024 * 1024 * 1024 // 30GB
+
 function App() {
   const [settings, setSettings] = useState({
     RESTART_MEDIARECORDER_INTERVAL_MS: 1 * 60 * 1000,
@@ -17,7 +20,6 @@ function App() {
     null
   )
   const [storageQuota, setStorageQuota] = useState(0)
-  const [maxStorageLimit, setMaxStorageLimit] = useState(100 * 1024 * 1024 * 1024) // デフォルト100GB
   const [clearMessage, setClearMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
 
   const intervalRef = useRef<HTMLInputElement>(null)
@@ -61,7 +63,6 @@ function App() {
         if (quotaResponse && quotaResponse.quota) {
           const safeQuota = Math.floor(quotaResponse.quota * 0.8)
           setStorageQuota(safeQuota)
-          setMaxStorageLimit(safeQuota)
         }
       } catch (estimateError) {
         console.warn('content側のstorage quota取得に失敗:', estimateError)
@@ -90,8 +91,6 @@ function App() {
         MAX_STORAGE_SIZE: size,
         AUTO_START: autoStart,
       })
-
-      // ストレージ使用量の取得は定期的更新のuseEffectで行うため削除
     }
 
     loadSettings()
@@ -173,7 +172,7 @@ function App() {
     (v) => updateSetting('MAX_STORAGE_SIZE', v),
     1 * 1024 * 1024 * 1024,
     1 * 1024 * 1024 * 1024,
-    100 * 1024 * 1024 * 1024 // ← 固定100GBに戻す
+    MAX_STORAGE_SIZE_LIMIT // ← 最大ストレージ制限
   )
 
   // メッセージを表示して一定時間後に消す関数
@@ -231,12 +230,13 @@ function App() {
       <div className="setting-block">
         <label htmlFor="storageRange">
           ストレージ使用量: {Math.round(settings.MAX_STORAGE_SIZE / (1024 * 1024 * 1024))} GB
+          <span style={{ color: '#777', fontSize: '0.9em', fontWeight: 'normal' }}>（推奨値：5GB以下）</span>
         </label>
         <p className="description">
-          使用できる容量は環境によって異なります。合計サイズが設定値を超えた場合、自動的に古いものから順に削除されます。
+          使用できるストレージ容量は環境によって異なります。録画データの合計が設定値を超えた場合、古いものから順に削除されます。
           {storageQuota > 0 && (
             <span style={{ display: 'block', marginTop: '4px', fontSize: '0.9em', color: '#666' }}>
-              あなたの環境のストレージ上限（目安）: {Math.round(storageQuota / (1024 * 1024 * 1024))} GB
+              あなたの環境のストレージ上限（目安）: {Math.round(Math.min(storageQuota, MAX_STORAGE_SIZE_LIMIT) / (1024 * 1024 * 1024))} GB
             </span>
           )}
         </p>
@@ -245,7 +245,7 @@ function App() {
           id="storageRange"
           type="range"
           min={1 * 1024 * 1024 * 1024}
-          max={100 * 1024 * 1024 * 1024} // ← 固定100GBに戻す
+          max={MAX_STORAGE_SIZE_LIMIT} // ← 最大ストレージ制限
           step={1 * 1024 * 1024 * 1024}
           value={settings.MAX_STORAGE_SIZE}
           onChange={(e) =>

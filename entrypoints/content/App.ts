@@ -80,8 +80,10 @@ export default async () => {
     // 初期設定読み込み
     const loadSettings = async () => {
         restartInterval = await RESTART_MEDIARECORDER_INTERVAL_MS.getValue()
-        maxStorageSize = await MAX_STORAGE_SIZE.getValue()
+        let size = await MAX_STORAGE_SIZE.getValue()
         autoStart = await AUTO_START.getValue()
+
+        maxStorageSize = size
 
         startResetRecordInterval(resetRecording, restartInterval)
     }
