@@ -22,6 +22,25 @@ export default async () => {
             })
             return true // 非同期レスポンスを示す
         }
+        if (message.type === 'CLEAR_ALL_RECORDINGS') {
+            clear().then(() => {
+                sendResponse({ success: true })
+            }).catch(error => {
+                console.error('録画データの削除に失敗しました:', error)
+                sendResponse({ error: error.message })
+            })
+            return true // 非同期レスポンスを示す
+        }
+        if (message.type === 'GET_STORAGE_QUOTA') {
+            navigator.storage.estimate().then((estimate) => {
+                console.log('Storage estimate details:', estimate)
+                sendResponse({ quota: estimate.quota })
+            }).catch(error => {
+                console.error('ストレージ上限の取得に失敗しました:', error)
+                sendResponse({ error: error.message })
+            })
+            return true // 非同期レスポンスを示す
+        }
     })
 
     let restartInterval = 1 * 60 * 1000
@@ -230,37 +249,33 @@ export default async () => {
         await loadRecordedMovieList('latest')
     }
     const clear = async () => {
-        const confirmed = await confirmModal('すべての録画データを削除しますか？')
-        if (confirmed) {
-            setRecordingStatus(false, false, '準備中')
-            try {
-                if (mediaRecorder && mediaRecorder.state === "recording") {
-
-                    mediaRecorder.onstop = async () => {
-                        await stopRecordingActions(sessionId)
-                        setTimeout(async () => {
-                            await cleanUp(sessionId) // リセット
-                            // startNewRecorder() // 録画を再開
-                            // 録画を開始
-                            mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
-                            startRecordingActions(
-                                resetRecording,
-                                mediaRecorder,
-                                restartInterval,
-                                SAVE_CHUNK_INTERVAL_MS
-                            )
-                        }, 500) // 録画停止後にリセット
-                    }
-                    // recorder を停止
-                    mediaRecorder.stop()
-                } else {
-                    await cleanUp(sessionId) // リセット
-                    setRecordingStatus(true, false, '停止中')
+        setRecordingStatus(false, false, '準備中')
+        try {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.onstop = async () => {
+                    await stopRecordingActions(sessionId)
+                    setTimeout(async () => {
+                        await cleanUp(sessionId) // リセット
+                        // startNewRecorder() // 録画を再開
+                        // 録画を開始
+                        mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
+                        startRecordingActions(
+                            resetRecording,
+                            mediaRecorder,
+                            restartInterval,
+                            SAVE_CHUNK_INTERVAL_MS
+                        )
+                    }, 500) // 録画停止後にリセット
                 }
+                // recorder を停止
+                mediaRecorder.stop()
+            } else {
+                await cleanUp(sessionId) // リセット
+                setRecordingStatus(true, false, '停止中')
             }
-            catch (error) {
-                console.log("リセットに失敗しました:", error)
-            }
+        }
+        catch (error) {
+            console.log("リセットに失敗しました:", error)
         }
     }
 

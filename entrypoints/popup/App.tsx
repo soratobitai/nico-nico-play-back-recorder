@@ -17,6 +17,8 @@ function App() {
     null
   )
   const [storageQuota, setStorageQuota] = useState(0)
+  const [maxStorageLimit, setMaxStorageLimit] = useState(100 * 1024 * 1024 * 1024) // デフォルト100GB
+  const [clearMessage, setClearMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
 
   const intervalRef = useRef<HTMLInputElement>(null)
   const storageRef = useRef<HTMLInputElement>(null)
@@ -51,12 +53,18 @@ function App() {
         setCurrentStorageUsage(null)
       }
 
-      // navigator.storage.estimate()も取得（参考用）
+      // content script経由でIndexedDBのストレージ上限を取得
       try {
-        const { quota } = await navigator.storage.estimate()
-        setStorageQuota(quota || 0)
+        const quotaResponse = await chrome.tabs.sendMessage(tab.id, {
+          type: 'GET_STORAGE_QUOTA',
+        })
+        if (quotaResponse && quotaResponse.quota) {
+          const safeQuota = Math.floor(quotaResponse.quota * 0.8)
+          setStorageQuota(safeQuota)
+          setMaxStorageLimit(safeQuota)
+        }
       } catch (estimateError) {
-        console.warn('navigator.storage.estimate() failed:', estimateError)
+        console.warn('content側のstorage quota取得に失敗:', estimateError)
       }
     } catch (error) {
       console.error('ストレージ使用量の取得に失敗しました:', error)
@@ -83,8 +91,7 @@ function App() {
         AUTO_START: autoStart,
       })
 
-      // ストレージ使用量も取得
-      await getStorageUsageData()
+      // ストレージ使用量の取得は定期的更新のuseEffectで行うため削除
     }
 
     loadSettings()
@@ -166,8 +173,16 @@ function App() {
     (v) => updateSetting('MAX_STORAGE_SIZE', v),
     1 * 1024 * 1024 * 1024,
     1 * 1024 * 1024 * 1024,
-    100 * 1024 * 1024 * 1024
+    100 * 1024 * 1024 * 1024 // ← 固定100GBに戻す
   )
+
+  // メッセージを表示して一定時間後に消す関数
+  const showMessage = (text: string, type: 'success' | 'error') => {
+    setClearMessage({ text, type })
+    setTimeout(() => {
+      setClearMessage(null)
+    }, 3000) //3秒後に自動的に消える
+  }
 
   return (
     <div className="popup-container">
@@ -218,14 +233,19 @@ function App() {
           ストレージ使用量: {Math.round(settings.MAX_STORAGE_SIZE / (1024 * 1024 * 1024))} GB
         </label>
         <p className="description">
-          使用できる容量は環境に依存します。録画リストの合計サイズが設定値を超えた場合、自動的に古いものから順に削除されます。
+          使用できる容量は環境によって異なります。合計サイズが設定値を超えた場合、自動的に古いものから順に削除されます。
+          {storageQuota > 0 && (
+            <span style={{ display: 'block', marginTop: '4px', fontSize: '0.9em', color: '#666' }}>
+              あなたの環境のストレージ上限（目安）: {Math.round(storageQuota / (1024 * 1024 * 1024))} GB
+            </span>
+          )}
         </p>
         <input
           ref={storageRef}
           id="storageRange"
           type="range"
           min={1 * 1024 * 1024 * 1024}
-          max={100 * 1024 * 1024 * 1024}
+          max={100 * 1024 * 1024 * 1024} // ← 固定100GBに戻す
           step={1 * 1024 * 1024 * 1024}
           value={settings.MAX_STORAGE_SIZE}
           onChange={(e) =>
@@ -275,6 +295,49 @@ function App() {
           <p className="description" style={{ textAlign: 'center', marginTop: '8px' }}>
             ライブ視聴ページでのみ動作します
           </p>
+        )}
+        {/* クリアボタン追加 */}
+        <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, gap: 16 }}>
+          <button
+            style={{ marginBottom: '0', padding: '4px 12px', fontSize: '0.8em', width: '100px', height: '24px' }}
+            onClick={async () => {
+              // content scriptにクリア要求
+              const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+              if (!tab.id) return
+              const response = await chrome.tabs.sendMessage(tab.id, { type: 'CLEAR_ALL_RECORDINGS' })
+              if (response && response.success) {
+                await getStorageUsageData()
+                showMessage('ストレージをクリアしました', 'success')
+              } else if (response && response.error) {
+                showMessage('ストレージのクリアに失敗しました: ' + response.error, 'error')
+              } else {
+                showMessage('ストレージのクリアに失敗しました', 'error')
+              }
+            }}
+          >
+            クリア
+          </button>
+          <span style={{ fontSize: '0.8em', color: '#666' }}>
+            ストレージをクリアします。録画データはすべて削除されます。
+          </span>
+        </div>
+        
+        {/* メッセージ表示エリア */}
+        {clearMessage && (
+          <div
+            style={{
+              marginTop: '8px',
+              padding: '8px 12px',
+              borderRadius: '4px',
+              fontSize: '0.8em',
+              backgroundColor: clearMessage.type === 'success' ? '#d4edda' : '#f8d7da',
+              color: clearMessage.type === 'success' ? '#155724' : '#721c24',
+              border: `1px solid ${clearMessage.type === 'success' ? '#c3e6cb' : '#f5c6cb'}`,
+              textAlign: 'center'
+            }}
+          >
+            {clearMessage.text}
+          </div>
         )}
       </div>
     </div>

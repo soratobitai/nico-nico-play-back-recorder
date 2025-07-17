@@ -200,37 +200,65 @@ const resetTimeoutCheck = (
 
 // ミュート対策
 const fixAudioTrack = (video: HTMLVideoElement) => {
+    // video要素の存在チェック
+    if (!video || !(video instanceof HTMLVideoElement)) {
+        console.error('fixAudioTrack: 無効なvideo要素です')
+        return
+    }
 
     let previousVolume = '0'
     let isMuted = 'false'
-
     const controlMute = () => {
-        isMuted = localStorage.getItem('LeoPlayer_MuteSettingsStore_isMute') || 'false'
-        previousVolume = localStorage.getItem('LeoPlayer_VolumeSettingsStore_volume') || '0'
+        try {
+            // localStorageアクセスのエラーハンドリング
+            isMuted = localStorage.getItem('LeoPlayer_MuteSettingsStore_isMute') || 'false'
+            previousVolume = localStorage.getItem('LeoPlayer_VolumeSettingsStore_volume') || '0'
 
-        if (isMuted === 'true' || previousVolume === '0') {
-            console.log("🔴 ミュート検出", video.volume)
+            // 数値変換のエラーハンドリング
+            const volumeValue = Number(previousVolume)
+            if (isNaN(volumeValue)) {
+                console.warn('fixAudioTrack: 無効な音量値です:', previousVolume)
+                return
+            }
 
-            video.muted = false
-            video.volume = 0.0000001
-        } else {
-            console.log("🔊 ミュート解除検出")
-            video.volume = Number(previousVolume) / 100
+            if (isMuted === 'true' || volumeValue === 0) {
+                console.log("🔴 ミュート検出", video.volume)
+
+                video.muted = false
+                video.volume = 0.001
+            } else {
+                console.log("🔊 ミュート解除検出")
+                video.volume = volumeValue / 100
+            }
+        } catch (error) {
+            console.error('fixAudioTrack: controlMuteでエラーが発生しました:', error)
         }
     }
 
     controlMute()
 
     // ミュートボタン押下時
-    const muteButtons = document.querySelectorAll('[class*="_mute-button_"]')
-    muteButtons.forEach(button => button.addEventListener("click", () => {
-        controlMute()
-    }))
+    try {
+        const muteButtons = document.querySelectorAll('[class*="_mute-button_"]')
+        muteButtons.forEach(button => {
+            if (button instanceof HTMLElement) {
+                button.addEventListener("click", () => {
+                    controlMute()
+                })
+            }
+        })
+    } catch (error) {
+        console.error('fixAudioTrack: ミュートボタンのイベントリスナー設定でエラーが発生しました:', error)
+    }
 
     // 音量変化時
-    video.addEventListener("volumechange", async () => {
-        controlMute()
-    })
+    try {
+        video.addEventListener("volumechange", async () => {
+            controlMute()
+        })
+    } catch (error) {
+        console.error('fixAudioTrack: volumechangeイベントリスナーの設定でエラーが発生しました:', error)
+    }
 }
 
 const cleanUp = async (sessionId: string) => {
