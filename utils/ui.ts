@@ -6,7 +6,7 @@ let startButton = null as HTMLButtonElement | null
 let stopButton = null as HTMLButtonElement | null
 let recordStatus = null as HTMLDivElement | null
 let reloadButton = null as HTMLButtonElement | null
-let clearButton = null as HTMLButtonElement | null
+let recordingCount = null as HTMLDivElement | null
 
 let userScrolledAway = false
 
@@ -47,7 +47,7 @@ const insertRecordedMovieAria = async (
             </div>
             <div class="control-buttons">
               <button type="button" id="reloadButton">リスト更新</button>
-              <button type="button" id="clearButton">クリア</button>
+              <div id="recordingCount" class="recording-count" style="color: #999; font-size: 12px;">0件</div>
             </div>
           </div>
         </div>
@@ -60,7 +60,7 @@ const insertRecordedMovieAria = async (
     stopButton = document.getElementById("stopButton") as HTMLButtonElement
     recordStatus = document.getElementById("recordStatus") as HTMLDivElement
     reloadButton = document.getElementById("reloadButton") as HTMLButtonElement
-    clearButton = document.getElementById("clearButton") as HTMLButtonElement
+    recordingCount = document.getElementById("recordingCount") as HTMLDivElement
 
     // キャプチャボタン
     capButton.addEventListener("click", getScreenShotAndDownload)
@@ -73,9 +73,6 @@ const insertRecordedMovieAria = async (
 
     // 録画リスト更新ボタン
     reloadButton.addEventListener("click", reload)
-
-    // リセットボタン
-    clearButton.addEventListener("click", clear)
 
     // 録画リストのスクロール制御
     const setupScrollWatcher = () => {
@@ -105,7 +102,7 @@ const insertRecordedMovieAria = async (
     }, 1000)
 }
 
-const insertRecordedMovie = (
+const insertRecordedMovie = async (
     chunk: {
         sessionId: string,
         chunkIndex: number,
@@ -150,6 +147,9 @@ const insertRecordedMovie = (
         if (confirmed) {
             recordedMovie.remove() // UIから削除
             await deleteChunkByKeys('Chunks', [[chunk.sessionId, chunk.chunkIndex]]) // indexedDBから削除
+            // 録画数を更新
+            const totalCount = await getChunksCount('Chunks')
+            if (recordingCount) recordingCount.textContent = `${totalCount}件`
         }
     })
     recordedMovie.appendChild(closeButton)
@@ -200,6 +200,10 @@ const insertRecordedMovie = (
             recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
         }
     }
+    
+    // 総録画数を取得して更新
+    const totalCount = await getChunksCount('Chunks')
+    if (recordingCount) recordingCount.textContent = `${totalCount}件`
 }
 
 // モーダルを作成する関数
@@ -376,7 +380,7 @@ const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
 }
 
 // UIから動画サムネを削除
-const deleteMovieIcon = (deletedKeys: IDBValidKey[]) => {
+const deleteMovieIcon = async (deletedKeys: IDBValidKey[]) => {
     for (const key of deletedKeys) {
         const [sessionId, chunkIndex] = key as [string, string]
         const elements = document.querySelectorAll('.recordedMovie')
@@ -388,6 +392,9 @@ const deleteMovieIcon = (deletedKeys: IDBValidKey[]) => {
             }
         })
     }
+    // 総録画数を取得して更新
+    const totalCount = await getChunksCount('Chunks')
+    if (recordingCount) recordingCount.textContent = `${totalCount}件`
 }
 
 // コントロールパネルのボタンの状態を設定
@@ -448,6 +455,8 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
         if (chunks.length === 0) {
             // データがなければメッセージ表示
             recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
+            // 録画数を0に更新
+            if (recordingCount) recordingCount.textContent = '0件'
             return
         }
 
@@ -477,6 +486,10 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
             }
         }
 
+        // 総録画数を取得して更新
+        const totalCount = await getChunksCount('Chunks')
+        if (recordingCount) recordingCount.textContent = `${totalCount}件`
+
         // 処理完了後に適切な状態に戻す
         if (mode === 'latest') {
             hasMoreOlder = chunks.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
@@ -488,6 +501,8 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
         const errorMessage = mode === 'latest' ? '録画リストの初期化に失敗しました' : '録画リストの更新に失敗しました'
         console.error(errorMessage + ':', error)
         recordedMovieBox.innerHTML = `<div class="no-video">エラーが発生しました</div>`
+        // エラー時も録画数を0に更新
+        if (recordingCount) recordingCount.textContent = '0件'
     }
 }
 
