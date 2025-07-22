@@ -46,8 +46,10 @@ const insertRecordedMovieAria = async (
               <div id="recordTime">00:00</div>
             </div>
             <div class="control-buttons">
-              <button type="button" id="reloadButton">リスト更新</button>
-              <div id="recordingCount" class="recording-count" style="color: #999; font-size: 12px;">0件</div>
+              <div class="recording-info">
+                <span style="color: #aaa; font-size: 11px;">録画数 <span id="recordingCount" style="font-size: 13px;">0</span></span>
+              </div>
+              <button type="button" id="reloadButton">更新</button>
             </div>
           </div>
         </div>
@@ -127,9 +129,9 @@ const insertRecordedMovie = async (
     img.src = chunk.imgUrl || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
     // title属性を設定（作成日_ユーザー名_タイトルの形式）
     const formattedDate = formatDate(chunk.createdAt)
-    const titleText = chunk.userName && chunk.title ? `${formattedDate}_${chunk.userName}_${chunk.title}` : 
-                     chunk.userName ? `${formattedDate}_${chunk.userName}` :
-                     chunk.title ? `${formattedDate}_${chunk.title}` :
+    const titleText = chunk.userName && chunk.title ? `${formattedDate} ${chunk.userName} ${chunk.title}` : 
+                     chunk.userName ? `${formattedDate} ${chunk.userName}` :
+                     chunk.title ? `${formattedDate} ${chunk.title}` :
                      formattedDate
     if (titleText) {
         img.title = titleText
@@ -149,7 +151,7 @@ const insertRecordedMovie = async (
             await deleteChunkByKeys('Chunks', [[chunk.sessionId, chunk.chunkIndex]]) // indexedDBから削除
             // 録画数を更新
             const totalCount = await getChunksCount('Chunks')
-            if (recordingCount) recordingCount.textContent = `${totalCount}件`
+            if (recordingCount) recordingCount.textContent = `${totalCount}`
         }
     })
     recordedMovie.appendChild(closeButton)
@@ -203,7 +205,7 @@ const insertRecordedMovie = async (
     
     // 総録画数を取得して更新
     const totalCount = await getChunksCount('Chunks')
-    if (recordingCount) recordingCount.textContent = `${totalCount}件`
+    if (recordingCount) recordingCount.textContent = `${totalCount}`
 }
 
 // モーダルを作成する関数
@@ -394,7 +396,7 @@ const deleteMovieIcon = async (deletedKeys: IDBValidKey[]) => {
     }
     // 総録画数を取得して更新
     const totalCount = await getChunksCount('Chunks')
-    if (recordingCount) recordingCount.textContent = `${totalCount}件`
+    if (recordingCount) recordingCount.textContent = `${totalCount}`
 }
 
 // コントロールパネルのボタンの状態を設定
@@ -456,7 +458,7 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
             // データがなければメッセージ表示
             recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
             // 録画数を0に更新
-            if (recordingCount) recordingCount.textContent = '0件'
+            if (recordingCount) recordingCount.textContent = '0'
             return
         }
 
@@ -488,7 +490,7 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
 
         // 総録画数を取得して更新
         const totalCount = await getChunksCount('Chunks')
-        if (recordingCount) recordingCount.textContent = `${totalCount}件`
+        if (recordingCount) recordingCount.textContent = `${totalCount}`
 
         // 処理完了後に適切な状態に戻す
         if (mode === 'latest') {
@@ -502,7 +504,7 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
         console.error(errorMessage + ':', error)
         recordedMovieBox.innerHTML = `<div class="no-video">エラーが発生しました</div>`
         // エラー時も録画数を0に更新
-        if (recordingCount) recordingCount.textContent = '0件'
+        if (recordingCount) recordingCount.textContent = '0'
     }
 }
 

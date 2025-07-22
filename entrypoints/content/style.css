@@ -201,7 +201,7 @@
 }
 .control-buttons {
   display: flex;
-  justify-content: space-around;
+  justify-content: space-between;
   align-items: center;
 }
 .control-status {
@@ -245,13 +245,13 @@
   cursor: not-allowed;
 }
 #reloadButton {
-  background: transparent;
-  color: #ccc;
-  border: 1px solid white;
+  background: #444;
+  color: white;
+  border: 1px solid #444;
 }
 
 #reloadButton:hover {
-  background: #666;
+  background: #777;
   color: white;
 }
 

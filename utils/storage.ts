@@ -18,3 +18,10 @@ export const AUTO_START = storage.defineItem<boolean>(
         fallback: true,
     }
 )
+
+export const AUTO_RELOAD_ON_FAILURE = storage.defineItem<boolean>(
+    'local:AUTO_RELOAD_ON_FAILURE',
+    {
+        fallback: false,
+    }
+)

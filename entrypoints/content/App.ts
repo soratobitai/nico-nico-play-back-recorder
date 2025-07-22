@@ -2,7 +2,7 @@ import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexe
 import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, confirmModal, loadRecordedMovieList, deleteMovieIcon, setRecordingStatus } from "../../utils/ui"
-import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START } from '../../utils/storage'
+import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
 import { checkLiveStatus } from '../../services/api'
 
 export default async () => {
@@ -46,6 +46,7 @@ export default async () => {
     let restartInterval = 1 * 60 * 1000
     let maxStorageSize = 1 * 1024 * 1024 * 1024
     let autoStart = true
+    let autoReloadOnFailure = false
 
     // 録画を再スタート
     const resetRecording = () => {
@@ -82,6 +83,7 @@ export default async () => {
         restartInterval = await RESTART_MEDIARECORDER_INTERVAL_MS.getValue()
         let size = await MAX_STORAGE_SIZE.getValue()
         autoStart = await AUTO_START.getValue()
+        autoReloadOnFailure = await AUTO_RELOAD_ON_FAILURE.getValue()
 
         maxStorageSize = size
 
@@ -97,6 +99,9 @@ export default async () => {
     MAX_STORAGE_SIZE.watch((newValue) => {
         maxStorageSize = newValue
     })
+    AUTO_RELOAD_ON_FAILURE.watch((newValue) => {
+        autoReloadOnFailure = newValue
+    })
 
     const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
     const { userName, title } = getProgramData() // 番組情報を取得
@@ -110,6 +115,19 @@ export default async () => {
     const initStream = () => {
         if (!video) return
         if (mediaRecorder && mediaRecorder.state === "recording") return
+
+        // リロードボタンを押す共通関数
+        const clickReloadButton = (reason: string) => {
+            if (!autoReloadOnFailure) {
+                console.log(`${reason}が発生しましたが、自動リロードが無効になっているためリロードしません`)
+                return
+            }
+            const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
+            if (reloadButton) {
+                console.log(`${reason}のためリロードボタンを押します`)
+                reloadButton.click()
+            }
+        }
 
         // ヘルパー関数をinitStream内に定義
         const isVideoReady = (video: HTMLVideoElement): boolean => {
@@ -126,17 +144,15 @@ export default async () => {
                 startNewRecorder()
             } catch (error) {
                 console.log("録画の開始に失敗しました:", error)
+                // 録画開始に失敗した場合はリロードボタンを押す
+                clickReloadButton("録画開始に失敗")
             }
         }
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
             const timeoutId = setTimeout(() => {
                 // タイムアウトした場合はリロードボタンを押す
-                const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
-                if (reloadButton) {
-                    console.log("動画の準備完了待機がタイムアウトしたためリロードボタンを押します")
-                    reloadButton.click()
-                }
+                clickReloadButton("動画の準備完了待機がタイムアウト")
             }, 3000)
 
             video.addEventListener("canplay", () => {
@@ -333,12 +349,12 @@ export default async () => {
         // 不完全なtempファイルを取得・削除し結合して保存
         await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
 
-        await new Promise(resolve => setTimeout(resolve, 500))
+        await new Promise(resolve => setTimeout(resolve, 1000))
 
         // 録画リストを取得（最新20件のみ）
         await loadRecordedMovieList('latest')
 
-        await new Promise(resolve => setTimeout(resolve, 500))
+        await new Promise(resolve => setTimeout(resolve, 1000))
 
         executeWhenIdle(async () => {
             if (autoStart) {
@@ -347,7 +363,7 @@ export default async () => {
                 setRecordingStatus(true, false, '停止中')
             }
 
-            await new Promise(resolve => setTimeout(resolve, 500))
+            await new Promise(resolve => setTimeout(resolve, 1000))
 
             observeVideoResize() // video の track 変更を監視
         })

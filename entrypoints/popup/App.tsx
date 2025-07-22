@@ -3,17 +3,20 @@ import {
   RESTART_MEDIARECORDER_INTERVAL_MS,
   MAX_STORAGE_SIZE,
   AUTO_START,
+  AUTO_RELOAD_ON_FAILURE,
 } from '../../utils/storage'
 import './App.css'
 
 // ストレージ設定の定数
-const MAX_STORAGE_SIZE_LIMIT = 30 * 1024 * 1024 * 1024 // 30GB
+const MAX_STORAGE_SIZE_LIMIT = 100 * 1024 * 1024 * 1024 // 100GB
+const STORAGE_QUOTA_ESTIMATE = 30 * 1024 * 1024 * 1024 // 30GB
 
 function App() {
   const [settings, setSettings] = useState({
     RESTART_MEDIARECORDER_INTERVAL_MS: 1 * 60 * 1000,
     MAX_STORAGE_SIZE: 1 * 1024 * 1024 * 1024,
     AUTO_START: true,
+    AUTO_RELOAD_ON_FAILURE: false,
   })
 
   const [currentStorageUsage, setCurrentStorageUsage] = useState<number | null>(
@@ -80,16 +83,19 @@ function App() {
         interval,
         size,
         autoStart,
+        autoReload,
       ] = await Promise.all([
         RESTART_MEDIARECORDER_INTERVAL_MS.getValue(),
         MAX_STORAGE_SIZE.getValue(),
         AUTO_START.getValue(),
+        AUTO_RELOAD_ON_FAILURE.getValue(),
       ])
 
       setSettings({
         RESTART_MEDIARECORDER_INTERVAL_MS: interval,
         MAX_STORAGE_SIZE: size,
         AUTO_START: autoStart,
+        AUTO_RELOAD_ON_FAILURE: autoReload,
       })
     }
 
@@ -127,6 +133,9 @@ function App() {
         break
       case 'AUTO_START':
         await AUTO_START.setValue(value as boolean)
+        break
+      case 'AUTO_RELOAD_ON_FAILURE':
+        await AUTO_RELOAD_ON_FAILURE.setValue(value as boolean)
         break
     }
   }
@@ -186,33 +195,43 @@ function App() {
   return (
     <div className="popup-container">
       <h2>録画設定</h2>
-      
-      <p className="description">
-        設定内容を確実に反映させるには、ページを更新する必要があります。
-      </p>
 
-      <div className="setting-block">
-        <label htmlFor="autostartCheckbox">
-          <input
-            id="autostartCheckbox"
-            type="checkbox"
-            checked={settings.AUTO_START}
-            onChange={(e) => updateSetting('AUTO_START', e.target.checked)}
-          />
-          オートスタート
-        </label>
-        <p className="description">
-          ページを開いたら自動的に録画を開始します。
-        </p>
+      <div className="checkbox-settings-container">
+        <div className="setting-block checkbox-setting">
+          <label htmlFor="autostartCheckbox">
+            <input
+              id="autostartCheckbox"
+              type="checkbox"
+              checked={settings.AUTO_START}
+              onChange={(e) => updateSetting('AUTO_START', e.target.checked)}
+            />
+            オートスタート
+          </label>
+          <p className="description">
+            ページを開いたら自動的に録画を開始します。
+          </p>
+        </div>
+
+        <div className="setting-block checkbox-setting">
+          <label htmlFor="autoReloadCheckbox">
+            <input
+              id="autoReloadCheckbox"
+              type="checkbox"
+              checked={settings.AUTO_RELOAD_ON_FAILURE}
+              onChange={(e) => updateSetting('AUTO_RELOAD_ON_FAILURE', e.target.checked)}
+            />
+            オートリロード(β版)
+          </label>
+          <p className="description">
+            映像が止まった時に自動的に映像をリロードします。
+          </p>
+        </div>
       </div>
 
       <div className="setting-block">
         <label htmlFor="intervalRange">
           分割間隔: {Math.round(settings.RESTART_MEDIARECORDER_INTERVAL_MS / 60000)} 分
         </label>
-        <p className="description">
-          この値で録画を定期的に分割保存します。
-        </p>
         <input
           ref={intervalRef}
           id="intervalRange"
@@ -225,21 +244,15 @@ function App() {
             updateSetting('RESTART_MEDIARECORDER_INTERVAL_MS', Number(e.target.value))
           }
         />
+        <p className="description">
+          この値で録画を定期的に分割保存します。
+        </p>
       </div>
 
       <div className="setting-block">
         <label htmlFor="storageRange">
           ストレージ使用量: {Math.round(settings.MAX_STORAGE_SIZE / (1024 * 1024 * 1024))} GB
-          <span style={{ color: '#777', fontSize: '0.9em', fontWeight: 'normal' }}>（推奨値：5GB以下）</span>
         </label>
-        <p className="description">
-          使用できるストレージ容量は環境によって異なります。録画データの合計が設定値を超えた場合、古いものから順に削除されます。
-          {storageQuota > 0 && (
-            <span style={{ display: 'block', marginTop: '4px', fontSize: '0.9em', color: '#666' }}>
-              あなたの環境のストレージ上限（目安）: {Math.round(Math.min(storageQuota, MAX_STORAGE_SIZE_LIMIT) / (1024 * 1024 * 1024))} GB
-            </span>
-          )}
-        </p>
         <input
           ref={storageRef}
           id="storageRange"
@@ -252,6 +265,14 @@ function App() {
             updateSetting('MAX_STORAGE_SIZE', Number(e.target.value))
           }
         />
+        <p className="description">
+          録画データの合計が設定値を超えた場合、古いものから順に削除されます。
+        </p>
+                 {storageQuota > 0 && (
+           <div className="storage-quota-info">
+             あなたの環境の推奨値: {Math.round(Math.min(storageQuota, STORAGE_QUOTA_ESTIMATE) / (1024 * 1024 * 1024))} GB以下
+           </div>
+         )}
       </div>
 
       {/* 現在の使用量バー */}
@@ -297,9 +318,9 @@ function App() {
           </p>
         )}
         {/* クリアボタン追加 */}
-        <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, gap: 16 }}>
+        <div className="clear-button-container">
           <button
-            style={{ marginBottom: '0', padding: '4px 12px', fontSize: '0.8em', width: '100px', height: '24px' }}
+            className="clear-button"
             onClick={async () => {
               // content scriptにクリア要求
               const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -317,7 +338,7 @@ function App() {
           >
             クリア
           </button>
-          <span style={{ fontSize: '0.8em', color: '#666' }}>
+          <span className="clear-button-description">
             ストレージをクリアします。録画データはすべて削除されます。
           </span>
         </div>
