@@ -61,7 +61,7 @@
     display: flex;
     justify-content: center; /* 横方向の中央 */
     align-items: center;     /* 縦方向の中央 */
-    height: 100%;
+    min-height: 50px;
     text-align: center;
     vertical-align: middle;
     font-size: x-small;

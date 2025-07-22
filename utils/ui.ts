@@ -49,7 +49,7 @@ const insertRecordedMovieAria = async (
               <div class="recording-info">
                 <span style="color: #aaa; font-size: 11px;">録画数 <span id="recordingCount" style="font-size: 13px;">0</span></span>
               </div>
-              <button type="button" id="reloadButton">更新</button>
+              <button type="button" id="reloadButton" title="録画リスト更新">更新</button>
             </div>
           </div>
         </div>
@@ -152,6 +152,12 @@ const insertRecordedMovie = async (
             // 録画数を更新
             const totalCount = await getChunksCount('Chunks')
             if (recordingCount) recordingCount.textContent = `${totalCount}`
+            
+            // 録画リストが空になった場合の処理
+            const remainingRecordings = recordedMovieBox.querySelectorAll('.recordedMovie')
+            if (remainingRecordings.length === 0) {
+                recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
+            }
         }
     })
     recordedMovie.appendChild(closeButton)

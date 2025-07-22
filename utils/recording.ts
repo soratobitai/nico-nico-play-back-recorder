@@ -1,6 +1,51 @@
 import { saveChunk, getAllChunks, deleteChunkByKeys, cleanUpAllChunks } from "../hooks/indexedDB/recordingDB"
 import { checkLiveStatus } from '../services/api'
 
+// 録画状態の一元管理クラス
+export type RecordingState = 'preparing' | 'recording' | 'stopped' | 'error'
+
+export class RecordingStateManager {
+  private state: RecordingState = 'stopped'
+  private listeners: Array<(state: RecordingState) => void> = []
+
+  getState() {
+    return this.state
+  }
+
+  setState(newState: RecordingState) {
+    if (this.state !== newState) {
+      this.state = newState
+      this.updateUI()
+      this.listeners.forEach(fn => fn(newState))
+    }
+  }
+
+  onChange(fn: (state: RecordingState) => void) {
+    this.listeners.push(fn)
+  }
+
+  private updateUI() {
+    // setRecordingStatusはApp.tsからimportして使う想定
+    if (typeof window !== 'undefined' && (window as any).setRecordingStatus) {
+      const setRecordingStatus = (window as any).setRecordingStatus
+      switch (this.state) {
+        case 'preparing':
+          setRecordingStatus(false, false, '準備中')
+          break
+        case 'recording':
+          setRecordingStatus(false, true, '🔴録画中')
+          break
+        case 'stopped':
+          setRecordingStatus(true, false, '停止中')
+          break
+        case 'error':
+          setRecordingStatus(true, false, 'エラー')
+          break
+      }
+    }
+  }
+}
+
 let recordingTimeout: any // ondataavailable の発火を監視する関数
 
 let startTime: number | null = null
@@ -38,10 +83,11 @@ const startRecordingActions = async (
     mediaRecorder: MediaRecorder,
     RESTART_MEDIARECORDER_INTERVAL_MS: number,
     SAVE_CHUNK_INTERVAL_MS: number,
+    autoReloadOnFailure: boolean = false,
 ) => {
     startTimer()
     startResetRecordInterval(resetRecording, RESTART_MEDIARECORDER_INTERVAL_MS)
-    resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS)
+    resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
     setRecordingStatus(false, true, "🔴録画中")
     console.log("録画を開始しました。")
 }
@@ -171,6 +217,7 @@ const mergeStaleChunks = async (SAVE_CHUNK_INTERVAL_MS: number) => {
 const resetTimeoutCheck = (
     mediaRecorder: MediaRecorder,
     SAVE_CHUNK_INTERVAL_MS: number,
+    autoReloadOnFailure: boolean = false,
 ) => {
     clearTimeout(recordingTimeout)
     recordingTimeout = setTimeout(async () => {
@@ -180,10 +227,14 @@ const resetTimeoutCheck = (
         if (liveStatus === 'ON_AIR') {
             if (mediaRecorder.state === 'recording') {
                 // ライブが続いていて、かつ録画中の場合のみリロードボタンを押す
-                const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
-                if (reloadButton) {
-                    console.log('ライブが続いていて録画中のためリロードボタンを押します')
-                    reloadButton.click()
+                if (autoReloadOnFailure) {
+                    const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
+                    if (reloadButton) {
+                        console.log('ライブが続いていて録画中のためリロードボタンを押します')
+                        reloadButton.click()
+                    }
+                } else {
+                    console.log('ライブが続いていて録画中ですが、オートリロードが無効になっているためリロードしません')
                 }
             }
         } else {

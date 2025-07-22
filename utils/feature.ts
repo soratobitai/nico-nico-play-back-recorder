@@ -86,7 +86,7 @@ const downloadRecordedMovie = async (key: [string, number]) => {
 
         // ダウンロードファイル名を生成
         const formattedDate = formatDateForFileName(chunk.createdAt)
-        const filename = `${chunk.userName} ${chunk.title || ''} ${formattedDate}.mp4`
+        const filename = `${chunk.userName}_${chunk.title || ''}_${formattedDate}.mp4`
 
         // 一時的にaタグを作成して自動クリック
         const a = document.createElement('a')
@@ -128,7 +128,7 @@ const getScreenShotAndDownload = async () => {
 
             const { userName, title } = getProgramData()
             const timeString = formatDateForFileName(Date.now())
-            a.download = `${userName} ${title} ${timeString}.png`
+            a.download = `${userName}_${title}_${timeString}.png`
             a.href = url
             a.click()
 

@@ -1,9 +1,16 @@
 import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack } from "../../utils/recording"
+import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, RecordingState } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, confirmModal, loadRecordedMovieList, deleteMovieIcon, setRecordingStatus } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
 import { checkLiveStatus } from '../../services/api'
+
+// 録画状態の一元管理クラス
+
+// setRecordingStatusをwindowにアタッチ
+(window as any).setRecordingStatus = setRecordingStatus
+
+const stateManager = new RecordingStateManager()
 
 export default async () => {
 
@@ -53,10 +60,10 @@ export default async () => {
 
         if (mediaRecorder && mediaRecorder.state === "recording") {
             console.log("🔄 録画を切り替えます...")
+            stateManager.setState('preparing')
 
             mediaRecorder.onstop = async () => {
                 await stopRecordingActions(sessionId)
-
                 // ✅ 新しい recorder を開始
                 startNewRecorder()
             }
@@ -220,7 +227,7 @@ export default async () => {
             // チャンクを保存
             await saveChunk('Temps', sessionId, chunkIndex++, event.data, null, Date.now(), userName, title)
 
-            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS)
+            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
         }
 
         mediaRecorder.onstop = async () => {
@@ -229,33 +236,25 @@ export default async () => {
 
         // 録画を開始
         mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
+        stateManager.setState('recording')
         startRecordingActions(
             resetRecording,
             mediaRecorder,
             restartInterval,
-            SAVE_CHUNK_INTERVAL_MS
+            SAVE_CHUNK_INTERVAL_MS,
+            autoReloadOnFailure
         )
     }
 
 
 
     const start = () => {
-        if (mediaRecorder && mediaRecorder.state === "inactive") {
-            setRecordingStatus(false, false, '準備中')
-            mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
-            startRecordingActions(
-                resetRecording,
-                mediaRecorder,
-                restartInterval,
-                SAVE_CHUNK_INTERVAL_MS
-            )
-        } else {
-            initStream()
-        }
+        // クリア後や新規録画時は必ず新しいstream/recorderを初期化する
+        initStream()
     }
     const stop = () => {
         if (mediaRecorder && mediaRecorder.state === "recording") {
-            setRecordingStatus(false, false, '停止中')
+            stateManager.setState('preparing')
             mediaRecorder.stop()
         }
     }
@@ -267,33 +266,26 @@ export default async () => {
         await loadRecordedMovieList('latest')
     }
     const clear = async () => {
-        setRecordingStatus(false, false, '準備中')
+        stateManager.setState('preparing')
         try {
             if (mediaRecorder && mediaRecorder.state === "recording") {
                 mediaRecorder.onstop = async () => {
                     await stopRecordingActions(sessionId)
                     setTimeout(async () => {
                         await cleanUp(sessionId) // リセット
-                        // startNewRecorder() // 録画を再開
-                        // 録画を開始
-                        mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
-                        startRecordingActions(
-                            resetRecording,
-                            mediaRecorder,
-                            restartInterval,
-                            SAVE_CHUNK_INTERVAL_MS
-                        )
+                        stateManager.setState('stopped')
                     }, 500) // 録画停止後にリセット
                 }
                 // recorder を停止
                 mediaRecorder.stop()
             } else {
                 await cleanUp(sessionId) // リセット
-                setRecordingStatus(true, false, '停止中')
+                stateManager.setState('stopped')
             }
         }
         catch (error) {
             console.log("リセットに失敗しました:", error)
+            stateManager.setState('error')
         }
     }
 
@@ -360,7 +352,7 @@ export default async () => {
             if (autoStart) {
                 initStream() // 録画を開始
             } else {
-                setRecordingStatus(true, false, '停止中')
+                stateManager.setState('stopped')
             }
 
             await new Promise(resolve => setTimeout(resolve, 1000))
