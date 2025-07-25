@@ -51,6 +51,12 @@ let recordingTimeout: any // ondataavailable の発火を監視する関数
 let startTime: number | null = null
 let recordTimer: ReturnType<typeof setInterval> | null = null
 
+// 外部からアクセス可能にするための関数
+export const getRecordTimer = () => recordTimer
+export const setRecordTimer = (timer: ReturnType<typeof setInterval> | null) => { recordTimer = timer }
+export const getStartTime = () => startTime
+export const setStartTime = (time: number | null) => { startTime = time }
+
 let resetRecordIntervalId = null as ReturnType<typeof setInterval> | null
 
 // 指定間隔で録画をリセット
@@ -67,15 +73,24 @@ const startResetRecordInterval = (
 }
 
 const startTimer = () => {
-    // 録画時間を更新
-    startTime = Date.now()
-    recordTimer = setInterval(() => {
-        if (startTime) {
-            const timeString = getTimeString(startTime)
-            const recordTimeElem = document.getElementById('recordTime')
-            if (recordTimeElem) recordTimeElem.textContent = `${timeString}`
-        }
-    }, 1000)
+    // 完全にリセット
+    if (recordTimer) {
+        clearInterval(recordTimer)
+        recordTimer = null
+    }
+    startTime = null
+    
+    // 少し待ってから完全に新しいタイマーを設定
+    setTimeout(() => {
+        startTime = Date.now()
+        recordTimer = setInterval(() => {
+            if (startTime) {
+                const timeString = getTimeString(startTime)
+                const recordTimeElem = document.getElementById('recordTime')
+                if (recordTimeElem) recordTimeElem.textContent = `${timeString}`
+            }
+        }, 1000)
+    }, 50)
 }
 
 const startRecordingActions = async (
@@ -85,10 +100,8 @@ const startRecordingActions = async (
     SAVE_CHUNK_INTERVAL_MS: number,
     autoReloadOnFailure: boolean = false,
 ) => {
-    startTimer()
     startResetRecordInterval(resetRecording, RESTART_MEDIARECORDER_INTERVAL_MS)
     resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
-    setRecordingStatus(false, true, "🔴録画中")
     console.log("録画を開始しました。")
 }
 
@@ -110,7 +123,6 @@ const stopRecordingActions = async (sessionId: string) => {
     }
     resetRecordingTimer()
 
-    setRecordingStatus(true, false, '停止中')
     console.log('録画を停止しました')
 }
 

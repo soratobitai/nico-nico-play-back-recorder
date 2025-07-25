@@ -1,5 +1,5 @@
 import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, RecordingState } from "../../utils/recording"
+import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, RecordingState, getRecordTimer, setRecordTimer, getStartTime, setStartTime } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, confirmModal, loadRecordedMovieList, deleteMovieIcon, setRecordingStatus } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
@@ -68,8 +68,12 @@ export default async () => {
                 startNewRecorder()
             }
 
-            // recorder を停止
-            mediaRecorder.stop()
+            // バッファリング時間後に録画を停止
+            setTimeout(() => {
+                if (mediaRecorder && mediaRecorder.state === "recording") {
+                    mediaRecorder.stop()
+                }
+            }, 500) // 録画停止時のバッファリング時間
 
             // ✅ 容量超過分のチャンクを削除（マージとズラす）
             setTimeout(async () => {
@@ -119,7 +123,9 @@ export default async () => {
     let stream: MediaStream = {} as MediaStream
     let mediaRecorder: MediaRecorder = {} as MediaRecorder
 
-    const initStream = () => {
+
+
+    const initStream = (startRecording: boolean = true) => {
         if (!video) return
         if (mediaRecorder && mediaRecorder.state === "recording") return
 
@@ -146,20 +152,28 @@ export default async () => {
         }
 
         const startRecordingFromStream = (video: HTMLVideoElement) => {
-            try {
-                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                startNewRecorder()
-            } catch (error) {
-                console.log("録画の開始に失敗しました:", error)
-                // 録画開始に失敗した場合はリロードボタンを押す
-                clickReloadButton("録画開始に失敗")
+            if (startRecording) {
+                // 録画開始処理
+                try {
+                    stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                    startNewRecorder()
+                } catch (error) {
+                    console.log("録画の開始に失敗しました:", error)
+                    // 録画開始に失敗した場合はリロードボタンを押す
+                    clickReloadButton("録画開始に失敗")
+                }
+            } else {
+                // 準備完了のみ
+                stateManager.setState('stopped')
             }
         }
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
             const timeoutId = setTimeout(() => {
                 // タイムアウトした場合はリロードボタンを押す
-                clickReloadButton("動画の準備完了待機がタイムアウト")
+                if (startRecording) {
+                    clickReloadButton("動画の準備完了待機がタイムアウト")
+                }
             }, 3000)
 
             video.addEventListener("canplay", () => {
@@ -219,6 +233,11 @@ export default async () => {
         }
         mediaRecorder = new MediaRecorder(stream, options)
 
+        // 録画開始イベントでカウンター開始
+        mediaRecorder.onstart = () => {
+            startTimer()
+        }
+
         // チャンク取得
         mediaRecorder.ondataavailable = async (event: BlobEvent) => {
             console.log("ondataavailable", event.data.size)
@@ -233,6 +252,22 @@ export default async () => {
         mediaRecorder.onstop = async () => {
             await stopRecordingActions(sessionId)
         }
+
+        // 録画状態の監視を開始
+        const recordingStateCheck = setInterval(() => {
+            if (mediaRecorder.state === 'recording' && !getRecordTimer()) {
+                console.log('録画状態確認: カウンター開始')
+                startTimer()
+            } else if (mediaRecorder.state !== 'recording' && getRecordTimer()) {
+                console.log('録画状態確認: カウンター停止')
+                const currentTimer = getRecordTimer()
+                if (currentTimer) {
+                    clearInterval(currentTimer)
+                    setRecordTimer(null)
+                }
+                setStartTime(null)
+            }
+        }, 100)
 
         // 録画を開始
         mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
@@ -254,8 +289,11 @@ export default async () => {
     }
     const stop = () => {
         if (mediaRecorder && mediaRecorder.state === "recording") {
-            stateManager.setState('preparing')
-            mediaRecorder.stop()
+            stateManager.setState('stopped')
+            
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop()
+            }
         }
     }
     const reload = async () => {
@@ -276,8 +314,10 @@ export default async () => {
                         stateManager.setState('stopped')
                     }, 500) // 録画停止後にリセット
                 }
-                // recorder を停止
-                mediaRecorder.stop()
+                
+                if (mediaRecorder && mediaRecorder.state === "recording") {
+                    mediaRecorder.stop()
+                }
             } else {
                 await cleanUp(sessionId) // リセット
                 stateManager.setState('stopped')
@@ -302,17 +342,19 @@ export default async () => {
 
             // recorder を停止
             if (mediaRecorder && mediaRecorder instanceof MediaRecorder && mediaRecorder.state === "recording") {
-                mediaRecorder.stop()
+                if (mediaRecorder && mediaRecorder.state === "recording") {
+                    mediaRecorder.stop()
 
-                // stream を解放
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop())
+                    // stream を解放
+                    if (stream) {
+                        stream.getTracks().forEach(track => track.stop())
+                    }
+
+                    // 新しいストリームを取得し録画を開始
+                    setTimeout(() => {
+                        initStream()
+                    }, 1000)
                 }
-
-                // 新しいストリームを取得し録画を開始
-                setTimeout(() => {
-                    initStream()
-                }, 1000)
             }
         })
     }
@@ -343,21 +385,26 @@ export default async () => {
 
         await new Promise(resolve => setTimeout(resolve, 1000))
 
-        // 録画リストを取得（最新20件のみ）
-        await loadRecordedMovieList('latest')
-
-        await new Promise(resolve => setTimeout(resolve, 1000))
-
         executeWhenIdle(async () => {
-            if (autoStart) {
-                initStream() // 録画を開始
-            } else {
-                stateManager.setState('stopped')
-            }
+            // 録画リストを取得（最新20件のみ）
+            await loadRecordedMovieList('latest')
 
             await new Promise(resolve => setTimeout(resolve, 1000))
 
-            observeVideoResize() // video の track 変更を監視
+            executeWhenIdle(async () => {
+                if (autoStart) {
+                    initStream(true) // 録画を開始
+                } else {
+                    stateManager.setState('preparing') // 初期状態を準備中に設定
+                    initStream(false) // 動画の準備完了を確認（録画開始なし）
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 1000))
+
+                executeWhenIdle(async () => {
+                    observeVideoResize() // video の track 変更を監視
+                })
+            })
         })
     })
 }

@@ -214,6 +214,10 @@
 #recordTime {
   font-size: small;
   color: #fff;
+  width: 45px;
+  min-width: 45px;
+  flex-shrink: 0;
+  text-align: center;
 }
 
 #recordedMovieAria button {
@@ -283,6 +287,9 @@
   font-size: small;
   text-align: center;
   color: #ccc;
+  width: 60px;
+  min-width: 60px;
+  flex-shrink: 0;
 }
 
 .textRed {
