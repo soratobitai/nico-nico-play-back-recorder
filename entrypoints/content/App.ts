@@ -68,12 +68,9 @@ export default async () => {
                 startNewRecorder()
             }
 
-            // バッファリング時間後に録画を停止
-            setTimeout(() => {
-                if (mediaRecorder && mediaRecorder.state === "recording") {
-                    mediaRecorder.stop()
-                }
-            }, 500) // 録画停止時のバッファリング時間
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop()
+            }
 
             // ✅ 容量超過分のチャンクを削除（マージとズラす）
             setTimeout(async () => {

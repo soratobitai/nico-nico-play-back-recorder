@@ -220,7 +220,7 @@ function App() {
               checked={settings.AUTO_RELOAD_ON_FAILURE}
               onChange={(e) => updateSetting('AUTO_RELOAD_ON_FAILURE', e.target.checked)}
             />
-            オートリロード(β版)
+            オートリロード
           </label>
           <p className="description">
             映像が止まった時に自動的に映像をリロードします。
