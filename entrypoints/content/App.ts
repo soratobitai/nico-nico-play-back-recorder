@@ -222,7 +222,14 @@ export default async () => {
         executeWhenReady(handleVideoInitialization)
     }
 
+    let recordingStateCheckInterval: ReturnType<typeof setInterval> | null = null
+
     const startNewRecorder = () => {
+        // 既存の録画状態監視をクリア
+        if (recordingStateCheckInterval) {
+            clearInterval(recordingStateCheckInterval)
+            recordingStateCheckInterval = null
+        }
 
         const options = {
             // mimeType: 'video/webm; codecs="vp8, opus"'
@@ -248,10 +255,15 @@ export default async () => {
 
         mediaRecorder.onstop = async () => {
             await stopRecordingActions(sessionId)
+            // 録画停止時に監視もクリア
+            if (recordingStateCheckInterval) {
+                clearInterval(recordingStateCheckInterval)
+                recordingStateCheckInterval = null
+            }
         }
 
         // 録画状態の監視を開始
-        const recordingStateCheck = setInterval(() => {
+        recordingStateCheckInterval = setInterval(() => {
             if (mediaRecorder.state === 'recording' && !getRecordTimer()) {
                 console.log('録画状態確認: カウンター開始')
                 startTimer()
@@ -288,6 +300,12 @@ export default async () => {
         if (mediaRecorder && mediaRecorder.state === "recording") {
             stateManager.setState('stopped')
             
+            // 録画状態監視をクリア
+            if (recordingStateCheckInterval) {
+                clearInterval(recordingStateCheckInterval)
+                recordingStateCheckInterval = null
+            }
+            
             if (mediaRecorder && mediaRecorder.state === "recording") {
                 mediaRecorder.stop()
             }
@@ -303,6 +321,12 @@ export default async () => {
     const clear = async () => {
         stateManager.setState('preparing')
         try {
+            // 録画状態監視をクリア
+            if (recordingStateCheckInterval) {
+                clearInterval(recordingStateCheckInterval)
+                recordingStateCheckInterval = null
+            }
+            
             if (mediaRecorder && mediaRecorder.state === "recording") {
                 mediaRecorder.onstop = async () => {
                     await stopRecordingActions(sessionId)

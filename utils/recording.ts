@@ -243,6 +243,9 @@ const resetTimeoutCheck = (
                     const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
                     if (reloadButton) {
                         console.log('ライブが続いていて録画中のためリロードボタンを押します')
+                        // リロード前にタイマーをクリア
+                        clearTimeout(recordingTimeout)
+                        recordingTimeout = null
                         reloadButton.click()
                     }
                 } else {
