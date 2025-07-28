@@ -1,5 +1,6 @@
 import { saveChunk, getAllChunks, deleteChunkByKeys, cleanUpAllChunks } from "../hooks/indexedDB/recordingDB"
 import { checkLiveStatus } from '../services/api'
+import { setRecordingStatus } from './ui'
 
 // 録画状態の一元管理クラス
 export type RecordingState = 'preparing' | 'recording' | 'stopped' | 'error'
@@ -7,16 +8,25 @@ export type RecordingState = 'preparing' | 'recording' | 'stopped' | 'error'
 export class RecordingStateManager {
   private state: RecordingState = 'stopped'
   private listeners: Array<(state: RecordingState) => void> = []
+  private isUpdating = false // 状態更新中のフラグ
 
   getState() {
     return this.state
   }
 
   setState(newState: RecordingState) {
+    // 状態更新中の場合は待機
+    if (this.isUpdating) {
+      setTimeout(() => this.setState(newState), 10)
+      return
+    }
+
     if (this.state !== newState) {
+      this.isUpdating = true
       this.state = newState
       this.updateUI()
       this.listeners.forEach(fn => fn(newState))
+      this.isUpdating = false
     }
   }
 
@@ -26,22 +36,19 @@ export class RecordingStateManager {
 
   private updateUI() {
     // setRecordingStatusはApp.tsからimportして使う想定
-    if (typeof window !== 'undefined' && (window as any).setRecordingStatus) {
-      const setRecordingStatus = (window as any).setRecordingStatus
-      switch (this.state) {
-        case 'preparing':
-          setRecordingStatus(false, false, '準備中')
-          break
-        case 'recording':
-          setRecordingStatus(false, true, '🔴録画中')
-          break
-        case 'stopped':
-          setRecordingStatus(true, false, '停止中')
-          break
-        case 'error':
-          setRecordingStatus(true, false, 'エラー')
-          break
-      }
+    switch (this.state) {
+      case 'preparing':
+        setRecordingStatus(false, false, '準備中')
+        break
+      case 'recording':
+        setRecordingStatus(false, true, '🔴録画中')
+        break
+      case 'stopped':
+        setRecordingStatus(true, false, '停止中')
+        break
+      case 'error':
+        setRecordingStatus(true, false, 'エラー')
+        break
     }
   }
 }
@@ -99,13 +106,14 @@ const startRecordingActions = async (
     RESTART_MEDIARECORDER_INTERVAL_MS: number,
     SAVE_CHUNK_INTERVAL_MS: number,
     autoReloadOnFailure: boolean = false,
+    stateManager?: RecordingStateManager,
 ) => {
     startResetRecordInterval(resetRecording, RESTART_MEDIARECORDER_INTERVAL_MS)
-    resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
+    resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, stateManager)
     console.log("録画を開始しました。")
 }
 
-const stopRecordingActions = async (sessionId: string) => {
+const stopRecordingActions = async (sessionId: string, stateManager?: RecordingStateManager) => {
 
     // チャンクを結合して保存
     await mergeChunksBySession(sessionId)
@@ -122,6 +130,11 @@ const stopRecordingActions = async (sessionId: string) => {
         if (recordTimeElem) recordTimeElem.textContent = '00:00'
     }
     resetRecordingTimer()
+    
+    // 状態を停止中に更新
+    if (stateManager) {
+        stateManager.setState('stopped')
+    }
 
     console.log('録画を停止しました')
 }
@@ -230,6 +243,7 @@ const resetTimeoutCheck = (
     mediaRecorder: MediaRecorder,
     SAVE_CHUNK_INTERVAL_MS: number,
     autoReloadOnFailure: boolean = false,
+    stateManager?: RecordingStateManager,
 ) => {
     clearTimeout(recordingTimeout)
     recordingTimeout = setTimeout(async () => {
@@ -258,6 +272,11 @@ const resetTimeoutCheck = (
                 mediaRecorder.stop()
             }
             console.log('ライブが終了したため録画を停止します')
+            
+            // 状態を停止中に更新
+            if (stateManager) {
+                stateManager.setState('stopped')
+            }
 
             clearTimeout(recordingTimeout)
         }

@@ -7,9 +7,6 @@ import { checkLiveStatus } from '../../services/api'
 
 // 録画状態の一元管理クラス
 
-// setRecordingStatusをwindowにアタッチ
-(window as any).setRecordingStatus = setRecordingStatus
-
 const stateManager = new RecordingStateManager()
 
 export default async () => {
@@ -63,7 +60,7 @@ export default async () => {
             stateManager.setState('preparing')
 
             mediaRecorder.onstop = async () => {
-                await stopRecordingActions(sessionId)
+                await stopRecordingActions(sessionId, stateManager)
                 // ✅ 新しい recorder を開始
                 startNewRecorder()
             }
@@ -124,7 +121,14 @@ export default async () => {
 
     const initStream = (startRecording: boolean = true) => {
         if (!video) return
-        if (mediaRecorder && mediaRecorder.state === "recording") return
+        
+        // mediaRecorder.state のチェックを削除し、代わりに stateManager の状態をチェック
+        if (stateManager.getState() === 'recording') return
+
+        // 録画開始前の状態を準備中に設定
+        if (startRecording) {
+            stateManager.setState('preparing')
+        }
 
         // リロードボタンを押す共通関数
         const clickReloadButton = (reason: string) => {
@@ -156,7 +160,9 @@ export default async () => {
                     startNewRecorder()
                 } catch (error) {
                     console.log("録画の開始に失敗しました:", error)
-                    // 録画開始に失敗した場合はリロードボタンを押す
+                    // 録画開始に失敗した場合は状態を停止中に設定
+                    stateManager.setState('stopped')
+                    // リロードボタンを押す
                     clickReloadButton("録画開始に失敗")
                 }
             } else {
@@ -167,8 +173,9 @@ export default async () => {
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
             const timeoutId = setTimeout(() => {
-                // タイムアウトした場合はリロードボタンを押す
+                // タイムアウトした場合は状態を停止中に設定
                 if (startRecording) {
+                    stateManager.setState('stopped')
                     clickReloadButton("動画の準備完了待機がタイムアウト")
                 }
             }, 3000)
@@ -181,6 +188,10 @@ export default async () => {
                         callback()
                     } else {
                         console.log("動画が再生可能になりましたが、まだ再生されていません")
+                        // 再生されていない場合は状態を停止中に設定
+                        if (startRecording) {
+                            stateManager.setState('stopped')
+                        }
                     }
                 }, 500)
             }, { once: true })
@@ -235,11 +246,20 @@ export default async () => {
             // mimeType: 'video/webm; codecs="vp8, opus"'
             mimeType: 'video/mp4; codecs="avc1.640028, mp4a.40.2"'
         }
-        mediaRecorder = new MediaRecorder(stream, options)
+        
+        try {
+            mediaRecorder = new MediaRecorder(stream, options)
+        } catch (error) {
+            console.log("MediaRecorderの作成に失敗しました:", error)
+            stateManager.setState('stopped')
+            return
+        }
 
         // 録画開始イベントでカウンター開始
         mediaRecorder.onstart = () => {
             startTimer()
+            // 録画開始時に状態を録画中に設定
+            stateManager.setState('recording')
         }
 
         // チャンク取得
@@ -254,12 +274,14 @@ export default async () => {
         }
 
         mediaRecorder.onstop = async () => {
-            await stopRecordingActions(sessionId)
+            await stopRecordingActions(sessionId, stateManager)
             // 録画停止時に監視もクリア
             if (recordingStateCheckInterval) {
                 clearInterval(recordingStateCheckInterval)
                 recordingStateCheckInterval = null
             }
+            // 状態を停止中に更新
+            stateManager.setState('stopped')
         }
 
         // 録画状態の監視を開始
@@ -279,15 +301,20 @@ export default async () => {
         }, 100)
 
         // 録画を開始
-        mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
-        stateManager.setState('recording')
-        startRecordingActions(
-            resetRecording,
-            mediaRecorder,
-            restartInterval,
-            SAVE_CHUNK_INTERVAL_MS,
-            autoReloadOnFailure
-        )
+        try {
+            mediaRecorder.start(SAVE_CHUNK_INTERVAL_MS)
+            startRecordingActions(
+                resetRecording,
+                mediaRecorder,
+                restartInterval,
+                SAVE_CHUNK_INTERVAL_MS,
+                autoReloadOnFailure,
+                stateManager
+            )
+        } catch (error) {
+            console.log("録画の開始に失敗しました:", error)
+            stateManager.setState('stopped')
+        }
     }
 
 
@@ -329,7 +356,7 @@ export default async () => {
             
             if (mediaRecorder && mediaRecorder.state === "recording") {
                 mediaRecorder.onstop = async () => {
-                    await stopRecordingActions(sessionId)
+                    await stopRecordingActions(sessionId, stateManager)
                     setTimeout(async () => {
                         await cleanUp(sessionId) // リセット
                         stateManager.setState('stopped')
@@ -363,6 +390,9 @@ export default async () => {
 
             // recorder を停止
             if (mediaRecorder && mediaRecorder instanceof MediaRecorder && mediaRecorder.state === "recording") {
+                // 状態を準備中に設定
+                stateManager.setState('preparing')
+                
                 if (mediaRecorder && mediaRecorder.state === "recording") {
                     mediaRecorder.stop()
 
@@ -373,7 +403,7 @@ export default async () => {
 
                     // 新しいストリームを取得し録画を開始
                     setTimeout(() => {
-                        initStream()
+                        initStream(true) // 明示的に録画開始を指定
                     }, 1000)
                 }
             }
