@@ -119,4 +119,9 @@ const getAllTemps = async (): Promise<Array<{ timestamp: number; temp: Blob }>> 
     })
 }
 
-export { saveTemp, deleteTempByKeys, getAllTemps, cleanUpAllTemps }
+export {
+    saveTemp,
+    deleteTempByKeys,
+    getAllTemps,
+    cleanUpAllTemps
+}

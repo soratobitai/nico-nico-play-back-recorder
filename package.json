@@ -2,7 +2,7 @@
   "name": "nico-nico-playback-recorder",
   "description": "ニコニコ生放送の視聴中の番組を録画し、後で見返すことができるツールです。",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.1.3",
   "type": "module",
   "scripts": {
     "dev": "wxt",

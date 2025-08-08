@@ -320,14 +320,14 @@ const deleteChunkByKeys = async (storeName: string, keys: IDBValidKey[]): Promis
 
 const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Promise<IDBValidKey[]> => {
     try {
-        const { usage } = await navigator.storage.estimate()
+        const currentUsage = await getStorageUsage()
         const deletedKeys: IDBValidKey[] = []
 
-        if (usage && usage > maxStorageSize) {
-            console.log(`ストレージ超過: ${usage} バイト使用中（上限: ${maxStorageSize} バイト）`)
+        if (currentUsage > maxStorageSize) {
+            console.log(`ストレージ超過: ${currentUsage} バイト使用中（上限: ${maxStorageSize} バイト）`)
 
             const chunks = await getAllChunks(storeName) // getAllChunksを使って全データを取得
-            let totalSize = usage
+            let totalSize = currentUsage
 
             for (const chunk of chunks) {
                 if (totalSize <= maxStorageSize) break // 削除が不要になったら終了
@@ -373,6 +373,19 @@ const cleanUpAllChunks = async (storeName: string): Promise<void> => {
         deleteRequest.onerror = () => {
             console.error(`Failed to delete chunk: ${deleteRequest.error}`)
         }
+    }
+}
+
+const deleteAllChunks = async (): Promise<void> => {
+    try {
+        await Promise.all([
+            cleanUpAllChunks('Chunks'),
+            cleanUpAllChunks('Temps')
+        ])
+        console.log('All chunks deleted successfully')
+    } catch (error) {
+        console.error('Failed to delete all chunks:', error)
+        throw error
     }
 }
 
@@ -433,6 +446,7 @@ export {
     deleteChunkByKeys, 
     cleanUpOldChunks, 
     cleanUpAllChunks, 
+    deleteAllChunks,
     deleteDB, 
     getStorageUsage 
 }

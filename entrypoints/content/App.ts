@@ -1,9 +1,11 @@
-import { saveChunk, cleanUpOldChunks, getStorageUsage } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, RecordingState, getRecordTimer, setRecordTimer, getStartTime, setStartTime } from "../../utils/recording"
+import { saveChunk, cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
+import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, getRecordTimer, setRecordTimer, setStartTime } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
-import { insertRecordedMovieAria, createModal, confirmModal, loadRecordedMovieList, deleteMovieIcon, setRecordingStatus } from "../../utils/ui"
+import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
 import { checkLiveStatus } from '../../services/api'
+import SettingsModal from './settings-modal'
+import './settings-modal.css'
 
 // 録画状態の一元管理クラス
 
@@ -14,38 +16,6 @@ export default async () => {
     // ステータスを確認
     const liveStatus = await checkLiveStatus()
     if (liveStatus !== 'ON_AIR') return
-    
-    // メッセージハンドラーを追加
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (message.type === 'GET_STORAGE_USAGE') {
-            getStorageUsage().then(usage => {
-                sendResponse({ usage })
-            }).catch(error => {
-                console.error('ストレージ使用量の取得に失敗しました:', error)
-                sendResponse({ error: error.message })
-            })
-            return true // 非同期レスポンスを示す
-        }
-        if (message.type === 'CLEAR_ALL_RECORDINGS') {
-            clear().then(() => {
-                sendResponse({ success: true })
-            }).catch(error => {
-                console.error('録画データの削除に失敗しました:', error)
-                sendResponse({ error: error.message })
-            })
-            return true // 非同期レスポンスを示す
-        }
-        if (message.type === 'GET_STORAGE_QUOTA') {
-            navigator.storage.estimate().then((estimate) => {
-                console.log('Storage estimate details:', estimate)
-                sendResponse({ quota: estimate.quota })
-            }).catch(error => {
-                console.error('ストレージ上限の取得に失敗しました:', error)
-                sendResponse({ error: error.message })
-            })
-            return true // 非同期レスポンスを示す
-        }
-    })
 
     let restartInterval = 1 * 60 * 1000
     let maxStorageSize = 1 * 1024 * 1024 * 1024
@@ -420,15 +390,19 @@ export default async () => {
         }
     }
 
+    // 設定モーダルを初期化
+    const settingsModal = new SettingsModal()
+
     // UI類を作成
     insertRecordedMovieAria(
         start,
         stop,
         reload,
-        clear
+        clear,
+        () => settingsModal.show()
     )
     createModal()
-    fixAudioTrack(video) // ミュート対策
+    // fixAudioTrack(video) // ミュート対策
 
     executeWhenIdle(async () => {
         // 不完全なtempファイルを取得・削除し結合して保存

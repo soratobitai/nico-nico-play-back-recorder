@@ -37,8 +37,7 @@ export default defineConfig({
   manifest: {
     "name": "ニコ生プレイバックレコーダー",
     "permissions": [
-      "storage",
-      "tabs"
+      "storage"
     ],
     "web_accessible_resources": [
       {

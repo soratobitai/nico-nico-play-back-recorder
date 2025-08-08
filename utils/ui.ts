@@ -23,6 +23,7 @@ const insertRecordedMovieAria = async (
     stop: () => void,
     reload: () => void,
     clear: () => void,
+    showSettings: () => void,
 ) => {
     const controlArea = document.querySelector('[class*="_control-area_"]')
     if (!controlArea) return
@@ -46,10 +47,17 @@ const insertRecordedMovieAria = async (
               <div id="recordTime">00:00</div>
             </div>
             <div class="control-buttons">
-              <div class="recording-info">
-                <span style="color: #aaa; font-size: 11px;">録画数 <span id="recordingCount" style="font-size: 13px;">0</span></span>
+              <div class="control-buttons-left">
+                <div class="reload-button" id="reloadButton" title="録画リスト更新">
+                    <img src="${chrome.runtime.getURL("assets/images/refresh.svg")}" alt="更新" />
+                </div>
+                <div class="recording-info">
+                    <span style="color: #aaa; font-size: 11px;"><span id="recordingCount" style="font-size: 13px;">0</span></span>
+                </div>
               </div>
-              <button type="button" id="reloadButton" title="録画リスト更新">更新</button>
+              <div class="settings-button" id="settingsButton" title="設定">
+                <img src="${chrome.runtime.getURL("assets/images/settings.svg")}" alt="設定" />
+              </div>
             </div>
           </div>
         </div>
@@ -75,6 +83,10 @@ const insertRecordedMovieAria = async (
 
     // 録画リスト更新ボタン
     reloadButton.addEventListener("click", reload)
+
+    // 設定ボタン
+    const settingsButton = document.getElementById("settingsButton") as HTMLButtonElement
+    settingsButton.addEventListener("click", showSettings)
 
     // 録画リストのスクロール制御
     const setupScrollWatcher = () => {
