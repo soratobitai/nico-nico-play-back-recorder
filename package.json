@@ -2,7 +2,7 @@
   "name": "nico-nico-playback-recorder",
   "description": "ニコニコ生放送の視聴中の番組を録画し、後で見返すことができるツールです。",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -14,18 +14,10 @@
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare"
   },
-  "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.12.15",
-    "@ffmpeg/util": "^0.12.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/chrome": "^0.0.280",
-    "@types/react": "^19.0.1",
-    "@types/react-dom": "^19.0.2",
     "@wxt-dev/auto-icons": "^1.0.2",
-    "@wxt-dev/module-react": "^1.1.2",
     "typescript": "^5.6.3",
     "wxt": "^0.19.29"
   }

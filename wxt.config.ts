@@ -31,7 +31,6 @@ export default defineConfig({
 
   extensionApi: 'chrome',
   modules: [
-    '@wxt-dev/module-react',
     '@wxt-dev/auto-icons'
   ],
   manifest: {
