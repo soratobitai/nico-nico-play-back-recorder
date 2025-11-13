@@ -1,7 +1,7 @@
 import { saveChunk, cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startRecordingActions, stopRecordingActions, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, getRecordTimer, setRecordTimer, setStartTime } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
-import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon } from "../../utils/ui"
+import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
 import { checkLiveStatus } from '../../services/api'
 import SettingsModal from './settings-modal'
@@ -402,34 +402,58 @@ export default async () => {
         () => settingsModal.show()
     )
     createModal()
-    // fixAudioTrack(video) // ミュート対策
 
-    executeWhenIdle(async () => {
-        // 不完全なtempファイルを取得・削除し結合して保存
-        await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
+    // 録画状態の変更を監視してボタンを更新
+    stateManager.onChange((state) => {
+        updateToggleButton(state === 'recording')
+    })
 
-        await new Promise(resolve => setTimeout(resolve, 1000))
-
-        executeWhenIdle(async () => {
-            // 録画リストを取得（最新20件のみ）
+    // 録画リストを読み込む関数
+    const loadRecordingListIfNeeded = async () => {
+        // UIが開いている時のみ読み込む
+        if (!isUICollapsed()) {
             await loadRecordedMovieList('latest')
+        }
+    }
+
+    // 折りたたみボタンを追加（DOM準備後に実行）
+    executeWhenIdle(async () => {
+        // UIを開いた時に録画リストを読み込むコールバックを設定
+        await insertToggleButton(async () => {
+            await loadRecordingListIfNeeded()
+        })
+        // 初期状態を反映
+        updateToggleButton(stateManager.getState() === 'recording')
+        
+        // 折りたたみボタンの初期化が完了した後、初期読み込みを実行
+        executeWhenIdle(async () => {
+            // 不完全なtempファイルを取得・削除し結合して保存
+            await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
 
             await new Promise(resolve => setTimeout(resolve, 1000))
 
             executeWhenIdle(async () => {
-                if (autoStart) {
-                    initStream(true) // 録画を開始
-                } else {
-                    stateManager.setState('preparing') // 初期状態を準備中に設定
-                    initStream(false) // 動画の準備完了を確認（録画開始なし）
-                }
+                // UIが開いている時のみ録画リストを読み込む
+                await loadRecordingListIfNeeded()
 
                 await new Promise(resolve => setTimeout(resolve, 1000))
 
                 executeWhenIdle(async () => {
-                    observeVideoResize() // video の track 変更を監視
+                    if (autoStart) {
+                        initStream(true) // 録画を開始
+                    } else {
+                        stateManager.setState('preparing') // 初期状態を準備中に設定
+                        initStream(false) // 動画の準備完了を確認（録画開始なし）
+                    }
+
+                    await new Promise(resolve => setTimeout(resolve, 1000))
+
+                    executeWhenIdle(async () => {
+                        observeVideoResize() // video の track 変更を監視
+                    })
                 })
             })
         })
     })
+    // fixAudioTrack(video) // ミュート対策
 }

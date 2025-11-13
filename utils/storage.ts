@@ -25,3 +25,10 @@ export const AUTO_RELOAD_ON_FAILURE = storage.defineItem<boolean>(
         fallback: false,
     }
 )
+
+export const UI_COLLAPSED = storage.defineItem<boolean>(
+    'local:UI_COLLAPSED',
+    {
+        fallback: false,
+    }
+)

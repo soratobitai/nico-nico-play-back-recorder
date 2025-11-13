@@ -1,5 +1,6 @@
 import { getChunkByKey, getAllChunks, deleteChunkByKeys, getLatestChunks, getOlderChunks, getChunksCount } from "../hooks/indexedDB/recordingDB"
 import { downloadRecordedMovie, getScreenShotAndDownload, formatDate } from "../utils/feature"
+import { UI_COLLAPSED } from "../utils/storage"
 
 let capButton = null as HTMLButtonElement | null
 let startButton = null as HTMLButtonElement | null
@@ -17,6 +18,10 @@ let oldestLoadedTimestamp = Infinity
 let loadedChunksCount = 0
 const CHUNKS_PER_LOAD = 20
 const CHUNK_WIDTH = 102 // 固定幅（90px + 左右ボーダー2px + margin 10px）
+
+// 折りたたみ状態管理
+let isCollapsed = false
+let toggleButton: HTMLButtonElement | null = null
 
 const insertRecordedMovieAria = async (
     start: () => void,
@@ -581,6 +586,74 @@ const loadOlderRecordings = async () => {
     }
 }
 
+// 折りたたみボタンを作成・初期化
+const insertToggleButton = async (onOpen?: () => void | Promise<void>) => {
+    // 既にボタンが存在する場合はスキップ
+    if (document.getElementById('recording-toggle-button')) return
+
+    // addon-controller要素を探す
+    const addonController = document.querySelector('[class*="addon-controller"]') as HTMLElement
+    if (!addonController) return
+
+    // 保存された折りたたみ状態を読み込む
+    isCollapsed = await UI_COLLAPSED.getValue()
+
+    // ボタンを作成
+    toggleButton = document.createElement('button')
+    toggleButton.id = 'recording-toggle-button'
+    toggleButton.className = 'recording-toggle-button'
+    toggleButton.type = 'button'
+    toggleButton.setAttribute('aria-label', 'ニコ生プレイバックレコーダー')
+    toggleButton.textContent = '■' // 初期値は青い■
+    toggleButton.style.color = '#3b82f6' // 青色
+
+    // 初期状態を反映
+    const recordedMovieAria = document.getElementById('recordedMovieAria')
+    if (recordedMovieAria) {
+        recordedMovieAria.style.display = isCollapsed ? 'none' : 'block'
+    }
+
+    // クリックイベント
+    toggleButton.addEventListener('click', async () => {
+        const previousCollapsed = isCollapsed
+        isCollapsed = !isCollapsed
+        const recordedMovieAria = document.getElementById('recordedMovieAria')
+        if (recordedMovieAria) {
+            recordedMovieAria.style.display = isCollapsed ? 'none' : 'block'
+        }
+        // 状態をストレージに保存
+        await UI_COLLAPSED.setValue(isCollapsed)
+        
+        // UIが閉じていた状態から開いた状態になった時にコールバックを実行
+        if (previousCollapsed && !isCollapsed && onOpen) {
+            await onOpen()
+        }
+    })
+
+    // 右端に挿入
+    addonController.appendChild(toggleButton)
+}
+
+// UIが開いているかどうかを取得する関数
+const isUICollapsed = () => {
+    return isCollapsed
+}
+
+// 録画状態に応じてボタンの表示を更新
+const updateToggleButton = (isRecording: boolean) => {
+    if (!toggleButton) return
+
+    if (isRecording) {
+        // 録画中: 赤い●
+        toggleButton.textContent = '🔴'
+        toggleButton.style.color = '#ef4444' // 赤色
+    } else {
+        // 録画していない: 青い■
+        toggleButton.textContent = '■'
+        toggleButton.style.color = '#3b82f6' // 青色
+    }
+}
+
 export {
     insertRecordedMovieAria,
     insertRecordedMovie,
@@ -590,5 +663,8 @@ export {
     loadRecordedMovieList,
     deleteMovieIcon,
     setRecordingStatus,
-    getTimeString
+    getTimeString,
+    insertToggleButton,
+    updateToggleButton,
+    isUICollapsed
 }
