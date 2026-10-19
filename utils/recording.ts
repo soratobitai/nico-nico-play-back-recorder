@@ -8,26 +8,18 @@ export type RecordingState = 'preparing' | 'recording' | 'stopped' | 'error'
 export class RecordingStateManager {
   private state: RecordingState = 'preparing' // 画面の初期表示（準備中・ボタン無効）に合わせる
   private listeners: Array<(state: RecordingState) => void> = []
-  private isUpdating = false // 状態更新中のフラグ
 
   getState() {
     return this.state
   }
 
+  // 同期的にすぐ反映する（後から遅れて反映すると、その間の状態変更と順番が入れ替わる）
   setState(newState: RecordingState) {
-    // 状態更新中の場合は待機
-    if (this.isUpdating) {
-      setTimeout(() => this.setState(newState), 10)
-      return
-    }
+    if (this.state === newState) return
 
-    if (this.state !== newState) {
-      this.isUpdating = true
-      this.state = newState
-      this.updateUI()
-      this.listeners.forEach(fn => fn(newState))
-      this.isUpdating = false
-    }
+    this.state = newState
+    this.updateUI()
+    this.listeners.forEach(fn => fn(newState))
   }
 
   onChange(fn: (state: RecordingState) => void) {

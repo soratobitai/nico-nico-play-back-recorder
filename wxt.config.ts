@@ -43,8 +43,9 @@ export default defineConfig({
         "resources": [
           "assets/images/*"
         ],
+        // 画像を使うのはニコ生の視聴ページに埋め込む UI だけなので、他のサイトからは読めないようにする
         "matches": [
-          "<all_urls>"
+          "*://live.nicovideo.jp/*"
         ]
       }
     ]
