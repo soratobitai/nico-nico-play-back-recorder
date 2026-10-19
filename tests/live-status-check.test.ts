@@ -4,7 +4,7 @@ import { checkLiveStatus } from '@/services/api'
 
 vi.mock('@/utils/ui', () => ({
     insertRecordedMovie: vi.fn(),
-    deleteMovieIcon: vi.fn(),
+    removeSegmentItems: vi.fn(),
     setRecordingStatus: vi.fn(),
     getTimeString: () => '00:00',
 }))

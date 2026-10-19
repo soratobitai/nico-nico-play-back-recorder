@@ -1,4 +1,4 @@
-import { getChunkByKey } from "../hooks/indexedDB/recordingDB"
+import { getSegmentFile } from "./library/api"
 
 const getProgramData = () => {
     // ユーザー名を取得（ページの構造が変わって取れなくても、録画は続けられるように空にする）
@@ -21,72 +21,20 @@ const getProgramData = () => {
     return { userName, title }
 }
 
-// 動画の最初のフレームを取得する関数
-// 成功時は JPEG の dataURL、動画として読み込めない場合は ''、時間内に取得できなかった場合は null を返す
-const extractFirstFrame = async (blob: Blob, timeoutMs: number = 10 * 1000): Promise<string | null> => {
-
-    if (!blob.type.startsWith('video/')) {
-        console.log(`Invalid blob type: ${blob.type}, returning default image`)
-        return ''
+// ライブ映像の今のコマを、録画リスト用の小さなサムネイル（JPEG の data URL）にする
+// 映像がまだ表示されていない場合は null（デフォルトの画像で表示される）
+const captureThumbnail = (video: HTMLVideoElement | null, width = 160): string | null => {
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null
+    try {
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = Math.round(width * video.videoHeight / video.videoWidth)
+        canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height)
+        return canvas.toDataURL('image/jpeg', 0.7)
+    } catch (error) {
+        console.log('サムネイルを作れませんでした:', error)
+        return null
     }
-
-    const video = document.createElement('video')
-    const objectURL = URL.createObjectURL(blob)
-    video.preload = "auto"
-    video.src = objectURL
-    video.muted = true
-    video.playsInline = true
-
-    return new Promise((resolve) => {
-        let settled = false
-        const finish = (result: string | null) => {
-            if (settled) return
-            settled = true
-            clearTimeout(timeoutId)
-            URL.revokeObjectURL(objectURL)
-            video.remove()
-            resolve(result)
-        }
-
-        // イベントが発火しないまま待ち続けないようにする
-        const timeoutId = setTimeout(() => {
-            console.log('Timed out while capturing first frame')
-            finish(null)
-        }, timeoutMs)
-
-        video.onloadeddata = () => {
-            video.currentTime = 0
-        }
-
-        video.onseeked = () => {
-            setTimeout(() => {  // ★ 500ms 待ってからキャプチャ
-                if (settled) return
-                try {
-                    const canvas = document.createElement('canvas')
-                    const aspectRatio = video.videoHeight / video.videoWidth
-                    canvas.width = 100
-                    canvas.height = Math.round(100 * aspectRatio)
-
-                    const ctx = canvas.getContext('2d', { willReadFrequently: true })
-                    if (ctx) {
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-                        finish(canvas.toDataURL('image/jpeg', 0.7)) // 成功時はJPEGデータを返す
-                    } else {
-                        console.log('Canvas context is not available, returning default image')
-                        finish(null) // 動画の問題ではないのでデフォルト画像にする
-                    }
-                } catch (err) {
-                    console.log('Error capturing first frame:', err)
-                    finish('') // エラー時は空を返す
-                }
-            }, 500)
-        }
-
-        video.onerror = (e) => {
-            console.log('Video load error:', e)
-            finish('') // エラー時は空を返す
-        }
-    })
 }
 
 // Blob をファイルとしてダウンロードする
@@ -108,19 +56,16 @@ const downloadBlob = (blob: Blob, filename: string) => {
 // 動画の形式からダウンロード時の拡張子を決める（webm で録画した環境以外は mp4）
 const getVideoExtension = (type: string) => type.startsWith('video/webm') ? 'webm' : 'mp4'
 
-const downloadRecordedMovie = async (key: [string, number]) => {
+// 録画（区間）を1本のファイルにしてダウンロードする
+const downloadSegment = async (segmentId: string) => {
     try {
-        const chunk = await getChunkByKey('Chunks', key)
-        if (!chunk) {
-            alert('動画データが見つかりませんでした')
-            return
-        }
+        const { blob, segment } = await getSegmentFile(segmentId)
 
-        // ダウンロードファイル名を生成
-        const formattedDate = formatDateForFileName(chunk.createdAt)
-        const filename = `${chunk.userName || ''}_${chunk.title || ''}_${formattedDate}.${getVideoExtension(chunk.blob.type)}`
+        // ダウンロードファイル名を生成（日時は録画を始めた時刻）
+        const formattedDate = formatDateForFileName(segment.startedAt)
+        const filename = `${segment.userName}_${segment.title}_${formattedDate}.${getVideoExtension(segment.mimeType)}`
 
-        downloadBlob(chunk.blob, filename)
+        downloadBlob(blob, filename)
     } catch (error) {
         console.error('ダウンロード中にエラーが発生しました:', error)
         alert('ダウンロードに失敗しました')
@@ -182,9 +127,9 @@ const formatDate = (input: string | number) => formatDateTime(input, ':')
 
 export {
     getProgramData,
-    extractFirstFrame,
+    captureThumbnail,
     getVideoExtension,
-    downloadRecordedMovie,
+    downloadSegment,
     getScreenShotAndDownload,
     formatDateForFileName,
     formatDate

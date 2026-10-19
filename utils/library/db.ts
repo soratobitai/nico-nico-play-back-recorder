@@ -1,0 +1,354 @@
+// 録画の保存先（拡張機能側の IndexedDB）
+// 拡張機能のページ（ニコ生のページに埋め込む bridge と、ライブラリのページ）から使う。
+// ニコ生のページ（content script）からは bridge を通して使う（utils/library/api.ts）。
+//
+// 録画は「区間（segment）」ごとに保存する。区間は1回の録画処理（MediaRecorder）で録った範囲で、
+// fmp4 の区間は「初期化セグメント」と約1秒ごとの「断片（fragment）」に分けて持つ。
+// 断片のまま持つので、録画中でも再生でき、容量の上限を超えたら古い断片から消していける。
+import { buildFmp4File } from '../fmp4'
+
+const DB_NAME = 'PlaybackLibrary'
+const DB_VERSION = 1
+const SEGMENTS = 'segments'
+const FRAGMENTS = 'fragments'
+
+type RecordingKind = 'video' | 'comments' | 'screen'
+// opaque: 断片を先頭から順につなげて再生するだけの形式（webm や、MP4 として読めなかった古い録画）
+type SegmentFormat = 'fmp4' | 'opaque'
+
+type SegmentRecord = {
+    segmentId: string
+    programId: string // 番組（lv〜）。以前のバージョンから移した録画は 'legacy'
+    kind: RecordingKind
+    format: SegmentFormat
+    mimeType: string
+    title: string
+    userName: string
+    startedAt: number // 録画を始めた時刻（ミリ秒）
+    endedAt: number | null // 録画を終えた時刻。録画中は null
+    init: Blob | null // fmp4 の初期化セグメント（届くまでは null）
+    thumbnail: string | null // data URL
+    bytes: number // 初期化セグメントと断片の合計
+    fragmentCount: number
+    duration: number // 区間の長さ（秒）
+}
+
+type FragmentRecord = {
+    segmentId: string
+    index: number
+    blob: Blob
+    moofSize: number // fmp4 の断片の先頭にある moof の大きさ（ファイルにまとめる時に時刻を書き換える）
+    startTime: number // 区間の中での開始時刻（秒）
+    duration: number
+    wallClock: number // 録画した時刻（ミリ秒）。容量の上限を超えた時に古い順に消すために使う
+}
+
+type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration'>
+type NewFragment = Omit<FragmentRecord, 'segmentId'>
+// UI などに渡す区間の情報（大きなデータは含めない）
+type SegmentSummary = Omit<SegmentRecord, 'init'>
+
+// ---- IndexedDB の基本操作 ----
+
+let dbPromise: Promise<IDBDatabase> | null = null
+
+const openLibraryDB = (): Promise<IDBDatabase> => {
+    if (dbPromise) return dbPromise
+    dbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION)
+        request.onupgradeneeded = () => {
+            const db = request.result
+            const segments = db.createObjectStore(SEGMENTS, { keyPath: 'segmentId' })
+            segments.createIndex('startedAt', 'startedAt')
+            segments.createIndex('programId', 'programId')
+            const fragments = db.createObjectStore(FRAGMENTS, { keyPath: ['segmentId', 'index'] })
+            fragments.createIndex('wallClock', 'wallClock')
+        }
+        request.onsuccess = () => {
+            const db = request.result
+            db.onversionchange = () => {
+                db.close()
+                dbPromise = null
+            }
+            db.onclose = () => {
+                dbPromise = null
+            }
+            resolve(db)
+        }
+        request.onerror = () => {
+            dbPromise = null
+            reject(request.error)
+        }
+    })
+    return dbPromise
+}
+
+const promisify = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+})
+
+// トランザクションの中で run を実行し、確定してから結果を返す（失敗したらまとめて取り消される）
+const withTransaction = async <T>(
+    storeNames: string[],
+    mode: IDBTransactionMode,
+    run: (tx: IDBTransaction) => Promise<T>,
+): Promise<T> => {
+    const db = await openLibraryDB()
+    const tx = db.transaction(storeNames, mode)
+    const done = new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve()
+        tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
+    })
+    try {
+        const result = await run(tx)
+        await done
+        return result
+    } catch (error) {
+        try { tx.abort() } catch { /* 既に終わっている */ }
+        await done.catch(() => {})
+        throw error
+    }
+}
+
+const fragmentRange = (segmentId: string) => IDBKeyRange.bound([segmentId, -Infinity], [segmentId, Infinity])
+
+const toSummary = ({ init: _init, ...summary }: SegmentRecord): SegmentSummary => summary
+
+class SegmentNotFoundError extends Error {
+    constructor(segmentId: string) {
+        super(`録画の区間が見つかりません: ${segmentId}`)
+        this.name = 'SegmentNotFoundError'
+    }
+}
+
+const getSegmentRecord = async (store: IDBObjectStore, segmentId: string) => {
+    const segment = await promisify<SegmentRecord | undefined>(store.get(segmentId))
+    if (!segment) throw new SegmentNotFoundError(segmentId)
+    return segment
+}
+
+// ---- 録画中に使う操作 ----
+
+const createSegment = (segment: NewSegment) => withTransaction([SEGMENTS], 'readwrite', async (tx) => {
+    const record: SegmentRecord = { ...segment, endedAt: null, init: null, bytes: 0, fragmentCount: 0, duration: 0 }
+    await promisify(tx.objectStore(SEGMENTS).add(record))
+})
+
+const setSegmentInit = (segmentId: string, init: Blob) => withTransaction([SEGMENTS], 'readwrite', async (tx) => {
+    const store = tx.objectStore(SEGMENTS)
+    const segment = await getSegmentRecord(store, segmentId)
+    segment.bytes += init.size - (segment.init?.size ?? 0)
+    segment.init = init
+    await promisify(store.put(segment))
+})
+
+const appendFragments = (segmentId: string, fragments: NewFragment[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    const segments = tx.objectStore(SEGMENTS)
+    const segment = await getSegmentRecord(segments, segmentId)
+    const store = tx.objectStore(FRAGMENTS)
+    for (const fragment of fragments) {
+        const previous = await promisify<FragmentRecord | undefined>(store.get([segmentId, fragment.index]))
+        await promisify(store.put({ ...fragment, segmentId }))
+        // 同じ断片を2回受け取った場合（一時保存からの移し直しなど）は数え直さない
+        if (previous) {
+            segment.bytes -= previous.blob.size
+        } else {
+            segment.fragmentCount += 1
+        }
+        segment.bytes += fragment.blob.size
+        segment.duration = Math.max(segment.duration, fragment.startTime + fragment.duration)
+    }
+    // 終えたことにした区間に続きが届いた場合（closeStaleSegments の後に一時保存から移された など）は、終わりを延ばす
+    if (segment.endedAt !== null) segment.endedAt = Math.max(segment.endedAt, lastWriteOf(segment))
+    await promisify(segments.put(segment))
+})
+
+// 最後に書き込まれた断片の終わりの時刻
+const lastWriteOf = (segment: SegmentRecord) => segment.startedAt + segment.duration * 1000
+
+// 録画を終えた区間を確定する。断片が1つもない区間は消して null を返す
+const finishSegment = (segmentId: string, endedAt: number, mimeType?: string) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx): Promise<SegmentSummary | null> => {
+    const segments = tx.objectStore(SEGMENTS)
+    const segment = await promisify<SegmentRecord | undefined>(segments.get(segmentId))
+    if (!segment) return null
+    if (segment.fragmentCount === 0) {
+        await promisify(segments.delete(segmentId))
+        return null
+    }
+    segment.endedAt = endedAt
+    if (mimeType) segment.mimeType = mimeType
+    await promisify(segments.put(segment))
+    return toSummary(segment)
+})
+
+// ---- 一覧・再生・削除 ----
+
+// 新しい順に区間を返す（before を指定すると、それより前に始まった区間だけ）
+const listSegments = (limit: number, before?: number) => withTransaction([SEGMENTS], 'readonly', async (tx) => {
+    const range = before === undefined ? null : IDBKeyRange.upperBound(before, true)
+    const request = tx.objectStore(SEGMENTS).index('startedAt').openCursor(range, 'prev')
+    const out: SegmentSummary[] = []
+    await new Promise<void>((resolve, reject) => {
+        request.onsuccess = () => {
+            const cursor = request.result
+            if (!cursor || out.length >= limit) return resolve()
+            out.push(toSummary(cursor.value))
+            cursor.continue()
+        }
+        request.onerror = () => reject(request.error)
+    })
+    return out
+})
+
+const countSegments = () => withTransaction([SEGMENTS], 'readonly', (tx) => promisify(tx.objectStore(SEGMENTS).count()))
+
+const getSegmentFragments = (store: IDBObjectStore, segmentId: string) =>
+    promisify<FragmentRecord[]>(store.getAll(fragmentRange(segmentId)))
+
+// 区間を1本のファイルにする（fmp4 は 0 秒から始まるように時刻をそろえる）
+const getSegmentFile = async (segmentId: string): Promise<{ blob: Blob, segment: SegmentSummary }> => {
+    const { segment, fragments } = await withTransaction([SEGMENTS, FRAGMENTS], 'readonly', async (tx) => ({
+        segment: await getSegmentRecord(tx.objectStore(SEGMENTS), segmentId),
+        fragments: await getSegmentFragments(tx.objectStore(FRAGMENTS), segmentId),
+    }))
+    // 録画を始めた直後は、初期化セグメントや断片がまだ届いていない
+    if (fragments.length === 0 || (segment.format === 'fmp4' && !segment.init)) {
+        throw new Error('この録画にはまだ再生できる部分がありません')
+    }
+
+    const blob = segment.format === 'fmp4' && segment.init
+        ? await buildFmp4File([{ init: segment.init, fragments }])
+        : new Blob(fragments.map(f => f.blob), { type: segment.mimeType })
+    return { blob, segment: toSummary(segment) }
+}
+
+const deleteSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    for (const segmentId of segmentIds) {
+        await promisify(tx.objectStore(FRAGMENTS).delete(fragmentRange(segmentId)))
+        await promisify(tx.objectStore(SEGMENTS).delete(segmentId))
+    }
+})
+
+const clearAll = () => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    await promisify(tx.objectStore(FRAGMENTS).clear())
+    await promisify(tx.objectStore(SEGMENTS).clear())
+})
+
+// ---- 容量 ----
+
+type Usage = { bytes: number, segments: number, bytesByKind: Record<RecordingKind, number> }
+
+const getUsage = () => withTransaction([SEGMENTS], 'readonly', async (tx) => {
+    const segments = await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).getAll())
+    const usage: Usage = { bytes: 0, segments: segments.length, bytesByKind: { video: 0, comments: 0, screen: 0 } }
+    for (const segment of segments) {
+        usage.bytes += segment.bytes
+        usage.bytesByKind[segment.kind] += segment.bytes
+    }
+    return usage
+})
+
+// 録画していたタブが閉じられるなどして、終えられないまま残った区間を確定する
+// 最後の書き込みから idleMs 以上たったものが対象。断片が1つもなければ消す。消した区間の ID を返す
+const closeStaleSegments = (idleMs: number, now = Date.now()) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    const store = tx.objectStore(SEGMENTS)
+    const deletedSegmentIds: string[] = []
+    for (const segment of await promisify<SegmentRecord[]>(store.getAll())) {
+        if (segment.endedAt !== null || now - lastWriteOf(segment) < idleMs) continue
+        if (segment.fragmentCount <= 0) {
+            await promisify(tx.objectStore(FRAGMENTS).delete(fragmentRange(segment.segmentId)))
+            await promisify(store.delete(segment.segmentId))
+            deletedSegmentIds.push(segment.segmentId)
+        } else {
+            segment.endedAt = lastWriteOf(segment)
+            await promisify(store.put(segment))
+        }
+    }
+    return deletedSegmentIds
+})
+
+// 録った時刻の古い断片から、合計 bytesToFree バイト以上を消す
+// 断片がなくなった区間は消す（録画中の区間は、続きの断片が届くので残す）。
+// opaque の区間は途中から再生できないので、区間ごと消す（録画中のものは書き込み中なので消さない）。
+// 区間ごと消えた区間の ID を返す
+const freeSpace = (bytesToFree: number) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    const segmentStore = tx.objectStore(SEGMENTS)
+    const fragmentStore = tx.objectStore(FRAGMENTS)
+    const touched = new Map<string, SegmentRecord | null>() // null: 区間ごと消した
+    let freed = 0
+
+    const request = fragmentStore.index('wallClock').openCursor()
+    await new Promise<void>((resolve, reject) => {
+        request.onerror = () => reject(request.error)
+        request.onsuccess = async () => {
+            const cursor = request.result
+            if (!cursor || freed >= bytesToFree) return resolve()
+            try {
+                const fragment = cursor.value as FragmentRecord
+                let segment = touched.get(fragment.segmentId)
+                if (segment === undefined) {
+                    segment = await promisify<SegmentRecord | undefined>(segmentStore.get(fragment.segmentId)) ?? null
+                    touched.set(fragment.segmentId, segment)
+                }
+                if (segment === null) {
+                    // 区間ごと消した区間の残りの断片
+                    await promisify(fragmentStore.delete([fragment.segmentId, fragment.index]))
+                } else if (segment.format === 'opaque') {
+                    if (segment.endedAt === null) return cursor.continue()
+                    freed += segment.bytes
+                    await promisify(fragmentStore.delete(fragmentRange(segment.segmentId)))
+                    await promisify(segmentStore.delete(segment.segmentId))
+                    touched.set(segment.segmentId, null)
+                } else {
+                    await promisify(fragmentStore.delete([fragment.segmentId, fragment.index]))
+                    freed += fragment.blob.size
+                    segment.bytes -= fragment.blob.size
+                    segment.fragmentCount -= 1
+                }
+                cursor.continue()
+            } catch (error) {
+                reject(error)
+            }
+        }
+    })
+
+    const deletedSegmentIds: string[] = []
+    for (const [segmentId, segment] of touched) {
+        if (segment === null) {
+            deletedSegmentIds.push(segmentId)
+        } else if (segment.fragmentCount <= 0 && segment.endedAt !== null) {
+            await promisify(segmentStore.delete(segmentId))
+            deletedSegmentIds.push(segmentId)
+        } else {
+            await promisify(segmentStore.put(segment))
+        }
+    }
+    return { freed, deletedSegmentIds }
+})
+
+// 合計が maxBytes を超えていたら、超えた分だけ古い断片から消す
+const enforceLimit = async (maxBytes: number) => {
+    const { bytes } = await getUsage()
+    if (bytes <= maxBytes) return { freed: 0, deletedSegmentIds: [] as string[] }
+    return freeSpace(bytes - maxBytes)
+}
+
+export {
+    openLibraryDB,
+    createSegment,
+    setSegmentInit,
+    appendFragments,
+    finishSegment,
+    listSegments,
+    countSegments,
+    getSegmentFile,
+    deleteSegments,
+    clearAll,
+    getUsage,
+    closeStaleSegments,
+    freeSpace,
+    enforceLimit,
+    SegmentNotFoundError,
+}
+export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage }

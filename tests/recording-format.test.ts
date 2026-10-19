@@ -1,15 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { saveChunk, getAllChunks, deleteAllChunks } from '@/hooks/indexedDB/recordingDB'
-import { getRecordingMimeType, mergeStaleChunks } from '@/utils/recording'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getRecordingMimeType, segmentFormatOf } from '@/utils/recording'
 import { getVideoExtension } from '@/utils/feature'
 
-vi.mock('@/utils/feature', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/utils/feature')>()),
-    extractFirstFrame: vi.fn(async () => 'data:image/jpeg;base64,THUMB'),
-}))
 vi.mock('@/utils/ui', () => ({
-    insertRecordedMovie: vi.fn(),
-    deleteMovieIcon: vi.fn(),
+    removeSegmentItems: vi.fn(),
     setRecordingStatus: vi.fn(),
     getTimeString: () => '00:00',
 }))
@@ -41,27 +35,18 @@ describe('getRecordingMimeType', () => {
     })
 })
 
+describe('segmentFormatOf（保存の形式）', () => {
+    it('mp4 は断片に分けて保存し、webm などはそのまま保存する', () => {
+        expect(segmentFormatOf('video/mp4; codecs="avc1.640028, mp4a.40.2"')).toBe('fmp4')
+        expect(segmentFormatOf('video/webm; codecs="vp9, opus"')).toBe('opaque')
+        expect(segmentFormatOf('')).toBe('opaque')
+    })
+})
+
 describe('getVideoExtension', () => {
     it('動画の形式からダウンロード時の拡張子を決める', () => {
         expect(getVideoExtension('video/webm;codecs=vp9,opus')).toBe('webm')
         expect(getVideoExtension('video/mp4')).toBe('mp4')
         expect(getVideoExtension('')).toBe('mp4') // 形式が分からない古いデータ
-    })
-})
-
-describe('結合した動画の形式', () => {
-    beforeEach(async () => {
-        await deleteAllChunks()
-    })
-
-    it('webm で録画したチャンクは webm の動画として結合する', async () => {
-        for (let i = 0; i < 3; i++) {
-            await saveChunk('Temps', 'webm-segment', i, new Blob([`part-${i}`], { type: 'video/webm' }), null, 1000 + i, 'user', 'title')
-        }
-
-        await mergeStaleChunks(3 * 1000)
-
-        const [chunk] = await getAllChunks('Chunks')
-        expect(chunk.blob.type).toBe('video/webm')
     })
 })

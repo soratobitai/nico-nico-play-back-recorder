@@ -5,7 +5,8 @@ import {
   AUTO_RELOAD_ON_FAILURE,
   RECORD_WITH_COMMENTS,
 } from '../../utils/storage'
-import { getStorageUsage } from '../../hooks/indexedDB/recordingDB'
+import { getUsage, clearAll, estimateStorage } from '../../utils/library/api'
+import { hasLegacyDatabase, deleteLegacyDatabase } from '../../hooks/indexedDB/recordingDB'
 
 // ストレージ設定の定数
 const MAX_STORAGE_SIZE_LIMIT = 100 * 1024 * 1024 * 1024 // 100GB
@@ -67,8 +68,8 @@ class SettingsModal {
 
   private async getStorageUsageData() {
     try {
-      const usage = await getStorageUsage()
-      this.currentStorageUsage = usage
+      const usage = await getUsage()
+      this.currentStorageUsage = usage.bytes
     } catch (error) {
       console.error('ストレージ使用量の取得に失敗しました:', error)
       this.currentStorageUsage = null
@@ -78,10 +79,10 @@ class SettingsModal {
     this.updateUsageDisplay()
   }
 
-  // ストレージ上限を取得（推奨値の表示に使う）
+  // 保存先（拡張機能側）の上限を取得（推奨値の表示に使う）
   private async loadStorageQuota() {
     try {
-      const estimate = await navigator.storage.estimate()
+      const estimate = await estimateStorage()
       if (estimate.quota) {
         const safeQuota = Math.floor(estimate.quota * 0.8)
         this.storageQuota = safeQuota
@@ -428,10 +429,10 @@ class SettingsModal {
   }
 
   private async clearStorage() {
-    // IndexedDBからすべての録画データを削除
-    const { deleteAllChunks } = await import('../../hooks/indexedDB/recordingDB')
-    await deleteAllChunks()
-    
+    // すべての録画データを削除（拡張機能側へ移す前の、以前のバージョンの録画も）
+    await clearAll()
+    if (await hasLegacyDatabase()) await deleteLegacyDatabase()
+
     // 録画リストを更新（空の状態になる）
     const { loadRecordedMovieList } = await import('../../utils/ui')
     await loadRecordedMovieList()

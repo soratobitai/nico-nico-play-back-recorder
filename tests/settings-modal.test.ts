@@ -2,13 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeBrowser } from 'wxt/testing'
 import SettingsModal from '@/entrypoints/content/settings-modal'
-import { getStorageUsage } from '@/hooks/indexedDB/recordingDB'
+import { getUsage } from '@/utils/library/api'
 import { MAX_STORAGE_SIZE, RESTART_MEDIARECORDER_INTERVAL_MS, RECORD_WITH_COMMENTS } from '@/utils/storage'
 
-vi.mock('@/hooks/indexedDB/recordingDB', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/hooks/indexedDB/recordingDB')>()
-    return { ...actual, getStorageUsage: vi.fn(async () => 2 * GB) }
-})
+vi.mock('@/utils/library/api', () => ({
+    getUsage: vi.fn(async () => ({ bytes: 2 * GB, segments: 1, bytesByKind: { video: 2 * GB, comments: 0, screen: 0 } })),
+    clearAll: vi.fn(),
+    estimateStorage: vi.fn(async () => ({ usage: 0, quota: 100 * GB })),
+}))
 
 const GB = 1024 * 1024 * 1024
 const flush = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -22,7 +23,7 @@ let modal: SettingsModal
 
 beforeEach(async () => {
     fakeBrowser.reset()
-    vi.mocked(getStorageUsage).mockClear()
+    vi.mocked(getUsage).mockClear()
     document.body.innerHTML = '<div id="recordedMovieAria"></div>'
     modal = new SettingsModal()
     await flush() // 設定の読み込みを待つ
@@ -34,12 +35,12 @@ afterEach(() => {
 
 describe('設定画面', () => {
     it('ページを開いただけでは録画を全件読んで使用量を数えず、設定画面を開いた時に数える', async () => {
-        expect(getStorageUsage).not.toHaveBeenCalled()
+        expect(getUsage).not.toHaveBeenCalled()
 
         modal.show()
         await flush()
 
-        expect(getStorageUsage).toHaveBeenCalled()
+        expect(getUsage).toHaveBeenCalled()
     })
 
     it('使用量の表示を更新した後も、スライダーを動かすと「設定上限」の表示が変わる', async () => {

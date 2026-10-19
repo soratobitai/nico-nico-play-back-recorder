@@ -1,6 +1,20 @@
+// 以前のバージョンの録画の保存先（ニコ生のサイトデータの IndexedDB）
+// 今は拡張機能側に保存している（utils/library）。ここは、以前の録画を拡張機能側へ移す
+// （utils/library/migrate.ts）ためだけに残している。
 const DB_NAME = "RecordingDB"
 const DB_VERSION = 1
 const STORE_NAMES = ["Chunks", "Temps"]
+
+// Chunks: 結合済みの録画、Temps: 録画中の（結合される前の）チャンク
+type ChunkRecord = {
+    sessionId: string,
+    chunkIndex: number,
+    blob: Blob,
+    imgUrl: string | null,
+    createdAt: number,
+    userName: string | null,
+    title: string | null
+}
 
 // 接続は使い回す（操作のたびに開くと、閉じられないまま接続が増えていく）
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -25,7 +39,6 @@ const openDB = (): Promise<IDBDatabase> => {
                 db.close()
                 dbPromise = null
             }
-            // サイトデータの削除などで接続が閉じられた場合も次回開き直す
             db.onclose = () => {
                 dbPromise = null
             }
@@ -39,6 +52,13 @@ const openDB = (): Promise<IDBDatabase> => {
     return dbPromise
 }
 
+// 以前のバージョンの録画が残っているか（なければ DB を作らずに済ませる）
+const hasLegacyDatabase = async () => {
+    if (!indexedDB.databases) return true
+    return (await indexedDB.databases()).some(db => db.name === DB_NAME)
+}
+
+// 以前のバージョンと同じ形で保存する（テストで以前の録画を用意するため）
 const saveChunk = async (
     storeName: string,
     sessionId: string,
@@ -48,174 +68,35 @@ const saveChunk = async (
     createdAt: number | null,
     userName: string | null = null,
     title: string | null = null,
-    ): Promise<[string, number]> => {
+): Promise<void> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readwrite")
-    const store = tx.objectStore(storeName)
+    tx.objectStore(storeName).put({ sessionId, chunkIndex, blob, imgUrl, createdAt: createdAt || Date.now(), userName, title })
 
     return new Promise((resolve, reject) => {
-        const data = {
-            sessionId,
-            chunkIndex,
-            blob,
-            imgUrl,
-            createdAt: createdAt || Date.now(),
-            userName,
-            title,
-        }
-
-        store.put(data)
-
-        // Blob の書き込みや容量不足（QuotaExceededError）の判定は確定時に行われるので、確定を待ってから成功とする
-        tx.oncomplete = () => {
-            const key: [string, number] = [sessionId, chunkIndex]  // 🔹 明示的に key をセット
-            console.log("Chunk saved successfully with key:", key)
-            resolve(key)
-        }
-
-        tx.onabort = () => {
-            console.error("Failed to save chunk:", tx.error)
-            reject(tx.error ?? new Error("Transaction aborted"))
-        }
+        tx.oncomplete = () => resolve()
+        tx.onabort = () => reject(tx.error ?? new Error("Transaction aborted"))
     })
 }
 
-// 結合した動画を Chunks に保存し、元になった Temps を削除する
-// 1つのトランザクションで行うので、片方だけ反映されて重複・消失することがない
-const saveMergedChunk = async (
-    sessionId: string,
-    chunkIndex: number,
-    blob: Blob,
-    imgUrl: string | null,
-    createdAt: number,
-    userName: string | null,
-    title: string | null,
-    tempKeys: IDBValidKey[],
-): Promise<[string, number]> => {
+// すべてのデータを createdAt の古い順で取得する
+const getAllChunks = async (storeName: string): Promise<ChunkRecord[]> => {
     const db = await openDB()
-    const tx = db.transaction(["Chunks", "Temps"], "readwrite")
+    const request = db.transaction(storeName, "readonly").objectStore(storeName).getAll()
 
     return new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve([sessionId, chunkIndex])
-        tx.onabort = () => {
-            console.error("Failed to save merged chunk:", tx.error)
-            reject(tx.error ?? new Error("Transaction aborted"))
-        }
-
-        try {
-            tx.objectStore("Chunks").put({ sessionId, chunkIndex, blob, imgUrl, createdAt, userName, title })
-            const temps = tx.objectStore("Temps")
-            tempKeys.forEach(key => temps.delete(key))
-        } catch (error) {
-            // 途中で例外が出たら、それまでの put / delete もまとめて取り消す
-            tx.abort()
-            reject(error)
-        }
-    })
-}
-
-
-// 保存されている録画（Chunks）・録画中の一時データ（Temps）の1件分
-type ChunkRecord = {
-    sessionId: string,
-    chunkIndex: number,
-    blob: Blob,
-    imgUrl: string | null,
-    createdAt: number,
-    userName: string | null,
-    title: string | null
-}
-
-const getChunkByKey = async (
-    storeName: string,
-    key: IDBValidKey
-): Promise<ChunkRecord | undefined> => {
-    const db = await openDB()
-    const tx = db.transaction(storeName, "readonly")
-    const store = tx.objectStore(storeName)
-
-    return new Promise((resolve, reject) => {
-        const request = store.get(key)
-
         request.onsuccess = () => {
-            if (request.result) {
-                // console.log("Chunk retrieved:", request.result)
-                resolve(request.result)
-            } else {
-                console.log("No chunk found for key:", key)
-                resolve(undefined)
-            }
+            const chunks: ChunkRecord[] = request.result.map(data => ({
+                sessionId: data.sessionId,
+                chunkIndex: data.chunkIndex,
+                blob: data.blob,
+                imgUrl: data.imgUrl || null,
+                createdAt: data.createdAt,
+                userName: data.userName || null,
+                title: data.title || null,
+            }))
+            resolve(chunks.sort((a, b) => a.createdAt - b.createdAt))
         }
-
-        request.onerror = () => {
-            console.error("Failed to retrieve chunk:", request.error)
-            reject(request.error)
-        }
-    })
-}
-
-// ストアのすべてのデータを読み出す（並び順はキーの順）
-const readAllChunks = async (storeName: string): Promise<ChunkRecord[]> => {
-    const db = await openDB()
-    const tx = db.transaction(storeName, "readonly")
-    const store = tx.objectStore(storeName)
-
-    return new Promise((resolve, reject) => {
-        const chunks: ChunkRecord[] = []
-        const request = store.openCursor()
-
-        request.onsuccess = (event) => {
-            const cursor = (event.target as IDBRequest).result
-            if (cursor) {
-                const [sessionId, chunkIndex] = cursor.key as [string, number]  // キーを取得
-                const data = cursor.value
-
-                chunks.push({
-                    sessionId,
-                    chunkIndex,
-                    blob: data.blob,
-                    imgUrl: data.imgUrl || null,
-                    createdAt: data.createdAt,
-                    userName: data.userName || null,
-                    title: data.title || null,
-                })
-
-                cursor.continue()
-            } else {
-                resolve(chunks)
-            }
-        }
-
-        request.onerror = () => reject(request.error)
-    })
-}
-
-// すべてのデータを createdAt の古い順で取得する関数
-const getAllChunks = async (storeName: string): Promise<ChunkRecord[]> =>
-    (await readAllChunks(storeName)).sort((a, b) => a.createdAt - b.createdAt)
-
-// 最新の録画データを取得する関数（新しい順に limit 件）
-const getLatestChunks = async (storeName: string, limit: number = 20): Promise<ChunkRecord[]> =>
-    (await readAllChunks(storeName))
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, limit)
-
-// 指定した日時より古い録画データを取得する関数（新しい順に limit 件）
-const getOlderChunks = async (storeName: string, beforeTimestamp: number, limit: number = 20): Promise<ChunkRecord[]> =>
-    (await readAllChunks(storeName))
-        .filter(chunk => chunk.createdAt < beforeTimestamp)
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, limit)
-
-// 録画データの総数を取得する関数
-const getChunksCount = async (storeName: string): Promise<number> => {
-    const db = await openDB()
-    const tx = db.transaction(storeName, "readonly")
-    const store = tx.objectStore(storeName)
-
-    return new Promise((resolve, reject) => {
-        const request = store.count()
-        request.onsuccess = () => resolve(request.result)
         request.onerror = () => reject(request.error)
     })
 }
@@ -224,141 +105,34 @@ const deleteChunkByKeys = async (storeName: string, keys: IDBValidKey[]): Promis
     const db = await openDB()
     const tx = db.transaction(storeName, "readwrite")
     const store = tx.objectStore(storeName)
-
-    return new Promise((resolve, reject) => {
-        let remaining = keys.length
-
-        if (remaining === 0) {
-            resolve()
-            return
-        }
-
-        keys.forEach(key => {
-            const request = store.delete(key)
-
-            request.onsuccess = () => {
-                remaining--
-                if (remaining === 0) {
-                    resolve()
-                }
-            }
-
-            request.onerror = () => {
-                console.error("Failed to delete temp for key:", key, request.error)
-                reject(request.error)
-            }
-        })
-    })
-}
-
-// 古いものから順に、合計 bytesToFree バイト以上になるまで削除する
-const deleteOldestChunks = async (storeName: string, bytesToFree: number): Promise<IDBValidKey[]> => {
-    const chunks = await getAllChunks(storeName) // createdAt の古い順
-    const deletedKeys: IDBValidKey[] = []
-    let freed = 0
-
-    for (const chunk of chunks) {
-        if (freed >= bytesToFree) break // 削除が不要になったら終了
-
-        // データサイズを計算して加算
-        if (chunk.blob instanceof Blob) {
-            freed += chunk.blob.size
-        } else {
-            freed += new Blob([JSON.stringify(chunk)]).size
-        }
-
-        deletedKeys.push([chunk.sessionId, chunk.chunkIndex]) // 複合キーを保存
-    }
-
-    await deleteChunkByKeys(storeName, deletedKeys) // 既存の削除関数を利用
-    return deletedKeys
-}
-
-const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Promise<IDBValidKey[]> => {
-    try {
-        const currentUsage = await getStorageUsage()
-
-        if (currentUsage > maxStorageSize) {
-            console.log(`ストレージ超過: ${currentUsage} バイト使用中（上限: ${maxStorageSize} バイト）`)
-            return await deleteOldestChunks(storeName, currentUsage - maxStorageSize)
-        } else {
-            console.log("ストレージ容量超過はありません")
-            return []
-        }
-    } catch (error) {
-        console.error("ストレージ管理エラー:", error)
-        return []
-    }
-}
-
-// ストアのデータをすべて削除する（削除が確定してから返し、失敗した場合は例外にする）
-const cleanUpAllChunks = async (storeName: string): Promise<void> => {
-    const db = await openDB()
-    const tx = db.transaction(storeName, "readwrite")
-    tx.objectStore(storeName).clear()
+    keys.forEach(key => store.delete(key))
 
     return new Promise((resolve, reject) => {
         tx.oncomplete = () => resolve()
-        tx.onabort = () => {
-            console.error(`Failed to delete chunks in ${storeName}:`, tx.error)
-            reject(tx.error ?? new Error("Transaction aborted"))
-        }
+        tx.onabort = () => reject(tx.error ?? new Error("Transaction aborted"))
     })
 }
 
-const deleteAllChunks = async (): Promise<void> => {
-    try {
-        await Promise.all([
-            cleanUpAllChunks('Chunks'),
-            cleanUpAllChunks('Temps')
-        ])
-        console.log('All chunks deleted successfully')
-    } catch (error) {
-        console.error('Failed to delete all chunks:', error)
-        throw error
+// 以前のバージョンの保存先をまるごと消す
+const deleteLegacyDatabase = async (): Promise<void> => {
+    if (dbPromise) {
+        (await dbPromise.catch(() => null))?.close()
+        dbPromise = null
     }
-}
-
-// IndexedDBの実際の使用量を計算する関数
-const getStorageUsage = async (): Promise<number> => {
-    try {
-        let totalUsage = 0
-
-        // 各ストアの使用量を計算（並び順は関係ないので並べ替えない）
-        for (const storeName of STORE_NAMES) {
-            const chunks = await readAllChunks(storeName)
-            
-            for (const chunk of chunks) {
-                if (chunk.blob instanceof Blob) {
-                    totalUsage += chunk.blob.size
-                } else {
-                    // Blobでない場合はJSONとして計算
-                    totalUsage += new Blob([JSON.stringify(chunk)]).size
-                }
-            }
-        }
-        
-        console.log(`IndexedDB使用量: ${totalUsage} バイト`)
-        return totalUsage
-    } catch (error) {
-        console.error('ストレージ使用量の計算に失敗しました:', error)
-        return 0
-    }
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(DB_NAME)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+        // 古いバージョンのスクリプトが開いたままのタブがあると消せない（そのタブを閉じれば消える）
+        request.onblocked = () => console.log('以前の録画の保存先は、開いているタブがあるため後で消えます')
+    })
 }
 
 export {
+    hasLegacyDatabase,
     saveChunk,
-    saveMergedChunk,
-    getChunkByKey,
-    getAllChunks, 
-    getLatestChunks,
-    getOlderChunks,
-    getChunksCount,
-    deleteChunkByKeys, 
-    deleteOldestChunks,
-    cleanUpOldChunks, 
-    cleanUpAllChunks,
-    deleteAllChunks,
-    getStorageUsage
+    getAllChunks,
+    deleteChunkByKeys,
+    deleteLegacyDatabase,
 }
 export type { ChunkRecord }

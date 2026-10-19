@@ -1,7 +1,7 @@
-import { cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded, saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
-import { getProgramData } from "../../utils/feature"
-import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed, setScreenCaptureButton } from "../../utils/ui"
+import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments } from "../../utils/library/api"
+import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded, createSegmentWriter, segmentFormatOf, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
+import { getProgramData, captureThumbnail } from "../../utils/feature"
+import { insertRecordedMovieAria, insertRecordedMovie, createModal, loadRecordedMovieList, removeSegmentItems, updateRecordingCount, insertToggleButton, updateToggleButton, isUICollapsed, setScreenCaptureButton } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_WITH_COMMENTS } from '../../utils/storage'
 import { createCommentCompositor, type CommentCompositor } from '../../utils/comment-compositor'
 import { isScreenCaptureSupported, startScreenCapture, type ScreenCapture } from '../../utils/screen-capture'
@@ -31,20 +31,22 @@ export default async () => {
 
         console.log("🔄 録画を切り替えます...")
 
-        // 前の区間の結合は onstop で行い、次の区間はすぐに録画を始める（区間の間に空白を作らない）
+        // 前の区間の確定は onstop で行い、次の区間はすぐに録画を始める（区間の間に空白を作らない）
         mediaRecorder.stop()
         startNewRecorder()
 
-        // ✅ 容量超過分のチャンクを削除（マージとズラす）
+        // ✅ 容量の上限を超えた分を、古い断片から削除する（区間の切り替えの処理と時間をずらす）
         setTimeout(async () => {
-            // indexedDBから削除
-            const deletedKeys = await cleanUpOldChunks('Chunks', maxStorageSize)
-            if (deletedKeys.length === 0) return
-            console.log(`容量超過分のチャンクを削除しました: ${deletedKeys.length}件`, deletedKeys)
+            try {
+                const { freed, deletedSegmentIds } = await enforceLimit(maxStorageSize)
+                if (freed === 0) return
+                console.log(`容量超過分を削除しました: ${freed} バイト（区間ごと消えたもの ${deletedSegmentIds.length}件）`)
 
-            // UIから削除
-            deleteMovieIcon(deletedKeys)
-
+                // UIから削除
+                removeSegmentItems(deletedSegmentIds)
+            } catch (error) {
+                console.log("容量超過分を削除できませんでした:", error)
+            }
         }, restartInterval / 2)
     }
 
@@ -81,7 +83,10 @@ export default async () => {
     })
 
     const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
+    // 録画中の区間はこれより短い間隔で書き込まれる（止まれば録画し直す）ので、これだけ書き込みのない区間は録画を終えている
+    const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
     const { userName, title } = getProgramData() // 番組情報を取得
+    const programId = location.pathname.match(/lv\d+/)?.[0] ?? location.pathname
 
     const video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
     let stream = new MediaStream() // 録画する映像（設定によっては流れるコメントを合成したもの、または画面ごと）
@@ -285,13 +290,22 @@ export default async () => {
         }
         mediaRecorder = recorder
 
-        // 区間ごとに別の ID で保存し、前の区間の結合と並行して録画できるようにする
-        const segmentId = crypto.randomUUID()
-        // 結合が終わるまで区間をロックし、他のタブや「録画リスト更新」から途中で結合されないようにする
-        const releaseSegmentLock = holdSegmentLock(segmentId)
-        let chunkIndex = 0
-        // チャンクの保存を直列化し、停止時に最後のチャンクの保存完了を待てるようにする
-        let saving: Promise<void> = Promise.resolve()
+        // 区間ごとに別の ID で保存する。録ったデータは届くたびに保存先へ書き込むので、録画中でも再生できる
+        const recordingMimeType = mimeType ?? (recorder.mimeType || 'video/webm')
+        const writer = createSegmentWriter({
+            segmentId: crypto.randomUUID(),
+            programId,
+            kind: screenCapture ? 'screen' : compositor ? 'comments' : 'video',
+            format: segmentFormatOf(recordingMimeType),
+            mimeType: recordingMimeType,
+            title,
+            userName,
+            startedAt: Date.now(),
+            thumbnail: captureThumbnail(video),
+        })
+        // 書き込みを直列化し、停止時に最後のデータの書き込み完了を待てるようにする
+        let saving: Promise<void> = writer.start()
+            .catch((error) => console.error("録画の区間を作れませんでした:", error))
 
         // 録画開始イベントでカウンター開始
         recorder.onstart = () => {
@@ -308,12 +322,10 @@ export default async () => {
             console.log("ondataavailable", event.data.size)
             if (event.data.size <= 0) return
 
-            // チャンクを保存
-            const index = chunkIndex++
-            const createdAt = Date.now()
+            // 保存先へ書き込む
             saving = saving
                 .then(async () => {
-                    await saveTempChunk(segmentId, index, event.data, createdAt, userName, title)
+                    await writer.write(event.data)
                     // 次の区間に切り替わった後は、そちらの監視を上書きしない
                     if (recorder === mediaRecorder) {
                         resetTimeoutCheck(recorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
@@ -341,12 +353,15 @@ export default async () => {
                 releaseRecordingStream()
             }
 
-            // 最後のチャンクの保存を待ってから結合して保存
-            try {
-                await saving
-                await mergeChunksBySession(segmentId)
-            } finally {
-                releaseSegmentLock()
+            // 最後のデータの書き込みを待ってから、区間を確定して録画リストに載せる
+            await saving
+            const segment = await writer.finish(Date.now(), recorder.mimeType || undefined).catch((error) => {
+                console.error("録画の区間を確定できませんでした:", error)
+                return null
+            })
+            if (segment) {
+                insertRecordedMovie(segment, 'end')
+                updateRecordingCount()
             }
         }
 
@@ -362,7 +377,8 @@ export default async () => {
             )
         } catch (error) {
             console.log("録画の開始に失敗しました:", error)
-            releaseSegmentLock()
+            // 作った区間は、断片がないので確定時に消える
+            saving.then(() => writer.finish(Date.now())).catch(() => {})
             stopTimer()
             stateManager.setState('stopped')
         }
@@ -384,8 +400,8 @@ export default async () => {
         releaseRecordingStream()
     }
     const reload = async () => {
-        // 不完全なtempファイルを取得・削除し結合して保存
-        await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
+        // 一時保存した録画があれば、拡張機能側へ移す
+        await flushPending().catch((error) => console.log("一時保存した録画を移せませんでした:", error))
 
         // 録画リストを更新
         await loadRecordedMovieList()
@@ -467,8 +483,10 @@ export default async () => {
         
         // 折りたたみボタンの初期化が完了した後、初期読み込みを実行
         executeWhenIdle(async () => {
-            // 不完全なtempファイルを取得・削除し結合して保存
-            await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
+            // 拡張機能が更新された直後などに一時保存した録画を、拡張機能側へ移す
+            await flushPending().catch((error) => console.log("一時保存した録画を移せませんでした:", error))
+            // 録画中にタブが閉じられるなどして、終えられないまま残った録画を確定する
+            await closeStaleSegments(STALE_SEGMENT_IDLE_MS).catch((error) => console.log("残っていた録画を確定できませんでした:", error))
 
             await new Promise(resolve => setTimeout(resolve, 1000))
 
@@ -491,6 +509,11 @@ export default async () => {
 
                     executeWhenIdle(async () => {
                         observeVideoResize() // video の track 変更を監視
+
+                        // 以前のバージョンの録画を拡張機能側へ移す（時間がかかることがあるので、録画を始めてから）
+                        migrateLegacy()
+                            .then((count) => { if (count > 0) return loadRecordingListIfNeeded() })
+                            .catch((error) => console.log("以前の録画を移せませんでした:", error))
                     })
                 })
             })

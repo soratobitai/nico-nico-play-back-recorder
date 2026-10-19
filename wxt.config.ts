@@ -36,14 +36,18 @@ export default defineConfig({
   manifest: {
     "name": "ニコ生プレイバックレコーダー",
     "permissions": [
-      "storage"
+      "storage",
+      // 録画を拡張機能側に保存するため（ブラウザの容量制限を受けないように）
+      "unlimitedStorage"
     ],
     "web_accessible_resources": [
       {
         "resources": [
-          "assets/images/*"
+          "assets/images/*",
+          // ニコ生のページに埋め込み、録画を拡張機能側に保存するためのページ
+          "bridge.html"
         ],
-        // 画像を使うのはニコ生の視聴ページに埋め込む UI だけなので、他のサイトからは読めないようにする
+        // 使うのはニコ生の視聴ページに埋め込む UI と bridge だけなので、他のサイトからは読めないようにする
         "matches": [
           "*://live.nicovideo.jp/*"
         ]

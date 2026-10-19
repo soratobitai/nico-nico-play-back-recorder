@@ -1,5 +1,6 @@
-import { getChunkByKey, deleteChunkByKeys, getLatestChunks, getOlderChunks, getChunksCount, type ChunkRecord } from "../hooks/indexedDB/recordingDB"
-import { downloadRecordedMovie, getScreenShotAndDownload, formatDate } from "../utils/feature"
+import { listSegments, countSegments, deleteSegments, getSegmentFile } from "./library/api"
+import type { SegmentSummary } from "./library/db"
+import { downloadSegment, getScreenShotAndDownload, formatDate } from "../utils/feature"
 import { UI_COLLAPSED } from "../utils/storage"
 
 let capButton = null as HTMLButtonElement | null
@@ -132,8 +133,22 @@ const insertRecordedMovieAria = async (
     }, 1000)
 }
 
-const insertRecordedMovie = async (
-    chunk: ChunkRecord,
+// 録画数の表示を更新する
+const updateRecordingCount = async () => {
+    try {
+        const totalCount = await countSegments()
+        if (recordingCount) recordingCount.textContent = `${totalCount}`
+    } catch (error) {
+        console.log('録画数を取得できませんでした:', error)
+    }
+}
+
+const findSegmentItem = (segmentId: string) =>
+    Array.from(document.querySelectorAll<HTMLElement>('.recordedMovie')).find(element => element.dataset.segmentId === segmentId)
+
+// 録画（区間）をリストに追加する。同じ区間が既にあれば置き換える（録画中に表示した区間が録画を終えた時など）
+const insertRecordedMovie = (
+    segment: SegmentSummary,
     insertPosition: "start" | "end" = "start" // ← "start"（左に追加）または "end"（右に追加）
 ) => {
     const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
@@ -141,22 +156,14 @@ const insertRecordedMovie = async (
 
     const recordedMovie = document.createElement("div")
     recordedMovie.classList.add("recordedMovie")
-    recordedMovie.setAttribute('sessionId', chunk.sessionId)
-    recordedMovie.setAttribute('chunkIndex', chunk.chunkIndex.toString())
-    recordedMovie.dataset.createdAt = chunk.createdAt.toString()
+    recordedMovie.dataset.segmentId = segment.segmentId
+    recordedMovie.dataset.startedAt = segment.startedAt.toString()
 
     // メイン画像
     const img = document.createElement("img")
-    img.src = chunk.imgUrl || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
-    // title属性を設定（作成日_ユーザー名_タイトルの形式）
-    const formattedDate = formatDate(chunk.createdAt)
-    const titleText = chunk.userName && chunk.title ? `${formattedDate} ${chunk.userName} ${chunk.title}` : 
-                     chunk.userName ? `${formattedDate} ${chunk.userName}` :
-                     chunk.title ? `${formattedDate} ${chunk.title}` :
-                     formattedDate
-    if (titleText) {
-        img.title = titleText
-    }
+    img.src = segment.thumbnail || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
+    // title属性を設定（録画開始日時 ユーザー名 タイトルの形式）
+    img.title = [formatDate(segment.startedAt), segment.userName, segment.title].filter(Boolean).join(' ')
     recordedMovie.appendChild(img)
 
     // ✕ボタン（削除）
@@ -169,11 +176,9 @@ const insertRecordedMovie = async (
         const confirmed = await confirmModal('この動画データを削除しますか？')
         if (confirmed) {
             recordedMovie.remove() // UIから削除
-            await deleteChunkByKeys('Chunks', [[chunk.sessionId, chunk.chunkIndex]]) // indexedDBから削除
-            // 録画数を更新
-            const totalCount = await getChunksCount('Chunks')
-            if (recordingCount) recordingCount.textContent = `${totalCount}`
-            
+            await deleteSegments([segment.segmentId]) // 保存先から削除
+            await updateRecordingCount()
+
             // 録画リストが空になった場合の処理
             const remainingRecordings = recordedMovieBox.querySelectorAll('.recordedMovie')
             if (remainingRecordings.length === 0) {
@@ -190,27 +195,30 @@ const insertRecordedMovie = async (
     downloadButton.title = "ダウンロード"
     downloadButton.addEventListener("click", (e) => {
         e.stopPropagation()
-        downloadRecordedMovie([chunk.sessionId, chunk.chunkIndex])
+        downloadSegment(segment.segmentId)
     })
     recordedMovie.appendChild(downloadButton)
 
     // クリックでモーダルを開く（サムネイルの縁をクリックした場合も）
     recordedMovie.addEventListener('click', () => {
-        openModalWithVideo([chunk.sessionId, chunk.chunkIndex], recordedMovie)
+        openModalWithVideo(segment.segmentId, recordedMovie)
     })
 
     // .no-video があれば、取り除く
     const noVideo = recordedMovieBox.querySelector('.no-video')
     if (noVideo) noVideo.remove()
-    
-    // UIに追加（右端 or 左端）
-    if (insertPosition === "start") {
+
+    const existing = findSegmentItem(segment.segmentId)
+    if (existing) {
+        existing.replaceWith(recordedMovie)
+    } else if (insertPosition === "start") {
+        // UIに追加（右端 or 左端）
         recordedMovieBox.prepend(recordedMovie)
         recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
     } else {
-        // 結合は並行して行われ、完了順が録画順と前後することがあるので、作成時刻の順の位置に入れる
+        // 録画を始めた時刻の順の位置に入れる
         const next = Array.from(recordedMovieBox.querySelectorAll<HTMLElement>('.recordedMovie'))
-            .find(element => Number(element.dataset.createdAt) > chunk.createdAt)
+            .find(element => Number(element.dataset.startedAt) > segment.startedAt)
         recordedMovieBox.insertBefore(recordedMovie, next ?? null)
 
         // 右端にいる、またはユーザーがスクロールしていなければスクロールする
@@ -221,10 +229,6 @@ const insertRecordedMovie = async (
             recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
         }
     }
-    
-    // 総録画数を取得して更新
-    const totalCount = await getChunksCount('Chunks')
-    if (recordingCount) recordingCount.textContent = `${totalCount}`
 }
 
 // モーダルを作成する関数
@@ -340,13 +344,13 @@ const setModalVideo = (video: HTMLVideoElement, blob: Blob | null) => {
 }
 
 // 動画を取得してモーダルを開く
-const openModalWithVideo = async (key: IDBValidKey, clickedElement: HTMLElement) => {
+const openModalWithVideo = async (segmentId: string, clickedElement: HTMLElement) => {
     try {
-        const chunk = await getChunkByKey('Chunks', key)
-        if (!chunk) throw new Error('動画データが見つかりません')
+        // 録画中の区間も、その時点までを再生できる
+        const { blob, segment } = await getSegmentFile(segmentId)
 
         const video = document.getElementById('video-player') as HTMLVideoElement
-        setModalVideo(video, chunk.blob)
+        setModalVideo(video, blob)
 
         // 日付・ユーザー名とタイトルをモーダルに表示（前に開いた動画の表示が残らないように毎回書き換える）
         const userNameElement = document.getElementById('modal-user-name')
@@ -355,11 +359,11 @@ const openModalWithVideo = async (key: IDBValidKey, clickedElement: HTMLElement)
         if (userNameElement) {
             const dateElement = document.createElement('span')
             dateElement.className = 'modal-date'
-            dateElement.textContent = formatDate(chunk.createdAt)
-            userNameElement.replaceChildren(dateElement, ` ${chunk.userName ?? ''}`)
+            dateElement.textContent = formatDate(segment.startedAt)
+            userNameElement.replaceChildren(dateElement, ` ${segment.userName}`)
         }
         if (titleElement) {
-            titleElement.textContent = chunk.title ?? ''
+            titleElement.textContent = segment.title
         }
 
         // モーダルサイズを固定
@@ -412,20 +416,10 @@ const openModalWithVideo = async (key: IDBValidKey, clickedElement: HTMLElement)
     }
 }
 
-// UIから動画サムネを削除
-const deleteMovieIcon = async (deletedKeys: IDBValidKey[]) => {
-    for (const key of deletedKeys) {
-        const [sessionId, chunkIndex] = key as [string, string]
-        const elements = document.querySelectorAll('.recordedMovie')
-        elements.forEach(element => {
-            if (element.getAttribute('sessionId') == sessionId && element.getAttribute('chunkIndex') == chunkIndex) {
-                element.remove()
-            }
-        })
-    }
-    // 総録画数を取得して更新
-    const totalCount = await getChunksCount('Chunks')
-    if (recordingCount) recordingCount.textContent = `${totalCount}`
+// 消された録画（区間）をリストから取り除く
+const removeSegmentItems = async (segmentIds: string[]) => {
+    for (const segmentId of segmentIds) findSegmentItem(segmentId)?.remove()
+    await updateRecordingCount()
 }
 
 // コントロールパネルのボタンの状態を設定
@@ -466,9 +460,9 @@ const loadRecordedMovieList = async () => {
 
     try {
         // 最新の録画を取得（新しい順）
-        const chunks = await getLatestChunks('Chunks', CHUNKS_PER_LOAD)
+        const segments = await listSegments(CHUNKS_PER_LOAD)
 
-        if (chunks.length === 0) {
+        if (segments.length === 0) {
             // データがなければメッセージ表示
             recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
             // 録画数を0に更新
@@ -477,7 +471,7 @@ const loadRecordedMovieList = async () => {
         }
 
         // 状態を初期化
-        oldestLoadedTimestamp = Math.min(...chunks.map(chunk => chunk.createdAt))
+        oldestLoadedTimestamp = Math.min(...segments.map(segment => segment.startedAt))
 
         await new Promise(resolve => setTimeout(resolve, 500)) // 負荷軽減のため
 
@@ -485,16 +479,15 @@ const loadRecordedMovieList = async () => {
         recordedMovieBox.innerHTML = ""
 
         // 新しい順に左端へ追加していき、新しいものが右端に来るようにする
-        for (const chunk of chunks) {
-            insertRecordedMovie(chunk, "start")
+        for (const segment of segments) {
+            insertRecordedMovie(segment, "start")
         }
 
         // 総録画数を取得して更新
-        const totalCount = await getChunksCount('Chunks')
-        if (recordingCount) recordingCount.textContent = `${totalCount}`
+        await updateRecordingCount()
 
         // 処理完了後に適切な状態に戻す
-        hasMoreOlder = chunks.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
+        hasMoreOlder = segments.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
 
     } catch (error) {
         console.error('録画リストの読み込みに失敗しました:', error)
@@ -526,26 +519,26 @@ const loadOlderRecordings = async () => {
         box.appendChild(loadingIndicator)
 
         // 古い録画を取得
-        const olderChunks = await getOlderChunks('Chunks', oldestLoadedTimestamp, CHUNKS_PER_LOAD)
+        const olderSegments = await listSegments(CHUNKS_PER_LOAD, oldestLoadedTimestamp)
 
-        if (olderChunks.length === 0) {
+        if (olderSegments.length === 0) {
             hasMoreOlder = false
         } else {
             // 現在のスクロール位置を記録
             const currentScrollLeft = box.scrollLeft
-            
+
             // 古い録画を左端に追加
-            for (const chunk of olderChunks) {
-                insertRecordedMovie(chunk, "start")
-                
+            for (const segment of olderSegments) {
+                insertRecordedMovie(segment, "start")
+
                 // タイムスタンプを更新
-                if (chunk.createdAt < oldestLoadedTimestamp) {
-                    oldestLoadedTimestamp = chunk.createdAt
+                if (segment.startedAt < oldestLoadedTimestamp) {
+                    oldestLoadedTimestamp = segment.startedAt
                 }
             }
-            
+
             // スクロール位置を調整（固定幅で計算）
-            const addedWidth = olderChunks.length * CHUNK_WIDTH
+            const addedWidth = olderSegments.length * CHUNK_WIDTH
             box.scrollLeft = currentScrollLeft + addedWidth
         }
 
@@ -643,7 +636,8 @@ export {
     confirmModal,
     openModalWithVideo,
     loadRecordedMovieList,
-    deleteMovieIcon,
+    removeSegmentItems,
+    updateRecordingCount,
     setRecordingStatus,
     setScreenCaptureButton,
     getTimeString,

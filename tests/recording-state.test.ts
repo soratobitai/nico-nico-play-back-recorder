@@ -5,7 +5,7 @@ import { setRecordingStatus } from '@/utils/ui'
 vi.mock('@/utils/ui', () => ({
     setRecordingStatus: vi.fn(),
     insertRecordedMovie: vi.fn(),
-    deleteMovieIcon: vi.fn(),
+    removeSegmentItems: vi.fn(),
     getTimeString: () => '00:00',
 }))
 

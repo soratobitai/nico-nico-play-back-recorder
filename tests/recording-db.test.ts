@@ -1,5 +1,6 @@
+// 以前のバージョンの録画の保存先（拡張機能側へ移すために読み出す・消す）
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { saveChunk, getAllChunks, getChunksCount, getLatestChunks, getOlderChunks, deleteAllChunks } from '@/hooks/indexedDB/recordingDB'
+import { saveChunk, getAllChunks, deleteChunkByKeys, hasLegacyDatabase, deleteLegacyDatabase } from '@/hooks/indexedDB/recordingDB'
 import { formatDate, formatDateForFileName } from '@/utils/feature'
 
 const putTemp = (sessionId: string, chunkIndex: number) =>
@@ -7,34 +8,35 @@ const putTemp = (sessionId: string, chunkIndex: number) =>
 const putRecording = (createdAt: number) =>
     saveChunk('Chunks', `S${createdAt}`, createdAt, new Blob(['x'], { type: 'video/mp4' }), null, createdAt, 'user', 'title')
 
-describe('録画一覧の読み込み', () => {
+describe('以前の録画の読み出しと削除', () => {
     beforeEach(async () => {
-        await deleteAllChunks()
-        // キーの順（sessionId 順）と作成時刻の順が違うように保存する
-        for (const createdAt of [3000, 1000, 5000, 2000, 4000]) {
-            await putRecording(createdAt)
-        }
+        await deleteLegacyDatabase()
     })
 
     it('getAllChunks は作成時刻の古い順', async () => {
+        // キーの順（sessionId 順）と作成時刻の順が違うように保存する
+        for (const createdAt of [3000, 1000, 5000, 2000, 4000]) await putRecording(createdAt)
+
         expect((await getAllChunks('Chunks')).map(c => c.createdAt)).toEqual([1000, 2000, 3000, 4000, 5000])
     })
 
-    it('getLatestChunks は新しい順に指定件数', async () => {
-        expect((await getLatestChunks('Chunks', 2)).map(c => c.createdAt)).toEqual([5000, 4000])
+    it('deleteChunkByKeys は指定したものだけを消し、消し終えてから返る', async () => {
+        await putRecording(1000)
+        await putRecording(2000)
+
+        await deleteChunkByKeys('Chunks', [['S1000', 1000]])
+
+        expect((await getAllChunks('Chunks')).map(c => c.createdAt)).toEqual([2000])
     })
 
-    it('getOlderChunks は指定時刻より古いものを新しい順に指定件数', async () => {
-        expect((await getOlderChunks('Chunks', 4000, 2)).map(c => c.createdAt)).toEqual([3000, 2000])
-    })
+    it('保存先があるかを調べ、まるごと消せる', async () => {
+        expect(await hasLegacyDatabase()).toBe(false)
+        await putTemp('S', 0)
+        expect(await hasLegacyDatabase()).toBe(true)
 
-    it('deleteAllChunks は録画と一時データをすべて削除し、削除が確定してから返る', async () => {
-        await putTemp('S-temp', 0)
+        await deleteLegacyDatabase()
 
-        await deleteAllChunks()
-
-        expect(await getChunksCount('Chunks')).toBe(0)
-        expect(await getChunksCount('Temps')).toBe(0)
+        expect(await hasLegacyDatabase()).toBe(false)
     })
 })
 
@@ -57,7 +59,7 @@ describe('IndexedDB の接続', () => {
 
         await putTemp('S1', 0)
         await getAllChunks('Temps')
-        await getChunksCount('Chunks')
+        await getAllChunks('Chunks')
 
         expect(open).not.toHaveBeenCalled()
         open.mockRestore()
