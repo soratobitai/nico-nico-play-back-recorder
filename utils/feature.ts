@@ -1,11 +1,16 @@
 import { getChunkByKey } from "../hooks/indexedDB/recordingDB"
 
 const getProgramData = () => {
-    // ユーザー名を取得
-    const ldJson = document.querySelector('script[type="application/ld+json"]')
-    const data = JSON.parse(ldJson!.textContent!)
-    const userName_ = data.author?.name
-    const userName = (userName_ || '').replace(/[\\/:*?"<>|]/g, '')
+    // ユーザー名を取得（ページの構造が変わって取れなくても、録画は続けられるように空にする）
+    let userName_ = ''
+    try {
+        const ldJson = document.querySelector('script[type="application/ld+json"]')
+        const name = JSON.parse(ldJson?.textContent || '{}')?.author?.name
+        if (typeof name === 'string') userName_ = name
+    } catch (error) {
+        console.log('ユーザー名の取得に失敗しました:', error)
+    }
+    const userName = userName_.replace(/[\\/:*?"<>|]/g, '')
 
     // タイトルを取得
     let title_ = ''
@@ -84,6 +89,22 @@ const extractFirstFrame = async (blob: Blob, timeoutMs: number = 10 * 1000): Pro
     })
 }
 
+// Blob をファイルとしてダウンロードする
+const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+
+    // 一時的にaタグを作成して自動クリック
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+
+    // クリック直後に解放するとダウンロードが始まる前に読めなくなることがあるので、少し待ってから解放する
+    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000)
+}
+
 // 動画の形式からダウンロード時の拡張子を決める（webm で録画した環境以外は mp4）
 const getVideoExtension = (type: string) => type.startsWith('video/webm') ? 'webm' : 'mp4'
 
@@ -95,22 +116,11 @@ const downloadRecordedMovie = async (key: [string, number]) => {
             return
         }
 
-        const url = URL.createObjectURL(chunk.blob)
-
         // ダウンロードファイル名を生成
         const formattedDate = formatDateForFileName(chunk.createdAt)
         const filename = `${chunk.userName || ''}_${chunk.title || ''}_${formattedDate}.${getVideoExtension(chunk.blob.type)}`
 
-        // 一時的にaタグを作成して自動クリック
-        const a = document.createElement('a')
-        a.href = url
-        a.download = filename
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-
-        // メモリ解放
-        URL.revokeObjectURL(url)
+        downloadBlob(chunk.blob, filename)
     } catch (error) {
         console.error('ダウンロード中にエラーが発生しました:', error)
         alert('ダウンロードに失敗しました')
@@ -136,16 +146,9 @@ const getScreenShotAndDownload = async () => {
         canvas.toBlob((blob) => {
             if (!blob) return
 
-            const a = document.createElement("a")
-            const url = URL.createObjectURL(blob)
-
             const { userName, title } = getProgramData()
             const timeString = formatDateForFileName(Date.now())
-            a.download = `${userName}_${title}_${timeString}.png`
-            a.href = url
-            a.click()
-
-            URL.revokeObjectURL(url)
+            downloadBlob(blob, `${userName}_${title}_${timeString}.png`)
         }, "image/png")
     } catch (err) {
         console.error("スクリーンショット処理中にエラー:", err)

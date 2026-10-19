@@ -139,6 +139,7 @@ const insertRecordedMovie = async (
     recordedMovie.classList.add("recordedMovie")
     recordedMovie.setAttribute('sessionId', chunk.sessionId)
     recordedMovie.setAttribute('chunkIndex', chunk.chunkIndex.toString())
+    recordedMovie.dataset.createdAt = chunk.createdAt.toString()
 
     // メイン画像
     const img = document.createElement("img")
@@ -189,20 +190,9 @@ const insertRecordedMovie = async (
     })
     recordedMovie.appendChild(downloadButton)
 
-    // クリックでモーダルを開く
-    recordedMovie.addEventListener('click', (event) => {
-        const parent = (event.target as HTMLElement).parentElement
-        if (!parent) return
-
-        const sessionId = parent.getAttribute('sessionId')
-        const chunkIndexStr = parent.getAttribute('chunkIndex')
-        if (!sessionId || chunkIndexStr === null) return
-
-        const chunkIndex = Number(chunkIndexStr)
-        if (isNaN(chunkIndex)) return
-
-        const key: [string, number] = [sessionId, chunkIndex]
-        openModalWithVideo(key, event)
+    // クリックでモーダルを開く（サムネイルの縁をクリックした場合も）
+    recordedMovie.addEventListener('click', () => {
+        openModalWithVideo([chunk.sessionId, chunk.chunkIndex], recordedMovie)
     })
 
     // .no-video があれば、取り除く
@@ -214,7 +204,10 @@ const insertRecordedMovie = async (
         recordedMovieBox.prepend(recordedMovie)
         recordedMovieBox.scrollLeft = recordedMovieBox.scrollWidth
     } else {
-        recordedMovieBox.appendChild(recordedMovie)
+        // 結合は並行して行われ、完了順が録画順と前後することがあるので、作成時刻の順の位置に入れる
+        const next = Array.from(recordedMovieBox.querySelectorAll<HTMLElement>('.recordedMovie'))
+            .find(element => Number(element.dataset.createdAt) > chunk.createdAt)
+        recordedMovieBox.insertBefore(recordedMovie, next ?? null)
 
         // 右端にいる、またはユーザーがスクロールしていなければスクロールする
         const scrollRight = recordedMovieBox.scrollWidth - recordedMovieBox.scrollLeft - recordedMovieBox.clientWidth
@@ -264,7 +257,7 @@ function createModal() {
         modal.style.display = 'none'
         const video = document.getElementById('video-player') as HTMLVideoElement
         video.pause()
-        video.src = '' // メモリ解放
+        setModalVideo(video, null) // メモリ解放
     })
 
     modal.addEventListener('click', (event) => {
@@ -326,32 +319,44 @@ function confirmModal(message: string = '本当に削除してもよろしいで
 }
 
 
+// モーダルで再生中の動画の Object URL（差し替える時・閉じる時に解放する）
+let modalVideoUrl: string | null = null
+
+const setModalVideo = (video: HTMLVideoElement, blob: Blob | null) => {
+    if (modalVideoUrl) URL.revokeObjectURL(modalVideoUrl)
+    modalVideoUrl = blob ? URL.createObjectURL(blob) : null
+
+    if (modalVideoUrl) {
+        video.src = modalVideoUrl
+    } else {
+        // src に '' を入れるとページの URL を動画として読みに行くので、属性ごと外す
+        video.removeAttribute('src')
+        video.load()
+    }
+}
+
 // 動画を取得してモーダルを開く
-const openModalWithVideo = async (key: IDBValidKey, event: MouseEvent) => {
+const openModalWithVideo = async (key: IDBValidKey, clickedElement: HTMLElement) => {
     try {
         const chunk = await getChunkByKey('Chunks', key)
         if (!chunk) throw new Error('動画データが見つかりません')
 
-        const url = URL.createObjectURL(chunk.blob)
-
         const video = document.getElementById('video-player') as HTMLVideoElement
-        video.src = url
+        setModalVideo(video, chunk.blob)
 
-        // ユーザー名とタイトルをモーダルに表示
-        const userNameElement = document.getElementById('modal-user-name') as HTMLElement
-        const titleElement = document.getElementById('modal-title') as HTMLElement
-        
-        if (userNameElement && chunk.userName) {
-            const formattedDate = formatDate(chunk.createdAt)
-            userNameElement.innerHTML = `<span class="modal-date">${formattedDate}</span> ${chunk.userName}`
-        }
-        if (titleElement && chunk.title) {
-            titleElement.textContent = chunk.title
-        }
+        // 日付・ユーザー名とタイトルをモーダルに表示（前に開いた動画の表示が残らないように毎回書き換える）
+        const userNameElement = document.getElementById('modal-user-name')
+        const titleElement = document.getElementById('modal-title')
 
-        // クリックされたサムネイル要素を取得
-        const clickedElement = (event.target as HTMLElement).closest('.recordedMovie') as HTMLElement
-        if (!clickedElement) return
+        if (userNameElement) {
+            const dateElement = document.createElement('span')
+            dateElement.className = 'modal-date'
+            dateElement.textContent = formatDate(chunk.createdAt)
+            userNameElement.replaceChildren(dateElement, ` ${chunk.userName ?? ''}`)
+        }
+        if (titleElement) {
+            titleElement.textContent = chunk.title ?? ''
+        }
 
         // モーダルサイズを固定
         const modalWidth = 400
