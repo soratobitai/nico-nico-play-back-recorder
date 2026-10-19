@@ -1,18 +1,21 @@
 /* 録画バー（プレイヤーの下の1行） */
 #playbackRecorderBar {
-  --npr-bg: #0f1013;
-  --npr-surface: #17181c;
-  --npr-surface-hover: #22242a;
-  --npr-line: #2a2c33;
-  --npr-line-strong: #3b3e47;
-  --npr-text: #eceef2;
-  --npr-muted: #9a9daa;
+  --npr-bg: #0d0e11;
+  --npr-line: rgba(255, 255, 255, 0.07);
+  --npr-surface: rgba(255, 255, 255, 0.045);
+  --npr-surface-hover: rgba(255, 255, 255, 0.09);
+  --npr-border: rgba(255, 255, 255, 0.09);
+  --npr-border-strong: rgba(255, 255, 255, 0.16);
+  --npr-text: #e7e9ee;
+  --npr-muted: #8b909c;
   --npr-rec: #ff4d5e;
-  --npr-video: #3d7bff;
-  --npr-comments: #14b892;
-  --npr-screen: #f5a524;
+  --npr-rec-rgb: 255, 77, 94;
+  --npr-video-rgb: 92, 141, 255;
+  --npr-comments-rgb: 32, 201, 151;
+  --npr-screen-rgb: 245, 177, 66;
+  --npr-accent-rgb: 92, 141, 255;
   --npr-focus: #8fb3ff;
-  --npr-danger-bg: #2a1216;
+  --npr-danger-bg: #24101a;
 }
 
 .npr-bar {
@@ -20,15 +23,16 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  height: 52px;
-  padding: 0 12px;
-  background: var(--npr-bg);
+  height: 44px;
+  padding: 0 10px 0 14px;
+  background: linear-gradient(180deg, #121318 0%, var(--npr-bg) 100%);
   border-top: 1px solid var(--npr-line);
   color: var(--npr-text);
-  font: 13px/1.2 "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+  font: 12px/1.2 "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
   text-align: left;
   container-type: inline-size;
   z-index: 1;
@@ -40,95 +44,124 @@
 .npr-bar button {
   margin: 0;
   font: inherit;
+  letter-spacing: inherit;
   line-height: 1;
   appearance: none;
   -webkit-appearance: none;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
 }
 .npr-bar button:focus-visible { outline: 2px solid var(--npr-focus); outline-offset: 2px; }
-.npr-bar svg { display: block; flex: none; }
+.npr-bar svg { display: block; flex: none; width: 14px; height: 14px; }
 
-/* 録画の状態 */
-.npr-status { display: flex; align-items: center; gap: 8px; flex: none; }
+/* 録画の状態（● 録画中 12:34） */
+.npr-status { display: flex; align-items: center; gap: 7px; flex: none; }
 .npr-status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   flex: none;
   border-radius: 50%;
   background: var(--npr-muted);
 }
-.npr-status-label { font-weight: 700; white-space: nowrap; }
-.npr-time { min-width: 3.4em; color: var(--npr-muted); white-space: nowrap; }
+.npr-status-label { font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.npr-time {
+  min-width: 3.2em;
+  color: var(--npr-muted);
+  font-size: 11px;
+  font-family: "SF Mono", "Cascadia Mono", "Consolas", "Menlo", monospace;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
 
 .npr-bar[data-state="recording"] .npr-status-dot { background: var(--npr-rec); animation: npr-pulse 2s ease-out infinite; }
-.npr-bar[data-state="recording"] .npr-status-label { color: #ff8a95; }
+.npr-bar[data-state="recording"] .npr-status-label { color: #ff7d8a; }
+.npr-bar[data-state="recording"] .npr-time { color: #c8ccd6; }
 .npr-bar[data-state="preparing"] .npr-status-dot { animation: npr-blink 1.2s ease-in-out infinite; }
-.npr-bar[data-state="stopped"] .npr-status-dot { background: transparent; border: 2px solid var(--npr-muted); }
+.npr-bar[data-state="stopped"] .npr-status-dot { background: transparent; border: 1.5px solid var(--npr-muted); }
+.npr-bar[data-state="stopped"] .npr-status-label,
+.npr-bar[data-state="preparing"] .npr-status-label { color: #b3b7c2; }
 .npr-bar[data-state="error"] .npr-status-dot { background: #ff6b6b; }
 .npr-bar[data-state="error"] .npr-status-label { color: #ff9aa4; }
 
 @keyframes npr-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0.55); }
-  70% { box-shadow: 0 0 0 7px rgba(255, 77, 94, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(255, 77, 94, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--npr-rec-rgb), 0.6); }
+  70% { box-shadow: 0 0 0 6px rgba(var(--npr-rec-rgb), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--npr-rec-rgb), 0); }
 }
 @keyframes npr-blink {
   50% { opacity: 0.35; }
 }
 
-/* 録る種類のチップ */
+/* 録る種類のチップ（選んでいる種類は、その色の丸と薄い色の面） */
 .npr-kinds {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  padding-left: 12px;
+  padding-left: 10px;
   border-left: 1px solid var(--npr-line);
 }
 .npr-chip {
-  height: 30px;
-  padding: 0 12px 0 8px;
+  --npr-kind-rgb: 139, 144, 156;
+  height: 26px;
+  padding: 0 10px 0 8px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border-radius: 15px;
-  border: 1px solid var(--npr-line-strong);
+  border-radius: 6px;
+  border: 1px solid var(--npr-border);
   background: transparent;
-  color: #c9ccd6;
-  font-size: 12px;
+  color: var(--npr-muted);
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
 }
-.npr-chip:hover { background: var(--npr-surface-hover); }
-.npr-chip-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
-/* 選んでいない種類は、空の丸 */
-.npr-chip[data-kind][aria-pressed="false"] .npr-chip-icon svg { display: none; }
-.npr-chip[data-kind][aria-pressed="false"] .npr-chip-icon::before {
+.npr-chip-video { --npr-kind-rgb: var(--npr-video-rgb); }
+.npr-chip-comments { --npr-kind-rgb: var(--npr-comments-rgb); }
+.npr-chip-screen { --npr-kind-rgb: var(--npr-screen-rgb); }
+.npr-chip:hover { background: var(--npr-surface); border-color: var(--npr-border-strong); color: var(--npr-text); }
+.npr-chip-icon { width: 10px; height: 10px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+/* 丸（選んでいない種類は、空の丸） */
+.npr-chip .npr-chip-icon svg { display: none; }
+.npr-chip .npr-chip-icon::before {
   content: "";
-  width: 12px;
-  height: 12px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  border: 1.5px solid currentColor;
-  opacity: 0.7;
+  border: 1.5px solid rgb(var(--npr-kind-rgb));
+  opacity: 0.75;
 }
-.npr-chip-video[aria-pressed="true"] { background: var(--npr-video); border-color: var(--npr-video); color: #fff; }
-.npr-chip-comments[aria-pressed="true"] { background: var(--npr-comments); border-color: var(--npr-comments); color: #03140f; }
-.npr-chip-screen[aria-pressed="true"] { background: var(--npr-screen); border-color: var(--npr-screen); color: #1c1200; }
+.npr-chip[aria-pressed="true"] {
+  background: rgba(var(--npr-kind-rgb), 0.14);
+  border-color: rgba(var(--npr-kind-rgb), 0.5);
+  color: #f2f4f8;
+}
+.npr-chip[aria-pressed="true"]:hover { background: rgba(var(--npr-kind-rgb), 0.22); }
+.npr-chip[aria-pressed="true"] .npr-chip-icon::before {
+  background: rgb(var(--npr-kind-rgb));
+  opacity: 1;
+  box-shadow: 0 0 6px rgba(var(--npr-kind-rgb), 0.8);
+}
+/* 画面ごとの録画（まだ録っていない時は「＋」。共有の許可を出して追加する） */
 .npr-chip-screen[aria-pressed="false"] { border-style: dashed; }
+.npr-chip-screen[aria-pressed="false"] .npr-chip-icon svg { display: block; width: 11px; height: 11px; color: rgb(var(--npr-kind-rgb)); }
+.npr-chip-screen[aria-pressed="false"] .npr-chip-icon::before { display: none; }
 .npr-chip[hidden] { display: none; }
 .npr-short { display: none; }
 
 /* チップの上に出る短いお知らせ */
 .npr-hint {
   position: absolute;
-  left: 12px;
+  left: 10px;
   bottom: calc(100% + 8px);
-  padding: 6px 10px;
+  padding: 5px 9px;
   border-radius: 6px;
-  background: #2b2e36;
+  background: #24262d;
+  border: 1px solid var(--npr-border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   color: var(--npr-text);
-  font-size: 12px;
+  font-size: 11px;
   white-space: nowrap;
   opacity: 0;
   transform: translateY(4px);
@@ -141,104 +174,125 @@
 .npr-error {
   display: none;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
   margin: 0;
   color: #ffb3ba;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .npr-error span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.npr-bar[data-state="error"] { background: var(--npr-danger-bg); border-top-color: #6b2a33; }
+.npr-bar[data-state="error"] { background: var(--npr-danger-bg); border-top-color: rgba(var(--npr-rec-rgb), 0.35); }
 .npr-bar[data-state="error"] .npr-error { display: flex; }
 .npr-bar[data-state="error"] .npr-kinds { display: none; }
 
 /* 操作 */
-.npr-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
+.npr-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
 .npr-button {
-  height: 34px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border-radius: 8px;
-  border: 1px solid var(--npr-line-strong);
+  border-radius: 6px;
+  border: 1px solid var(--npr-border);
   background: var(--npr-surface);
-  color: var(--npr-text);
-  font-size: 13px;
+  color: #d5d8e0;
+  font-size: 11.5px;
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
 }
-.npr-button:hover { background: var(--npr-surface-hover); }
+.npr-button:hover { background: var(--npr-surface-hover); border-color: var(--npr-border-strong); color: var(--npr-text); }
 .npr-button[hidden] { display: none; }
-.npr-primary { background: #f1f2f5; border-color: #f1f2f5; color: #101114; }
-.npr-primary:hover { background: #ffffff; }
+/* プレイバック（よく使うので、少し目立たせる） */
+.npr-primary {
+  background: rgba(var(--npr-accent-rgb), 0.14);
+  border-color: rgba(var(--npr-accent-rgb), 0.45);
+  color: #dfe8ff;
+}
+.npr-primary svg { color: #8fb0ff; }
+.npr-primary:hover { background: rgba(var(--npr-accent-rgb), 0.24); border-color: rgba(var(--npr-accent-rgb), 0.6); color: #fff; }
 /* プレイバックのウィンドウを開いている間 */
-.npr-primary[aria-pressed="true"] { background: transparent; color: #f1f2f5; }
-.npr-primary[aria-pressed="true"]:hover { background: var(--npr-surface-hover); }
+.npr-primary[aria-pressed="true"] {
+  background: rgb(var(--npr-accent-rgb));
+  border-color: rgb(var(--npr-accent-rgb));
+  color: #fff;
+}
+.npr-primary[aria-pressed="true"] svg { color: #fff; }
+.npr-primary[aria-pressed="true"]:hover { background: #6f9bff; }
 
 .npr-icon-button {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  color: #b8bcc8;
+  color: #9ea3b0;
   cursor: pointer;
 }
+.npr-icon-button svg { width: 15px; height: 15px; }
 .npr-icon-button:hover,
 .npr-icon-button[aria-expanded="true"] { background: var(--npr-surface-hover); color: var(--npr-text); }
 
 .npr-record {
-  height: 34px;
-  padding: 0 14px 0 12px;
+  height: 28px;
+  margin-left: 4px;
+  padding: 0 12px 0 10px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   border: 1px solid var(--npr-rec);
-  border-radius: 17px;
+  border-radius: 14px;
   background: var(--npr-rec);
+  box-shadow: 0 2px 10px rgba(var(--npr-rec-rgb), 0.3);
   color: #fff;
-  font-size: 13px;
+  font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
 }
-.npr-record:hover { background: #ff6372; }
-.npr-record:disabled { opacity: 0.45; cursor: default; }
+.npr-record:hover { background: #ff6170; }
+.npr-record:disabled { opacity: 0.4; box-shadow: none; cursor: default; }
 .npr-record-icon { display: inline-flex; }
-.npr-record-dot { width: 10px; height: 10px; border-radius: 50%; background: #fff; display: inline-block; }
-.npr-record.is-stop { background: var(--npr-surface); border-color: var(--npr-line-strong); color: var(--npr-text); }
-.npr-record.is-stop:hover { background: var(--npr-surface-hover); }
+.npr-record-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; display: inline-block; }
+/* 録画中は「停止」（赤い四角） */
+.npr-record.is-stop {
+  background: rgba(var(--npr-rec-rgb), 0.12);
+  border-color: rgba(var(--npr-rec-rgb), 0.5);
+  box-shadow: none;
+  color: #ffc2c8;
+}
+.npr-record.is-stop svg { width: 11px; height: 11px; color: var(--npr-rec); }
+.npr-record.is-stop:hover { background: rgba(var(--npr-rec-rgb), 0.22); color: #fff; }
 
 /* 幅が狭い時は、文字を短くし、アイコンだけにする（文字は読み上げには残す） */
-@container (max-width: 980px) {
+@container (max-width: 820px) {
   .npr-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-short { display: inline; }
 }
-@container (max-width: 820px) {
-  #recordingsButton { padding: 0 9px; }
+@container (max-width: 690px) {
+  #recordingsButton { width: 28px; padding: 0; justify-content: center; }
   #recordingsButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-@container (max-width: 700px) {
-  #playbackButton { padding: 0 9px; }
+@container (max-width: 610px) {
+  #playbackButton { width: 28px; padding: 0; justify-content: center; }
   #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-time { display: none; }
 }
-@container (max-width: 580px) {
+@container (max-width: 500px) {
   .npr-bar .npr-status-label,
   .npr-bar .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .npr-record { padding: 0 11px; }
+  .npr-record { width: 28px; padding: 0; justify-content: center; }
   .npr-kinds { padding-left: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .npr-bar .npr-status-dot { animation: none !important; }
-  .npr-hint { transition: none; }
+  .npr-hint, .npr-bar button { transition: none; }
 }
 
 /* プレイヤーの操作バーに置く、録画バーを隠す・出すボタン（録画中は赤い印） */
