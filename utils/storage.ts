@@ -32,3 +32,11 @@ export const UI_COLLAPSED = storage.defineItem<boolean>(
         fallback: false,
     }
 )
+
+// 流れるコメントを含めて録画する
+export const RECORD_WITH_COMMENTS = storage.defineItem<boolean>(
+    'local:RECORD_WITH_COMMENTS',
+    {
+        fallback: false,
+    }
+)

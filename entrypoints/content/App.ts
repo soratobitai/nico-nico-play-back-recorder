@@ -2,7 +2,8 @@ import { cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded, saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed } from "../../utils/ui"
-import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
+import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_WITH_COMMENTS } from '../../utils/storage'
+import { createCommentCompositor, type CommentCompositor } from '../../utils/comment-compositor'
 import { checkLiveStatus } from '../../services/api'
 import SettingsModal from './settings-modal'
 import './settings-modal.css'
@@ -21,6 +22,7 @@ export default async () => {
     let maxStorageSize = 1 * 1024 * 1024 * 1024
     let autoStart = true
     let autoReloadOnFailure = false
+    let recordWithComments = false
 
     // 録画を再スタート
     const resetRecording = () => {
@@ -51,6 +53,7 @@ export default async () => {
         let size = await MAX_STORAGE_SIZE.getValue()
         autoStart = await AUTO_START.getValue()
         autoReloadOnFailure = await AUTO_RELOAD_ON_FAILURE.getValue()
+        recordWithComments = await RECORD_WITH_COMMENTS.getValue()
 
         maxStorageSize = size
 
@@ -69,13 +72,45 @@ export default async () => {
     AUTO_RELOAD_ON_FAILURE.watch((newValue) => {
         autoReloadOnFailure = newValue
     })
+    RECORD_WITH_COMMENTS.watch((newValue) => {
+        recordWithComments = newValue
+        // 録画中ならすぐに区間を切り替えて反映する
+        switchRecordingStream()
+    })
 
     const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
     const { userName, title } = getProgramData() // 番組情報を取得
 
     const video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
-    let stream: MediaStream = {} as MediaStream
+    let stream = new MediaStream() // 録画する映像（設定によっては流れるコメントを合成したもの）
+    let compositor: CommentCompositor | null = null // コメントを合成している場合はその処理
     let mediaRecorder: MediaRecorder | null = null // 現在の録画区間の recorder
+
+    // 録画する映像を用意する（設定に応じて流れるコメントを合成する）
+    const createRecordingStream = (): MediaStream => {
+        if (recordWithComments) {
+            compositor = createCommentCompositor(video)
+            if (compositor) return compositor.stream
+        }
+        return (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+    }
+
+    // 録画していた映像を解放する（コメントの合成も止める）
+    const releaseRecordingStream = () => {
+        stream.getTracks().forEach(track => track.stop())
+        compositor?.stop()
+        compositor = null
+    }
+
+    // 録画する映像を作り直して次の区間を始める（コメントを含めるかを録画中に切り替えた時）
+    const switchRecordingStream = () => {
+        if (mediaRecorder?.state !== "recording") return
+
+        mediaRecorder.stop()
+        releaseRecordingStream()
+        stream = createRecordingStream()
+        startNewRecorder()
+    }
 
 
 
@@ -117,7 +152,8 @@ export default async () => {
 
             // 録画開始処理
             try {
-                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                releaseRecordingStream()
+                stream = createRecordingStream()
                 startNewRecorder()
             } catch (error) {
                 console.log("録画の開始に失敗しました:", error)
@@ -244,6 +280,7 @@ export default async () => {
                         stopTimer()
                         stateManager.setState('error')
                         recorder.stop()
+                        releaseRecordingStream()
                     }
                 })
         }
@@ -254,6 +291,7 @@ export default async () => {
             if (recorder === mediaRecorder && stateManager.getState() === 'recording') {
                 stopTimer()
                 stateManager.setState('stopped')
+                releaseRecordingStream()
             }
 
             // 最後のチャンクの保存を待ってから結合して保存
@@ -295,6 +333,8 @@ export default async () => {
         stopTimer()
         stateManager.setState('stopped')
         mediaRecorder.stop()
+        // 停止中もコメントの合成を続けないように解放する（録画開始時に作り直す）
+        releaseRecordingStream()
     }
     const reload = async () => {
         // 不完全なtempファイルを取得・削除し結合して保存
@@ -321,7 +361,7 @@ export default async () => {
             mediaRecorder.stop()
 
             // stream を解放
-            stream.getTracks().forEach(track => track.stop())
+            releaseRecordingStream()
 
             // 新しいストリームを取得し録画を開始
             setTimeout(() => {

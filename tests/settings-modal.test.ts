@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeBrowser } from 'wxt/testing'
 import SettingsModal from '@/entrypoints/content/settings-modal'
 import { getStorageUsage } from '@/hooks/indexedDB/recordingDB'
-import { MAX_STORAGE_SIZE, RESTART_MEDIARECORDER_INTERVAL_MS } from '@/utils/storage'
+import { MAX_STORAGE_SIZE, RESTART_MEDIARECORDER_INTERVAL_MS, RECORD_WITH_COMMENTS } from '@/utils/storage'
 
 vi.mock('@/hooks/indexedDB/recordingDB', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/hooks/indexedDB/recordingDB')>()
@@ -68,6 +68,18 @@ describe('設定画面', () => {
         await flush()
         expect(await MAX_STORAGE_SIZE.getValue()).toBe(5 * GB)
         expect(await RESTART_MEDIARECORDER_INTERVAL_MS.getValue()).toBe(10 * 60 * 1000)
+    })
+
+    it('「コメントを含めて録画」は初期値 OFF で、切り替えると保存される', async () => {
+        modal.show()
+        const checkbox = document.getElementById('recordWithCommentsCheckbox') as HTMLInputElement
+        expect(checkbox.checked).toBe(false)
+
+        checkbox.checked = true
+        checkbox.dispatchEvent(new Event('change'))
+        await flush()
+
+        expect(await RECORD_WITH_COMMENTS.getValue()).toBe(true)
     })
 
     it('ラベルが入力欄と結び付いている（for 属性）', () => {

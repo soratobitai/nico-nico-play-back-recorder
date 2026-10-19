@@ -3,6 +3,7 @@ import {
   MAX_STORAGE_SIZE,
   AUTO_START,
   AUTO_RELOAD_ON_FAILURE,
+  RECORD_WITH_COMMENTS,
 } from '../../utils/storage'
 import { getStorageUsage } from '../../hooks/indexedDB/recordingDB'
 
@@ -15,6 +16,7 @@ interface Settings {
   MAX_STORAGE_SIZE: number
   AUTO_START: boolean
   AUTO_RELOAD_ON_FAILURE: boolean
+  RECORD_WITH_COMMENTS: boolean
 }
 
 class SettingsModal {
@@ -26,6 +28,7 @@ class SettingsModal {
     MAX_STORAGE_SIZE: 1 * 1024 * 1024 * 1024,
     AUTO_START: true,
     AUTO_RELOAD_ON_FAILURE: false,
+    RECORD_WITH_COMMENTS: false,
   }
   private currentStorageUsage: number | null = null
   private storageQuota: number = 0
@@ -44,11 +47,13 @@ class SettingsModal {
       size,
       autoStart,
       autoReload,
+      recordWithComments,
     ] = await Promise.all([
       RESTART_MEDIARECORDER_INTERVAL_MS.getValue(),
       MAX_STORAGE_SIZE.getValue(),
       AUTO_START.getValue(),
       AUTO_RELOAD_ON_FAILURE.getValue(),
+      RECORD_WITH_COMMENTS.getValue(),
     ])
 
     this.settings = {
@@ -56,6 +61,7 @@ class SettingsModal {
       MAX_STORAGE_SIZE: size,
       AUTO_START: autoStart,
       AUTO_RELOAD_ON_FAILURE: autoReload,
+      RECORD_WITH_COMMENTS: recordWithComments,
     }
   }
 
@@ -103,6 +109,9 @@ class SettingsModal {
         break
       case 'AUTO_RELOAD_ON_FAILURE':
         await AUTO_RELOAD_ON_FAILURE.setValue(value as boolean)
+        break
+      case 'RECORD_WITH_COMMENTS':
+        await RECORD_WITH_COMMENTS.setValue(value as boolean)
         break
     }
   }
@@ -166,6 +175,20 @@ class SettingsModal {
                 オートリロード
               </label>
             </div>
+          </div>
+
+          <div class="setting-block">
+            <label for="recordWithCommentsCheckbox" title="流れるコメントを動画に重ねて録画します。">
+              <input
+                id="recordWithCommentsCheckbox"
+                type="checkbox"
+                ${this.settings.RECORD_WITH_COMMENTS ? 'checked' : ''}
+              />
+              コメントを含めて録画
+            </label>
+            <p class="description">
+              流れるコメントを動画に重ねて録画します。コメントが重なるのはタブを表示している間だけです。PCの負荷が上がります。
+            </p>
           </div>
 
           <div class="setting-block">
@@ -292,6 +315,12 @@ class SettingsModal {
 
     autoReloadCheckbox?.addEventListener('change', (e) => {
       this.updateSetting('AUTO_RELOAD_ON_FAILURE', (e.target as HTMLInputElement).checked)
+    })
+
+    // 録画中に切り替えた場合は、その場で区間を切り替えて反映される（App.ts で設定の変更を監視している）
+    const recordWithCommentsCheckbox = this.modal.querySelector('#recordWithCommentsCheckbox') as HTMLInputElement
+    recordWithCommentsCheckbox?.addEventListener('change', (e) => {
+      this.updateSetting('RECORD_WITH_COMMENTS', (e.target as HTMLInputElement).checked)
     })
 
     // スライダー
