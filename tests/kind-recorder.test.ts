@@ -62,7 +62,7 @@ class FakeRecorder {
 const flush = () => new Promise(resolve => setTimeout(resolve, 10))
 
 const createSource = () => {
-    const source: RecordingSource = { stream: {} as MediaStream, fixedSize: false, stop: vi.fn() }
+    const source: RecordingSource = { stream: {} as MediaStream, fixedSize: false, steadySize: true, stop: vi.fn() }
     return source
 }
 
@@ -111,6 +111,7 @@ describe('createKindRecorder', () => {
         expect(sources).toHaveLength(1)
         expect(FakeRecorder.instances[0].timeslice).toBe(3000)
         expect(options.onStarted).toHaveBeenCalledTimes(1)
+        expect(options.onStarted).toHaveBeenCalledWith(FakeRecorder.instances[0]) // 見張りを始められるように
         expect(createdSegments()[0]).toMatchObject({ kind: 'comments', programId: 'lv1', format: 'opaque' })
         expect(library.appendFragments).toHaveBeenCalledTimes(1)
         expect(options.onData).toHaveBeenCalledWith(FakeRecorder.instances[0])
@@ -198,6 +199,45 @@ describe('createKindRecorder', () => {
         await flush()
 
         expect(options.onData).not.toHaveBeenCalled()
+    })
+
+    it('区切ると、新しい区間の recorder で録り始めたことを知らせる（データが届く前から見張れるように）', async () => {
+        const { recorder, options } = create()
+        recorder.start()
+        await flush()
+
+        recorder.split()
+        await flush()
+
+        expect(options.onStarted).toHaveBeenCalledTimes(2)
+        expect(options.onStarted).toHaveBeenLastCalledWith(FakeRecorder.instances[1])
+    })
+
+    it('容量不足で区間を作れなかったら、古い録画を消して作り直す', async () => {
+        vi.mocked(library.createSegment).mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+        vi.mocked(library.freeSpace).mockResolvedValueOnce({ freed: 1000, deletedSegmentIds: [] })
+        const { recorder, options } = create({ onSaveFailed: vi.fn() })
+        recorder.start()
+        await flush()
+        FakeRecorder.instances[0].emit('a')
+        await flush()
+
+        expect(library.createSegment).toHaveBeenCalledTimes(2)
+        expect(library.appendFragments).toHaveBeenCalledTimes(1)
+        expect(options.onSaveFailed).not.toHaveBeenCalled()
+    })
+
+    it('古い録画を消しても区間を作れなければ、保存できないことを知らせ、その区間のデータは書き込まない', async () => {
+        // 消せる録画がない（freeSpace が何も消さない）
+        vi.mocked(library.createSegment).mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+        const { recorder, options } = create({ onSaveFailed: vi.fn() })
+        recorder.start()
+        await flush()
+        FakeRecorder.instances[0].emit('a')
+        await flush()
+
+        expect(options.onSaveFailed).toHaveBeenCalledTimes(1)
+        expect(library.appendFragments).not.toHaveBeenCalled()
     })
 
     it('映像の解像度が固定かどうかを、映像から知らせる', () => {

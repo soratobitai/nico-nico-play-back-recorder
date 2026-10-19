@@ -14,7 +14,9 @@ const handleBridgeRequest = (request: BridgeRequest): Promise<unknown> => {
         case 'enforceLimit': return db.enforceLimit(request.maxBytes)
         case 'freeSpace': return db.freeSpace(request.bytes)
         case 'closeStaleSegments': return db.closeStaleSegments(request.idleMs)
-        case 'clearAll': return db.clearAll()
+        // 録画中の区間は、録画を続けられるように中身だけ消す
+        case 'clearAll': return db.clearAll({ keepRecording: true })
+        case 'deleteSegments': return db.deleteSegments(request.segmentIds)
         // 拡張機能側の容量（ニコ生のページ側とは別）
         case 'estimateStorage': return navigator.storage.estimate().then(({ usage, quota }) => ({ usage, quota }))
     }

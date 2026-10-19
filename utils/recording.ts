@@ -88,13 +88,17 @@ const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<
     } catch (error) {
         if (!isQuotaExceeded(error)) throw error
 
-        const { freed } = await library.freeSpace(bytesNeeded)
-        if (freed === 0) throw error // 削除できる録画がない
+        // 削除できる録画がない（拡張機能側に保存できず、一時保存の上限を超えた場合も）
+        const { freed } = await library.freeSpace(bytesNeeded).catch(() => ({ freed: 0 }))
+        if (freed === 0) throw error
         console.log(`容量不足のため古い録画を削除しました: ${freed} バイト`)
 
         return await save()
     }
 }
+
+// 区間を作る時に、容量不足なら空ける量（サムネイルなどの分）
+const SEGMENT_RECORD_BYTES = 1024 * 1024
 
 // 1回の録画処理（区間）で録ったデータを、保存先へ書き込む
 // mp4 は初期化セグメントと数秒ごとの断片に分けて書き込む（録画中でも再生でき、古い断片から消していける）。
@@ -112,7 +116,8 @@ const createSegmentWriter = (segment: NewSegment) => {
     }
 
     return {
-        start: () => library.createSegment(segment),
+        // 区間を作る（サムネイルの分などの容量が足りなければ、古い録画を消してから作り直す）
+        start: () => retryOnQuotaExceeded(SEGMENT_RECORD_BYTES, () => library.createSegment(segment)),
 
         async write(data: Blob) {
             if (!splitter) {
@@ -124,7 +129,7 @@ const createSegmentWriter = (segment: NewSegment) => {
             const { init, fragments } = splitter.push(new Uint8Array(await data.arrayBuffer()))
             if (init) {
                 const initBlob = new Blob([init], { type: segment.mimeType })
-                await library.setSegmentInit(segment.segmentId, initBlob)
+                await retryOnQuotaExceeded(initBlob.size, () => library.setSegmentInit(segment.segmentId, initBlob))
                 publishLiveFeed({ type: 'init', segment, init: initBlob })
             }
             if (fragments.length === 0) return

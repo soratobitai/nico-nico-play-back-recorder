@@ -1,4 +1,4 @@
-import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments } from "../../utils/library/api"
+import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments, setPendingLimit } from "../../utils/library/api"
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
 import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setKindChips, showBarHint } from "../../utils/ui"
@@ -27,6 +27,10 @@ const ENFORCE_LIMIT_INTERVAL_MS = 60 * 1000
 const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
 // 動画の解像度が変わってから録り直すまでの時間（続けて変わる間は待つ）
 const RESTART_DELAY_MS = 1000
+// 複数の種類を区切る・録り直す時に、種類ごとにずらす時間
+// （同時に録り始めると、ハードウェアのエンコーダーをどの種類が使うかが入れ替わり、同じ種類の前の区間と
+//   映像の設定が変わって、つないで保存できなくなる。ずらせば、どの種類も前と同じエンコーダーを使う）
+const KIND_STAGGER_MS = 500
 // 止まっていないかを見張る種類の優先順（録画している種類のうち1つを見張る）
 const WATCH_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
 // 動画から作る種類（動画の解像度が変わると録り直す）
@@ -69,6 +73,7 @@ export default async () => {
     const recorders = new Map<RecordingKind, KindRecorder>() // 録画中の種類
     const restartPending = new Set<VideoKind>() // 解像度が変わって、録り直しを待っている種類
     let sessionActive = false // 録画中（停止するまで。録り直しを待っている間も含む）
+    let sessionId = 0 // 録画を始めるたびに変わる（止めた後に、前の録画のためにずらした処理を行わない）
     let splitTimer: ReturnType<typeof setInterval> | undefined
     let limitTimer: ReturnType<typeof setInterval> | undefined
     let restartTimer: ReturnType<typeof setTimeout> | undefined
@@ -91,22 +96,25 @@ export default async () => {
 
     const startKind = (kind: RecordingKind, createSource: () => RecordingSource): boolean => {
         if (recorders.has(kind)) return true
+        // 録画している種類のうち1つだけを見張る（データが届かなくなったらライブが続いているか確かめる）
+        // 区間を録り始めた時にも見張り始める（新しい区間のデータが一度も届かない場合にも気づけるように）
+        const watch = (mediaRecorder: MediaRecorder) => {
+            const watched = WATCH_ORDER.map(k => recorders.get(k)).find(Boolean)
+            if (watched !== recorder) return
+            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, 0, () => stopSession('stopped'))
+        }
         const recorder: KindRecorder = createKindRecorder({
             kind,
             createSource,
             chunkIntervalMs: SAVE_CHUNK_INTERVAL_MS,
             segmentDetails: () => ({ programId, title, userName, thumbnail: captureThumbnail(video) }),
-            onStarted: () => {
+            onStarted: (mediaRecorder) => {
+                watch(mediaRecorder)
                 if (!sessionActive || stateManager.getState() === 'recording') return
                 startTimer()
                 stateManager.setState('recording')
             },
-            onData: (mediaRecorder) => {
-                // 録画している種類のうち1つだけを見張る（データが届かなくなったらライブが続いているか確かめる）
-                const watched = WATCH_ORDER.map(k => recorders.get(k)).find(Boolean)
-                if (watched !== recorder) return
-                resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, 0, () => stopSession('stopped'))
-            },
+            onData: watch,
             // 古い録画を消しても容量が足りない場合は、録画を続けても保存されないので止める
             onSaveFailed: () => stopSession('error'),
             onEnded: () => {
@@ -154,13 +162,29 @@ export default async () => {
         }
     }
 
+    // 種類ごとに KIND_STAGGER_MS ずつずらして action を行い、最後に done を呼ぶ（録画を止めたら、残りは行わない）
+    const staggered = <K extends RecordingKind>(kinds: K[], action: (kind: K) => void, done?: () => void) => {
+        const id = sessionId
+        if (kinds.length === 0) done?.()
+        kinds.forEach((kind, i) => {
+            const run = () => {
+                if (!sessionActive || sessionId !== id) return
+                action(kind)
+                if (i === kinds.length - 1) done?.()
+            }
+            if (i === 0) run()
+            else setTimeout(run, i * KIND_STAGGER_MS)
+        })
+    }
+
     const beginSession = () => {
         if (sessionActive) return
         sessionActive = true
+        sessionId++
         // 一定の間隔で、すべての種類の区間を区切る（区間の間に空白を作らないよう、すぐに次の区間を録り始める）
         splitTimer = setInterval(() => {
             console.log("🔄 録画を区切ります...")
-            for (const recorder of recorders.values()) recorder.split()
+            staggered(WATCH_ORDER.filter(kind => recorders.has(kind)), kind => recorders.get(kind)?.split())
         }, SEGMENT_INTERVAL_MS)
         limitTimer = setInterval(enforceStorageLimit, ENFORCE_LIMIT_INTERVAL_MS)
     }
@@ -178,20 +202,28 @@ export default async () => {
     }
 
     // 動画から作る種類を、少し待ってから録り直す（解像度が変わった時や、設定を変えた時）
+    // 映像の大きさが変わらないように描き直している種類は、録り直すまで録り続ける（録画の間を空けない）。
+    // 描き直せない種類は、大きさが変わった所から再生できなくなるので、すぐに止める
     const scheduleRestart = (kinds: VideoKind[]) => {
         for (const kind of kinds) {
             restartPending.add(kind)
-            stopKind(kind)
+            if (!recorders.get(kind)?.steadySize) stopKind(kind)
         }
         clearTimeout(restartTimer)
         restartTimer = setTimeout(() => {
-            const pending = [...restartPending]
+            const pending = VIDEO_KINDS.filter(kind => restartPending.has(kind))
             restartPending.clear()
             if (!sessionActive) return
-            for (const kind of pending) {
+            staggered(pending, (kind) => {
+                const previous = recorders.get(kind)
+                if (previous) {
+                    recorders.delete(kind)
+                    previous.stop()
+                }
                 if (enabledKinds().includes(kind)) startKind(kind, () => createSourceFor(kind))
-            }
-            if (recorders.size === 0) stopSession('stopped')
+            }, () => {
+                if (recorders.size === 0) stopSession('stopped')
+            })
         }, RESTART_DELAY_MS)
     }
 
@@ -215,9 +247,13 @@ export default async () => {
         }
     }
 
+    // 拡張機能側に保存できない間に一時保存する量の上限（拡張機能が更新された後も録画を続けるので）
+    setPendingLimit(maxStorageSize)
+
     // 設定変更の反映
     MAX_STORAGE_SIZE.watch((newValue) => {
         maxStorageSize = newValue
+        setPendingLimit(newValue)
     })
     AUTO_RELOAD_ON_FAILURE.watch((newValue) => {
         autoReloadOnFailure = newValue
@@ -258,21 +294,26 @@ export default async () => {
 
     // 画面ごと録画を始める・やめる（録画パネルのボタンから。共有の確認を出すためクリックから呼ぶ必要がある）
     // 他の種類と並行して録る。停止中に押した場合は、設定で選んだ種類も一緒に録り始める
+    let screenStarting = false // 共有の確認を出している間（続けて押されても、2つ目の取り込みを始めない）
     const toggleScreenCapture = async () => {
+        if (screenStarting) return
         if (recorders.has('screen')) {
             stopKind('screen')
             return
         }
 
         let source: RecordingSource
+        screenStarting = true
         try {
             // Chrome の「共有を停止」で取り込みが終わったら、画面の録画だけやめる
             const capture = await startScreenCapture(fixedHeight() ?? video.videoHeight, () => stopKind('screen'))
-            source = { stream: capture.stream, fixedSize: true, stop: capture.stop }
+            source = { stream: capture.stream, fixedSize: true, steadySize: true, stop: capture.stop }
         } catch (error) {
             // 「このタブを共有」でキャンセルされた場合など
             console.log('画面ごと録画を開始できませんでした:', error)
             return
+        } finally {
+            screenStarting = false
         }
 
         const wasActive = sessionActive
@@ -408,6 +449,22 @@ export default async () => {
             console.log("動画の解像度が変わりました", `${video.videoWidth}x${video.videoHeight}`, kinds)
             if (kinds.length > 0 || restartPending.size > 0) scheduleRestart(kinds)
         })
+
+        // 動画が読み込み直された（プレイヤーの再読み込みなど）。今の録画のトラックにはコマが届かなくなる
+        // （トラックは終わらないまま残る）ので、一定の解像度で録っている種類も含めて、新しいトラックで録り直す。
+        // 読み込み直した動画の映像が届いてから録り直す（新しいトラックは、その頃に加わる）
+        let reloaded = false
+        video.addEventListener("emptied", () => {
+            reloaded = true
+        })
+        video.addEventListener("loadeddata", () => {
+            if (!reloaded) return
+            reloaded = false
+            if (!sessionActive) return
+            const kinds = VIDEO_KINDS.filter(kind => recorders.has(kind) || restartPending.has(kind))
+            console.log("動画が読み込み直されました", kinds)
+            if (kinds.length > 0) scheduleRestart(kinds)
+        })
     }
 
     // ページの他のスクリプトが忙しい時期を避けて、アイドル時間に実行
@@ -459,11 +516,6 @@ export default async () => {
 
         // 折りたたみボタンの初期化が完了した後、初期読み込みを実行
         executeWhenIdle(async () => {
-            // 拡張機能が更新された直後などに一時保存した録画を、拡張機能側へ移す
-            await flushPending().catch((error) => console.log("一時保存した録画を移せませんでした:", error))
-            // 録画中にタブが閉じられるなどして、終えられないまま残った録画を確定する
-            await closeStaleSegments(STALE_SEGMENT_IDLE_MS).catch((error) => console.log("残っていた録画を確定できませんでした:", error))
-
             await new Promise(resolve => setTimeout(resolve, 1000))
 
             executeWhenIdle(async () => {
@@ -474,13 +526,20 @@ export default async () => {
                     // （動画が一時停止中だと準備完了を検知できず、準備中のまま固まっていた）
                     stateManager.setState('stopped')
                 }
+                observeVideoResize() // 動画の解像度の変更・読み込み直しを監視
 
                 await new Promise(resolve => setTimeout(resolve, 1000))
 
+                // 以下は時間がかかることがあるので、録画を始めてから
                 executeWhenIdle(async () => {
-                    observeVideoResize() // video の track 変更を監視
+                    // 拡張機能が更新された直後などに一時保存した録画を、拡張機能側へ移す
+                    await flushPending().catch((error) => console.log("一時保存した録画を移せませんでした:", error))
+                    // 録画中にタブが閉じられるなどして、終えられないまま残った録画を確定する
+                    await closeStaleSegments(STALE_SEGMENT_IDLE_MS).catch((error) => console.log("残っていた録画を確定できませんでした:", error))
+                    // 移した分で容量の上限を超えていれば、古いものから消す
+                    await enforceStorageLimit()
 
-                    // 以前のバージョンの録画を拡張機能側へ移す（時間がかかることがあるので、録画を始めてから）
+                    // 以前のバージョンの録画を拡張機能側へ移す
                     migrateLegacy()
                         .catch((error) => console.log("以前の録画を移せませんでした:", error))
                 })

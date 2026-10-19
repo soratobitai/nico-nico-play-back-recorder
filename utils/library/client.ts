@@ -43,12 +43,20 @@ const toError = ({ name, message }: { name: string, message: string }) =>
 
 let connection: Promise<BridgeConnection> | null = null
 
-const getBridge = (): Promise<BridgeConnection> => connection ??= connect().catch((error) => {
-    connection = null
-    throw error
-})
+const getBridge = (): Promise<BridgeConnection> => {
+    if (connection) return connection
+    const connecting: Promise<BridgeConnection> = connect(() => {
+        // 捨てられたのが今の接続なら、次の依頼でつなぎ直す（新しい接続は残す）
+        if (connection === connecting) connection = null
+    }).catch((error) => {
+        if (connection === connecting) connection = null
+        throw error
+    })
+    connection = connecting
+    return connecting
+}
 
-const connect = async (): Promise<BridgeConnection> => {
+const connect = async (onDiscard: () => void): Promise<BridgeConnection> => {
     if (!isExtensionContextValid()) throw new BridgeUnavailableError('拡張機能が更新されたため、拡張機能側に保存できません')
 
     const { token } = await withTimeout(
@@ -56,8 +64,12 @@ const connect = async (): Promise<BridgeConnection> => {
         CONNECT_TIMEOUT_MS, '合言葉の取得',
     )
 
+    const url = chrome.runtime.getURL('/bridge.html')
+    // 合言葉の送り先は、拡張機能の origin に決めておく
+    // （iframe の src はニコ生のページからも書き換えられるので、そこから決めると合言葉を盗まれる）
+    const bridgeOrigin = new URL(url).origin
     const iframe = document.createElement('iframe')
-    iframe.src = chrome.runtime.getURL('/bridge.html')
+    iframe.src = url
     iframe.hidden = true
     iframe.tabIndex = -1
     iframe.setAttribute('aria-hidden', 'true')
@@ -72,16 +84,16 @@ const connect = async (): Promise<BridgeConnection> => {
                 ? resolve()
                 : reject(new BridgeUnavailableError('bridge に接続できませんでした'))
         })
-        iframe.contentWindow?.postMessage({ type: BRIDGE_INIT_MESSAGE, token }, new URL(iframe.src).origin, [channel.port2])
+        iframe.contentWindow?.postMessage({ type: BRIDGE_INIT_MESSAGE, token }, bridgeOrigin, [channel.port2])
         await withTimeout(ready, CONNECT_TIMEOUT_MS, 'bridge への接続')
-        return createConnection(channel.port1, iframe)
+        return createConnection(channel.port1, iframe, onDiscard)
     } catch (error) {
         iframe.remove()
         throw error
     }
 }
 
-const createConnection = (port: MessagePort, iframe: HTMLIFrameElement): BridgeConnection => {
+const createConnection = (port: MessagePort, iframe: HTMLIFrameElement, onDiscard: () => void): BridgeConnection => {
     let nextId = 1
     const waiting = new Map<number, { resolve: (value: unknown) => void, reject: (error: unknown) => void }>()
 
@@ -94,10 +106,14 @@ const createConnection = (port: MessagePort, iframe: HTMLIFrameElement): BridgeC
     }
 
     // 応答がなくなった bridge は捨てて、次の依頼でつなぎ直す
+    // 応答を待っている他の依頼も、時間切れまで待たせずに失敗にする（書き込みなら一時保存に回る）
     const discard = () => {
-        if (connection) connection = null
+        onDiscard()
         port.close()
         iframe.remove()
+        const waiters = [...waiting.values()]
+        waiting.clear()
+        for (const waiter of waiters) waiter.reject(new BridgeUnavailableError('bridge から応答がありません'))
     }
 
     return {

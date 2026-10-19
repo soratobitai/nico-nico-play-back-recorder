@@ -252,9 +252,16 @@ const deleteSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAG
     }
 })
 
-const clearAll = () => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+// すべての録画を消す。keepRecording なら、録画中の区間は（続きを書き込めるように）区間だけ残して中身を消す
+const clearAll = ({ keepRecording = false } = {}) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    const segments = tx.objectStore(SEGMENTS)
+    const recording = keepRecording ? (await promisify<SegmentRecord[]>(segments.getAll())).filter(s => s.endedAt === null) : []
     await promisify(tx.objectStore(FRAGMENTS).clear())
-    await promisify(tx.objectStore(SEGMENTS).clear())
+    await promisify(segments.clear())
+    for (const segment of recording) {
+        // 最後に書き込んだ時刻（duration）は残す（終えられないまま残った区間を見分けるのに使う）
+        await promisify(segments.put({ ...segment, bytes: segment.init?.size ?? 0, fragmentCount: 0 }))
+    }
 })
 
 // ---- プレイバック・録画一覧（区切りをつないで見る） ----
@@ -303,7 +310,7 @@ const getFragmentBlobs = (segmentId: string, indexes: number[]) => withTransacti
 
 type Usage = { bytes: number, segments: number, bytesByKind: Record<RecordingKind, number> }
 
-const getUsage = () => withTransaction([SEGMENTS], 'readonly', async (tx) => {
+const usageIn = async (tx: IDBTransaction) => {
     const segments = await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).getAll())
     const usage: Usage = { bytes: 0, segments: segments.length, bytesByKind: { video: 0, comments: 0, screen: 0 } }
     for (const segment of segments) {
@@ -311,7 +318,12 @@ const getUsage = () => withTransaction([SEGMENTS], 'readonly', async (tx) => {
         usage.bytesByKind[segment.kind] += segment.bytes
     }
     return usage
-})
+}
+
+const getUsage = () => withTransaction([SEGMENTS], 'readonly', usageIn)
+
+// 録画中の区間は5分ごとに区切られ、数秒ごとに書き込まれるので、これだけ書き込みのない区間は録画を終えている
+const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
 
 // 録画していたタブが閉じられるなどして、終えられないまま残った区間を確定する
 // 最後の書き込みから idleMs 以上たったものが対象。断片が1つもなければ消す。消した区間の ID を返す
@@ -336,7 +348,9 @@ const closeStaleSegments = (idleMs: number, now = Date.now()) => withTransaction
 // 断片がなくなった区間は消す（録画中の区間は、続きの断片が届くので残す）。
 // opaque の区間は途中から再生できないので、区間ごと消す（録画中のものは書き込み中なので消さない）。
 // 区間ごと消えた区間の ID を返す
-const freeSpace = (bytesToFree: number) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+const freeSpace = (bytesToFree: number) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', tx => freeSpaceIn(tx, bytesToFree))
+
+const freeSpaceIn = async (tx: IDBTransaction, bytesToFree: number) => {
     const segmentStore = tx.objectStore(SEGMENTS)
     const fragmentStore = tx.objectStore(FRAGMENTS)
     const touched = new Map<string, SegmentRecord | null>() // null: 区間ごと消した
@@ -389,14 +403,15 @@ const freeSpace = (bytesToFree: number) => withTransaction([SEGMENTS, FRAGMENTS]
         }
     }
     return { freed, deletedSegmentIds }
-})
+}
 
 // 合計が maxBytes を超えていたら、超えた分だけ古い断片から消す
-const enforceLimit = async (maxBytes: number) => {
-    const { bytes } = await getUsage()
+// （合計を数えるのと消すのを同じトランザクションで行う。複数のタブが同時に消すと、消しすぎるため）
+const enforceLimit = (maxBytes: number) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    const { bytes } = await usageIn(tx)
     if (bytes <= maxBytes) return { freed: 0, deletedSegmentIds: [] as string[] }
-    return freeSpace(bytes - maxBytes)
-}
+    return freeSpaceIn(tx, bytes - maxBytes)
+})
 
 export {
     openLibraryDB,
@@ -413,6 +428,7 @@ export {
     clearAll,
     getUsage,
     closeStaleSegments,
+    STALE_SEGMENT_IDLE_MS,
     freeSpace,
     enforceLimit,
     SegmentNotFoundError,

@@ -9,6 +9,8 @@ type RecordingSource = {
     stream: MediaStream
     // 動画の解像度が変わっても、録画の解像度が変わらない（録り直さなくてよい）
     fixedSize: boolean
+    // 録画の途中で映像の大きさが変わらない（描き直している）。録り直す場合も、録り直すまで録り続けられる
+    steadySize: boolean
     stop: () => void
 }
 
@@ -16,10 +18,13 @@ const stopAll = (stream: MediaStream) => stream.getTracks().forEach(track => tra
 
 // 動画の取り込み
 // 同じ video で captureStream() を何度も呼ぶと、前に取り込んだ方にコマが届かなくなるので、
-// 取り込みは1つにして、種類ごとにトラックを複製して使う（使う種類がなくなったら取り込みも止める）
+// 取り込みは1つにして、種類ごとにトラックを複製して使う。
+// 取り込みは止めずに使い続ける（止めてすぐ取り込み直した録画が、データを出さないことがあった）。
+// 動画が読み込み直されると（プレイヤーの再読み込みなど）、取り込みには新しいトラックが加わり、
+// 前のトラックはコマが届かないまま live で残る。種類ごとの複製は、最後に加わったトラックから作る。
+// （取り込み直してから前の取り込みを止めると、新しい取り込みの音声まで止まり、録画がデータを出さなくなる）
 const createVideoCapture = (video: HTMLVideoElement) => {
     let capture: MediaStream | null = null
-    let users = 0
 
     const isLive = (stream: MediaStream | null): stream is MediaStream =>
         !!stream && stream.getTracks().length > 0 && stream.getTracks().every(track => track.readyState === 'live')
@@ -32,22 +37,10 @@ const createVideoCapture = (video: HTMLVideoElement) => {
                 if (capture) stopAll(capture)
                 capture = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
             }
-            users++
-            const stream = new MediaStream(capture.getTracks().map(track => track.clone()))
-            let released = false
-            return {
-                stream,
-                release: () => {
-                    if (released) return
-                    released = true
-                    stopAll(stream)
-                    users--
-                    if (users === 0 && capture) {
-                        stopAll(capture)
-                        capture = null
-                    }
-                },
-            }
+            const tracks = [capture.getVideoTracks().at(-1), capture.getAudioTracks().at(-1)]
+                .filter((track): track is MediaStreamTrack => !!track)
+            const stream = new MediaStream(tracks.map(track => track.clone()))
+            return { stream, release: () => stopAll(stream) }
         },
     }
 }
@@ -72,13 +65,14 @@ const createVideoSource = (capture: VideoCapture, video: HTMLVideoElement, fixed
         return {
             stream: new MediaStream([pipeline.track, ...stream.getAudioTracks()]),
             fixedSize: fixedHeight !== null,
+            steadySize: true,
             stop: () => {
                 pipeline.stop()
                 release()
             },
         }
     }
-    return { stream, fixedSize: false, stop: release }
+    return { stream, fixedSize: false, steadySize: false, stop: release }
 }
 
 // コメント付き。この環境でコメントを合成できない場合は null
@@ -92,6 +86,7 @@ const createCommentSource = (capture: VideoCapture, video: HTMLVideoElement, fix
     return {
         stream: compositor.stream,
         fixedSize: fixedHeight !== null,
+        steadySize: true, // 合成する大きさは、作った時に決める
         stop: () => {
             compositor.stop()
             release()

@@ -163,13 +163,14 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         message.textContent = text ?? ''
     }
 
+    let destroyed = false
     const createPlayer = (target: Timeline): ReviewPlayer => createReviewPlayer({
         video,
         timeline: target,
         readFragments,
-        onError: (error) => {
+        onError: (error, fragment) => {
             console.error('録画の再生に失敗しました:', error)
-            recover()
+            recover(fragment)
         },
     })
     let player = createPlayer(timeline)
@@ -195,12 +196,14 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         }
     }
 
-    const recover = () => {
-        if (recovering) return
+    // fragment: 読み込めなかった断片（わからなければ、再生位置の断片が壊れているとみなす）
+    const recover = (fragment?: { segmentId: string, startTime: number, start: number }) => {
+        if (recovering || destroyed) return
         // 何度も続く場合は、飛ばし続けずにお知らせする
         const now = Date.now()
         while (recoveredAt.length > 0 && now - recoveredAt[0] > 60 * 1000) recoveredAt.shift()
-        const broken = timeline.fragments[timeline.indexAt(player.position)]
+        const position = player.position
+        const broken = fragment ?? timeline.fragments[timeline.indexAt(position)]
         if (!broken || recoveredAt.length >= MAX_RECOVERIES_PER_MINUTE) {
             showMessage(messages.playError)
             return
@@ -216,7 +219,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         recovering = false
         if (timeline.isEmpty) return
         // 外した所は録っていない間と同じ扱いになり、次の再生できる所へ進む
-        player.seek(broken.start)
+        // （先の方の断片が壊れていた場合は、今の位置から続ける）
+        player.seek(Math.min(position, broken.start))
         if (wantsPlaying) playVideo()
         render()
     }
@@ -257,7 +261,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
 
     // 初めて録画が読めた時に見始める（初めは「動画のみ」、なければ録ってある種類）
     const startIfReady = () => {
-        if (started) return
+        if (started || destroyed) return
         const kinds = availableKinds()
         if (kinds.length === 0) return
         if (requested) {
@@ -270,6 +274,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
 
     const render = () => {
+        if (destroyed) return
         const empty = timeline.isEmpty
         for (const element of [seek, playButton, backButton, forwardButton]) element.disabled = empty
         if (!dragging) {
@@ -357,6 +362,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         const target = event.target as Node | null
         const onPage = target === doc || target === doc.body || target === doc.documentElement
         if (target && !onPage && !container.contains(target)) return
+        // ボタンの上のスペースは、そのボタンを押す
+        if (event.key === ' ' && (target as Element | null)?.closest?.('button')) return
         const actions: Record<string, () => void> = {
             ' ': togglePlay, k: togglePlay,
             ArrowLeft: () => skip(-SKIP_SECONDS), j: () => skip(-SKIP_SECONDS),
@@ -377,6 +384,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     // ---- 録画の読み込み ----
 
     const applyFeed = (event: LiveFeedEvent) => {
+        if (destroyed) return
         switch (event.type) {
             case 'init': {
                 const { segment } = event
@@ -422,8 +430,11 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
 
     const sync = async () => {
+        if (destroyed) return
         try {
             const segments = await readTimeline()
+            // 読んでいる間に閉じられた
+            if (destroyed) return
             const byKind = new Map<RecordingKind, TimelineSegment[]>(KIND_ORDER.map(kind => [kind, []]))
             for (const segment of segments) byKind.get(segment.kind)?.push(segment)
             for (const [kind, list] of byKind) {
@@ -435,6 +446,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             startIfReady()
             player.update()
         } catch (error) {
+            if (destroyed) return
             console.error('録画を読み込めませんでした:', error)
             applyQueued() // 録画中に届く分だけでも見られるように
             if (availableKinds().length === 0) {
@@ -452,6 +464,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     return {
         // 種類と録った時刻を指定して見る（library。読み込む前なら、読み込んでから）
         show(kind?: RecordingKind, wallClock?: number, play = true) {
+            if (destroyed) return
             if (!started) {
                 requested = { kind, wallClock, play }
                 startIfReady()
@@ -465,6 +478,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         refresh: sync,
 
         destroy() {
+            destroyed = true
             unsubscribe?.()
             clearInterval(syncTimer)
             clearInterval(renderTimer)

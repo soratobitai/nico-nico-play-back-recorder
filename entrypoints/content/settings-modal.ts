@@ -57,6 +57,7 @@ class SettingsModal {
 
   constructor() {
     this.loadSettings()
+    this.watchSettings()
     // 使用量は全録画を読んで数えるので、ここでは取らずに設定画面を開いた時に取る
     this.loadStorageQuota()
   }
@@ -69,12 +70,56 @@ class SettingsModal {
       RESOLUTION_MODE.getValue(),
       FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
-    this.settings = {
-      MAX_STORAGE_SIZE: size,
-      AUTO_START: autoStart,
-      AUTO_RELOAD_ON_FAILURE: autoReload,
-      RESOLUTION_MODE: resolutionMode,
-      FIXED_RESOLUTION_HEIGHT: fixedResolutionHeight,
+    this.applySetting('MAX_STORAGE_SIZE', size)
+    this.applySetting('AUTO_START', autoStart)
+    this.applySetting('AUTO_RELOAD_ON_FAILURE', autoReload)
+    this.applySetting('RESOLUTION_MODE', resolutionMode)
+    this.applySetting('FIXED_RESOLUTION_HEIGHT', fixedResolutionHeight)
+  }
+
+  // 他のタブなどで設定が変わったら合わせる（古い値のまま容量の上限を書き戻すと、録画が大量に消えてしまう）
+  private watchSettings() {
+    MAX_STORAGE_SIZE.watch(value => this.applySetting('MAX_STORAGE_SIZE', value))
+    AUTO_START.watch(value => this.applySetting('AUTO_START', value))
+    AUTO_RELOAD_ON_FAILURE.watch(value => this.applySetting('AUTO_RELOAD_ON_FAILURE', value))
+    RESOLUTION_MODE.watch(value => this.applySetting('RESOLUTION_MODE', value))
+    FIXED_RESOLUTION_HEIGHT.watch(value => this.applySetting('FIXED_RESOLUTION_HEIGHT', value))
+  }
+
+  // 保存されている設定の値を、覚えている値と（開いていれば）設定画面に反映する
+  private applySetting<K extends keyof Settings>(key: K, value: Settings[K]) {
+    this.settings[key] = value
+    const modal = this.modal
+    if (!modal) return
+    const input = (id: string) => modal.querySelector<HTMLInputElement>(`#${id}`)
+    switch (key) {
+      case 'MAX_STORAGE_SIZE': {
+        const range = input('storageRange')
+        if (range) range.value = String(value)
+        this.updateStorageLabel(value as number)
+        break
+      }
+      case 'AUTO_START': {
+        const checkbox = input('autostartCheckbox')
+        if (checkbox) checkbox.checked = value as boolean
+        break
+      }
+      case 'AUTO_RELOAD_ON_FAILURE': {
+        const checkbox = input('autoReloadCheckbox')
+        if (checkbox) checkbox.checked = value as boolean
+        break
+      }
+      case 'RESOLUTION_MODE': {
+        for (const radio of modal.querySelectorAll<HTMLInputElement>('input[name="resolutionMode"]')) radio.checked = radio.value === value
+        const select = modal.querySelector<HTMLSelectElement>('#fixedResolutionSelect')
+        if (select) select.disabled = value !== 'fixed'
+        break
+      }
+      case 'FIXED_RESOLUTION_HEIGHT': {
+        const select = modal.querySelector<HTMLSelectElement>('#fixedResolutionSelect')
+        if (select) select.value = String(value)
+        break
+      }
     }
   }
 

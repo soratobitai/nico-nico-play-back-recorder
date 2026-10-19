@@ -49,21 +49,19 @@ describe('createVideoCapture', () => {
         expect(a.stream.getTracks()[0]).not.toBe(captured[0].getTracks()[0])
     })
 
-    it('使う種類がなくなったら取り込みを止め、また使う時に取り込み直す', () => {
+    it('使い終わった種類の複製は止めるが、取り込みは止めずに使い続ける（止めてすぐ取り込み直すと、録画がデータを出さないことがある）', () => {
         const capture = createVideoCapture(video)
         const a = capture.acquire()
         const b = capture.acquire()
 
         a.release()
-        expect(allEnded(a.stream as unknown as FakeStream)).toBe(true)
-        expect(allEnded(captured[0])).toBe(false) // まだ b が使っている
-
         b.release()
-        b.release() // 2回呼んでも数え間違えない
-        expect(allEnded(captured[0])).toBe(true)
+        expect(allEnded(a.stream as unknown as FakeStream)).toBe(true)
+        expect(allEnded(b.stream as unknown as FakeStream)).toBe(true)
+        expect(allEnded(captured[0])).toBe(false)
 
         capture.acquire()
-        expect(captureStream).toHaveBeenCalledTimes(2)
+        expect(captureStream).toHaveBeenCalledTimes(1)
     })
 
     it('取り込みが終わっていたら（プレイヤーが作り直された など）、取り込み直す', () => {
@@ -75,6 +73,24 @@ describe('createVideoCapture', () => {
 
         expect(captureStream).toHaveBeenCalledTimes(2)
     })
+
+    it('動画が読み込み直されて前のトラックが残っていても、取り込み直さずに、最後に加わったトラックを使う', () => {
+        const capture = createVideoCapture(video)
+        capture.acquire()
+        // 読み込み直すと、コマの届かない前のトラックも live のまま残り、新しいトラックが加わる
+        const newVideo = new FakeTrack('video')
+        const newAudio = new FakeTrack('audio')
+        captured[0].getTracks().push(newVideo, newAudio)
+        newVideo.clone = () => Object.assign(new FakeTrack('video'), { from: 'new' })
+        newAudio.clone = () => Object.assign(new FakeTrack('audio'), { from: 'new' })
+
+        const { stream } = capture.acquire()
+
+        // 取り込み直してから前の取り込みを止めると、新しい取り込みの音声まで止まるので、取り込み直さない
+        expect(captureStream).toHaveBeenCalledTimes(1)
+        expect(stream.getTracks()).toHaveLength(2)
+        expect(stream.getTracks().every(track => (track as unknown as { from?: string }).from === 'new')).toBe(true)
+    })
 })
 
 describe('種類ごとの映像', () => {
@@ -85,13 +101,12 @@ describe('種類ごとの映像', () => {
 
         expect(source.fixedSize).toBe(false)
         source.stop()
-        expect(allEnded(captured[0])).toBe(true)
+        expect(allEnded(source.stream as unknown as FakeStream)).toBe(true) // 複製は止める（取り込みは使い続ける）
     })
 
-    it('コメント付き: 合成できない環境では null にして、取り込みを残さない', () => {
+    it('コメント付き: 合成できない環境では null にする', () => {
         const capture = createVideoCapture(video)
 
         expect(createCommentSource(capture, video, null)).toBeNull()
-        expect(allEnded(captured[0])).toBe(true)
     })
 })

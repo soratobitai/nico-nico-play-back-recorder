@@ -13,6 +13,7 @@ type BridgeRequest =
     | { type: 'freeSpace', bytes: number }
     | { type: 'closeStaleSegments', idleMs: number }
     | { type: 'clearAll' }
+    | { type: 'deleteSegments', segmentIds: string[] }
     | { type: 'estimateStorage' }
 
 type DeletedSpace = { freed: number, deletedSegmentIds: string[] }
@@ -29,6 +30,7 @@ type BridgeResults = {
     freeSpace: DeletedSpace
     closeStaleSegments: string[]
     clearAll: void
+    deleteSegments: void
     estimateStorage: { usage?: number, quota?: number }
 }
 

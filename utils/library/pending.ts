@@ -45,28 +45,37 @@ const savePendingRequest = (request: BridgeRequest) => run('readwrite', store =>
 // 一時保存した書き込みを、届いた順に send で送る。送れたものから消す
 // 送り先とやり取りできない（isUnavailable が true の）エラーになったら、残りは次の機会に回す。
 // それ以外のエラー（区間が消されていた など）は、送っても意味がないので捨てる
+// 送った数と、一時保存した書き込みが残っていないか（送っている間に増えた分も送る）を返す
 const flushPendingRequests = async (
     send: (request: BridgeRequest) => Promise<unknown>,
     isUnavailable: (error: unknown) => boolean,
-): Promise<number> => {
-    if (!(await hasPendingDB())) return 0
+): Promise<{ sent: number, complete: boolean }> => {
+    if (!(await hasPendingDB())) return { sent: 0, complete: true }
 
-    const keys = await run('readonly', store => store.getAllKeys())
     let sent = 0
-    for (const key of keys) {
-        const request = await run<BridgeRequest | undefined>('readonly', store => store.get(key))
-        if (request) {
-            try {
-                await send(request)
-                sent++
-            } catch (error) {
-                if (isUnavailable(error)) break
-                console.log('一時保存した書き込みを移せなかったため捨てます:', request.type, error)
+    for (;;) {
+        const keys = await run('readonly', store => store.getAllKeys())
+        if (keys.length === 0) return { sent, complete: true }
+        for (const key of keys) {
+            const request = await run<BridgeRequest | undefined>('readonly', store => store.get(key))
+            if (request) {
+                try {
+                    await send(request)
+                    sent++
+                } catch (error) {
+                    if (isUnavailable(error)) return { sent, complete: false }
+                    console.log('一時保存した書き込みを移せなかったため捨てます:', request.type, error)
+                }
             }
+            await run('readwrite', store => store.delete(key))
         }
-        await run('readwrite', store => store.delete(key))
     }
-    return sent
 }
 
-export { savePendingRequest, flushPendingRequests }
+// 一時保存した書き込みをすべて消す（すべての録画を削除した時）
+const clearPendingRequests = async () => {
+    if (!(await hasPendingDB())) return
+    await run('readwrite', store => store.clear())
+}
+
+export { savePendingRequest, flushPendingRequests, clearPendingRequests }

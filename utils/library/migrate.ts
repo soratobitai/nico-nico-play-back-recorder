@@ -20,7 +20,8 @@ const FRAGMENTS_PER_REQUEST = 30
 const ACTIVE_TEMPS_THRESHOLD_MS = 60 * 1000
 
 // 1本の録画を区間として移す。MP4 として読めなければ、そのまま1つの断片として移す
-const importRecording = async (call: Call, recording: LegacyRecording) => {
+// segmentId は以前の録画から決める（途中で中断して移し直す時に、途中まで移した区間を置き換えて、2本にしない）
+const importRecording = async (call: Call, segmentId: string, recording: LegacyRecording) => {
     const mimeType = recording.blob.type || 'video/mp4'
     const parsed = isMp4MimeType(mimeType) ? await splitFmp4Blob(recording.blob).catch(() => null) : null
     const fragments = parsed?.fragments ?? []
@@ -29,8 +30,8 @@ const importRecording = async (call: Call, recording: LegacyRecording) => {
     const duration = fragments.length ? Math.max(...fragments.map(f => f.startTime + f.duration)) - firstStart : 0
     const startedAt = recording.startedAt ?? (recording.endedAt ?? Date.now()) - duration * 1000
     const endedAt = recording.endedAt ?? startedAt + duration * 1000
-    const segmentId = crypto.randomUUID()
 
+    await call({ type: 'deleteSegments', segmentIds: [segmentId] })
     await call({
         type: 'createSegment',
         segment: {
@@ -76,7 +77,7 @@ const migrate = async (call: Call) => {
             activeTempsLeft = true
             continue
         }
-        await importRecording(call, {
+        await importRecording(call, `legacy-temps-${group[0].sessionId}`, {
             blob: new Blob(group.map(t => t.blob), { type: group[0].blob.type || 'video/mp4' }),
             title: group[0].title ?? '', userName: group[0].userName ?? '', thumbnail: null,
             startedAt: group[0].createdAt, endedAt: last.createdAt,
@@ -86,7 +87,7 @@ const migrate = async (call: Call) => {
     }
 
     for (const chunk of await getAllChunks('Chunks')) {
-        await importRecording(call, {
+        await importRecording(call, `legacy-${chunk.sessionId}-${chunk.chunkIndex}`, {
             blob: chunk.blob, title: chunk.title ?? '', userName: chunk.userName ?? '',
             thumbnail: chunk.imgUrl, endedAt: chunk.createdAt,
         })

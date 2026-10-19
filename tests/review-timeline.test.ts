@@ -140,4 +140,15 @@ describe('planBuffer（読み込む断片を決める）', () => {
         // 直前の断片を読み込み済みなら、続けて読めるのでさかのぼらない
         expect(planBuffer(noKey, 7, new Set(['A:1']), window).append.map(f => f.index)).toEqual([2, 3])
     })
+
+    it('再生位置が録っていない長い間にあれば、次に録った所から ahead 秒先まで読み、それを捨てない', () => {
+        const holed = new Timeline()
+        holed.sync([segment('A', 100_000, fragments(10))])
+        for (let index = 2; index <= 7; index++) holed.removeFragment('A', index) // 6〜24秒が空く（区間を消した・壊れていた など）
+
+        const plan = planBuffer(holed, 7, new Set(), window)
+
+        expect(plan.append.map(f => f.index)).toEqual([8, 9]) // 24 秒から 34 秒まで
+        expect(plan.removeFrom).toBeNull()
+    })
 })

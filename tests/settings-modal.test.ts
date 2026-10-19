@@ -67,6 +67,21 @@ describe('設定画面', () => {
         expect(await MAX_STORAGE_SIZE.getValue()).toBe(5 * GB)
     })
 
+    it('他のタブで設定が変わったら、開いている設定画面と覚えている値を合わせる（古い上限を書き戻さない）', async () => {
+        modal.show()
+        await flush()
+
+        await MAX_STORAGE_SIZE.setValue(50 * GB) // 他のタブで上限を上げた
+        await flush()
+        expect(slider('storageRange').value).toBe(String(50 * GB))
+        expect(document.getElementById('storageGB')?.textContent).toBe('50')
+
+        // ホイールで1つ下げると、50 GB から下げる（このタブを開いた時の 1 GB からではない）
+        slider('storageRange').dispatchEvent(new WheelEvent('wheel', { deltaY: 1, cancelable: true }))
+        await flush()
+        expect(await MAX_STORAGE_SIZE.getValue()).toBe(49 * GB)
+    })
+
     it('録画を区切る間隔は設定にない（内部で区切る）', () => {
         modal.show()
 

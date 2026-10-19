@@ -186,12 +186,32 @@ describe('削除と容量', () => {
         expect((await listAllSegments()).find(s => s.segmentId === 'A')?.fragmentCount).toBe(1)
     })
 
+    it('複数のタブが同時に上限を守らせても、超えた分より多くは消さない', async () => {
+        await Promise.all([enforceLimit(500), enforceLimit(500)])
+
+        expect((await getUsage()).bytes).toBe(500)
+    })
+
     it('区間を指定して消すと、断片も消える', async () => {
         await deleteSegments(['A', 'C'])
 
         expect((await listAllSegments()).map(s => s.segmentId)).toEqual(['B'])
         expect((await getUsage()).bytes).toBe(200)
         expect(await buildDownloadFiles(['A'])).toEqual([])
+    })
+
+    it('すべての録画を削除する時、録画中の区間は（続きを書き込めるように）中身だけ消して残す', async () => {
+        await setSegmentInit('C', new Blob([new Uint8Array(30)]))
+
+        await clearAll({ keepRecording: true })
+
+        const remaining = await listAllSegments()
+        expect(remaining.map(s => s.segmentId)).toEqual(['C'])
+        expect(remaining[0]).toMatchObject({ fragmentCount: 0, bytes: 30, endedAt: null })
+        expect(await getFragmentBlobs('C', [0, 1])).toEqual([null, null])
+        // 続きの断片はそのまま書き込める
+        await appendFragments('C', [fragment(2, 10_000)])
+        expect((await listAllSegments())[0]).toMatchObject({ fragmentCount: 1, bytes: 130 })
     })
 })
 

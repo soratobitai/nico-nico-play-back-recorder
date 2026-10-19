@@ -84,11 +84,19 @@ const kindDots = (kinds: RecordingKind[]) => {
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
-const showToast = (text: string, ms = 4000) => {
+// ms が null なら、次のお知らせまで出しておく
+const showToast = (text: string, ms: number | null = 4000) => {
     toast.textContent = text
     toast.hidden = false
     clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => { toast.hidden = true }, ms)
+    if (ms !== null) toastTimer = setTimeout(() => { toast.hidden = true }, ms)
+}
+
+// 一覧などを作り直しても、操作していたボタンにフォーカスを戻す（読み直すたびにフォーカスが外れないように）
+const keepFocus = (render: () => void) => {
+    const key = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.focusKey : undefined
+    render()
+    if (key) document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`)?.focus()
 }
 
 // ---- 読み込み ----
@@ -97,6 +105,8 @@ const selectedProgram = () => programs.find(program => program.key === selectedK
 
 const load = async () => {
     try {
+        // 録画していたタブが閉じられるなどして、録画中のまま残った区間を確定する
+        await db.closeStaleSegments(db.STALE_SEGMENT_IDLE_MS).catch((error) => console.warn('残っていた録画を確定できませんでした:', error))
         programs = summarizePrograms(await db.listAllSegments())
     } catch (error) {
         console.error('録画を読み込めませんでした:', error)
@@ -104,8 +114,10 @@ const load = async () => {
         return
     }
     await renderUsage()
-    renderList()
-    renderProgram()
+    keepFocus(() => {
+        renderList()
+        renderProgram()
+    })
 }
 
 // ---- 使用量 ----
@@ -147,6 +159,7 @@ const renderList = () => {
         for (const program of group.programs) {
             const item = element('button', 'program-item')
             item.type = 'button'
+            item.dataset.focusKey = `program:${program.key}`
             item.setAttribute('aria-current', String(program.key === selectedKey))
             item.append(element('span', 'name', programName(program)))
             const detail = element('span', 'detail')
@@ -164,8 +177,10 @@ const renderList = () => {
 const select = (key: string) => {
     selectedKey = key
     history.replaceState(null, '', `#${encodeURIComponent(key)}`)
-    renderList()
-    renderProgram()
+    keepFocus(() => {
+        renderList()
+        renderProgram()
+    })
 }
 
 // ---- 選んだ番組 ----
@@ -253,6 +268,7 @@ const renderLanes = (program: ProgramSummary) => {
         const track = element('button', 'lane-track')
         track.type = 'button'
         track.dataset.kind = kind
+        track.dataset.focusKey = `lane:${kind}`
         track.setAttribute('aria-label', `${KIND_LABELS[kind]}の録画。クリックした時刻から再生します`)
         for (const segment of program.segments.filter(s => s.kind === kind)) {
             const block = element('span', `block kind-${kind}`)
@@ -288,8 +304,11 @@ const updatePlayhead = (program: ProgramSummary) => {
 const kindSuffix = (kind: RecordingKind) => kind === 'video' ? '' : `_${KIND_LABELS[kind]}`
 
 // 区間をつないで保存する（設定が変わった所では、ファイルを分ける）
+let downloading = false // 保存するファイルを作っている間は、続けて押されても作らない
 const downloadSegments = async (program: ProgramSummary, segmentIds: string[]) => {
-    showToast('保存するファイルを作っています…', 60 * 1000)
+    showToast('保存するファイルを作っています…', null)
+    if (downloading) return
+    downloading = true
     try {
         const files = await db.buildDownloadFiles(segmentIds)
         if (files.length === 0) {
@@ -307,7 +326,23 @@ const downloadSegments = async (program: ProgramSummary, segmentIds: string[]) =
     } catch (error) {
         console.error('保存できませんでした:', error)
         showToast('保存できませんでした。')
+    } finally {
+        downloading = false
     }
+}
+
+// 区間を削除して、一覧を読み直す
+const deleteAndReload = async (segmentIds: string[]) => {
+    try {
+        await db.deleteSegments(segmentIds)
+    } catch (error) {
+        console.error('削除できませんでした:', error)
+        showToast('削除できませんでした。')
+        return
+    }
+    showToast('削除しました。')
+    await load()
+    await view?.refresh()
 }
 
 const renderSegments = (program: ProgramSummary) => {
@@ -334,23 +369,23 @@ const renderSegments = (program: ProgramSummary) => {
         if (segment.format === 'fmp4') {
             const play = element('button', 'button', '再生')
             play.type = 'button'
+            play.dataset.focusKey = `play:${segment.segmentId}`
             play.addEventListener('click', () => view?.show(kind, segment.startedAt, true))
             actions.append(play)
         }
         const save = element('button', 'button', '保存')
         save.type = 'button'
+        save.dataset.focusKey = `save:${segment.segmentId}`
         save.addEventListener('click', () => downloadSegments(program, [segment.segmentId]))
         const remove = element('button', 'button danger', '削除')
         remove.type = 'button'
+        remove.dataset.focusKey = `delete:${segment.segmentId}`
         // 録画中の区間は、書き込み中なので消さない
         remove.disabled = recording
         remove.title = recording ? '録画中の区間は削除できません' : ''
         remove.addEventListener('click', async () => {
             if (!confirm(`${formatTime(segment.startedAt, true)}からの区間（${formatBytes(segment.bytes)}）を削除しますか？`)) return
-            await db.deleteSegments([segment.segmentId])
-            showToast('削除しました。')
-            await load()
-            await view?.refresh()
+            await deleteAndReload([segment.segmentId])
         })
         actions.append(save, remove)
         item.append(img, info, actions)
@@ -382,10 +417,7 @@ deleteProgramButton.addEventListener('click', async () => {
     const bytes = deletable.reduce((sum, s) => sum + s.bytes, 0)
     const note = deletable.length < program.segments.length ? '\n（録画中の区間は残します）' : ''
     if (!confirm(`「${programName(program)}」の録画（${deletable.length}件・${formatBytes(bytes)}）を削除しますか？${note}`)) return
-    await db.deleteSegments(deletable.map(s => s.segmentId))
-    showToast('削除しました。')
-    await load()
-    await view?.refresh()
+    await deleteAndReload(deletable.map(s => s.segmentId))
 })
 
 searchInput.addEventListener('input', () => {

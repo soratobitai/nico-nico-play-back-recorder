@@ -7,12 +7,14 @@ import type { Timeline } from '@/utils/review/timeline'
 import type { TimelineFragment, TimelineSegment } from '@/utils/library/db'
 
 // MediaSource を使う再生の代わり（作られた時の時間軸と、移った位置を覚える）
-type FakePlayer = { timeline: Timeline, position: number, seek: ReturnType<typeof vi.fn>, destroy: ReturnType<typeof vi.fn> }
+type OnError = (error: unknown, fragment: Timeline['fragments'][number]) => void
+type FakePlayer = { timeline: Timeline, onError: OnError, position: number, seek: ReturnType<typeof vi.fn>, destroy: ReturnType<typeof vi.fn> }
 const players: FakePlayer[] = []
 vi.mock('@/utils/review/player', () => ({
-    createReviewPlayer: vi.fn(({ timeline }: { timeline: Timeline }) => {
+    createReviewPlayer: vi.fn(({ timeline, onError }: { timeline: Timeline, onError: OnError }) => {
         const player: FakePlayer & { update: () => void, cacheFragment: () => void } = {
             timeline,
+            onError,
             position: 0,
             seek: vi.fn((t: number) => { player.position = t }),
             destroy: vi.fn(),
@@ -69,6 +71,21 @@ describe('再生できない所を飛ばす', () => {
         view.destroy()
     })
 
+    it('先の方の断片を読み込めなかった時は、その区間の残りを外して、今の位置から続ける', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const first = current()
+        first.position = 4 // A を再生中に、先の B の断片を読み込めなかった
+        const broken = first.timeline.fragments.find(f => f.segmentId === 'B' && f.index === 1)!
+
+        first.onError(new Error('append'), broken)
+
+        expect(keys(current().timeline)).toEqual(['A0', 'A1', 'A2', 'B0'])
+        expect(current().seek).toHaveBeenLastCalledWith(4)
+        view.destroy()
+    })
+
     it('何度も続く場合は飛ばし続けず、再生できなかったことを知らせる', async () => {
         const root = document.getElementById('root')!
         const view = mountReviewView({
@@ -88,6 +105,51 @@ describe('再生できない所を飛ばす', () => {
         decodeError(root)
         expect(createReviewPlayer).toHaveBeenCalledTimes(6)
         expect(root.querySelector('.message')!.textContent).toContain('再生できませんでした')
+        view.destroy()
+    })
+})
+
+describe('閉じた後', () => {
+    it('録画を読み終える前に閉じられたら、読み終えても再生を始めず、変化も知らせない', async () => {
+        const root = document.getElementById('root')!
+        let resolve: (segments: TimelineSegment[]) => void = () => {}
+        const onChange = vi.fn()
+        // コメント付きだけの番組（見る種類が変わるので、新しく再生を作る）
+        const view = mountReviewView({
+            root, mode: 'library', readFragments: async () => [], onChange,
+            readTimeline: () => new Promise(r => { resolve = r }),
+        })
+        view.show('comments', 100_000, true)
+        const created = vi.mocked(createReviewPlayer).mock.calls.length
+
+        view.destroy()
+        onChange.mockClear()
+        resolve(recordings().map(s => ({ ...s, kind: 'comments' as const })))
+        await flush()
+
+        expect(createReviewPlayer).toHaveBeenCalledTimes(created)
+        expect(onChange).not.toHaveBeenCalled()
+    })
+})
+
+describe('キー操作', () => {
+    it('ボタンの上のスペースはそのボタンを押す（再生・一時停止にしない）', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const video = root.querySelector('video')!
+        const play = vi.spyOn(video, 'play').mockResolvedValue()
+        const mute = root.querySelector<HTMLButtonElement>('.mute')!
+
+        const event = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true })
+        mute.dispatchEvent(event)
+
+        expect(play).not.toHaveBeenCalled()
+        expect(event.defaultPrevented).toBe(false)
+
+        // ページ（body）の上なら、再生する
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }))
+        expect(play).toHaveBeenCalled()
         view.destroy()
     })
 })

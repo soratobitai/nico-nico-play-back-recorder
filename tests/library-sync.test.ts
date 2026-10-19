@@ -34,9 +34,9 @@ describe('一時保存した書き込み', () => {
         await savePendingRequest(finish('B'))
         const sent: BridgeRequest[] = []
 
-        expect(await flushPendingRequests(async request => { sent.push(request) }, isUnavailable)).toBe(2)
+        expect(await flushPendingRequests(async request => { sent.push(request) }, isUnavailable)).toEqual({ sent: 2, complete: true })
         expect(sent).toEqual([finish('A'), finish('B')])
-        expect(await flushPendingRequests(async request => { sent.push(request) }, isUnavailable)).toBe(0)
+        expect(await flushPendingRequests(async request => { sent.push(request) }, isUnavailable)).toEqual({ sent: 0, complete: true })
     })
 
     it('送り先とやり取りできなくなったら、残りは消さずに次の機会に送る', async () => {
@@ -50,8 +50,8 @@ describe('一時保存した書き込み', () => {
             sent.push(segmentId)
         }
 
-        expect(await flushPendingRequests(send('B'), isUnavailable)).toBe(1)
-        expect(await flushPendingRequests(send(''), isUnavailable)).toBe(2)
+        expect(await flushPendingRequests(send('B'), isUnavailable)).toEqual({ sent: 1, complete: false })
+        expect(await flushPendingRequests(send(''), isUnavailable)).toEqual({ sent: 2, complete: true })
         expect(sent).toEqual(['A', 'B', 'C'])
     })
 
@@ -67,11 +67,11 @@ describe('一時保存した書き込み', () => {
         }, isUnavailable)
 
         expect(sent).toEqual(['B'])
-        expect(await flushPendingRequests(async () => {}, isUnavailable)).toBe(0)
+        expect(await flushPendingRequests(async () => {}, isUnavailable)).toEqual({ sent: 0, complete: true })
     })
 
     it('一時保存したことがなければ、DB を作らない', async () => {
-        expect(await flushPendingRequests(async () => {}, isUnavailable)).toBe(0)
+        expect(await flushPendingRequests(async () => {}, isUnavailable)).toEqual({ sent: 0, complete: true })
         expect(await databaseExists('PlaybackPending')).toBe(false)
     })
 })
@@ -110,6 +110,22 @@ describe('以前のバージョンの録画を移す', () => {
         expect(fromChunks.endedAt).toBe(5000)
         expect(fromChunks.thumbnail).toBe('data:image/jpeg;base64,THUMB')
         expect(await hasLegacyDatabase()).toBe(false)
+    })
+
+    it('途中で中断して移し直しても、同じ録画を2本にしない（途中まで移した区間を置き換える）', async () => {
+        await saveChunk('Chunks', 'S1', 0, fixtureBlob, null, 5000, 'user', 'title')
+        // 1回目は断片を送った後、確定する前に中断した（以前の保存先には残っている）
+        const interrupted: typeof call = async (request) => {
+            if (request.type === 'finishSegment') throw new Error('タブが閉じられた')
+            return call(request)
+        }
+        await expect(migrateLegacyRecordings(interrupted)).rejects.toThrow()
+
+        expect(await migrateLegacyRecordings(call)).toBe(1)
+
+        const segments = await listAllSegments()
+        expect(segments).toHaveLength(1)
+        expect(segments[0].fragmentCount).toBe((await splitFmp4Blob(fixtureBlob)).fragments.length)
     })
 
     it('MP4 として読めない録画（webm）は、そのまま1つの断片として移す', async () => {

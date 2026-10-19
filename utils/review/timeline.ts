@@ -211,10 +211,23 @@ type BufferPlan = {
 
 type BufferWindow = { ahead: number, keepBehind: number, keepAhead: number }
 
+// flat[at] から、t より後に録った分を seconds 秒数えた所の、時間軸の上の位置（録っていない間は数えない）
+const recordedAhead = (flat: readonly PlacedFragment[], at: number, t: number, seconds: number) => {
+    let left = seconds
+    for (let i = at; i < flat.length; i++) {
+        const from = Math.max(t, flat[i].start)
+        const length = flat[i].end - from
+        if (length >= left) return from + left
+        left -= Math.max(0, length)
+    }
+    return Infinity
+}
+
 // 再生位置 t のまわりで、読み込む断片と捨てる範囲を決める
 // - t から ahead 秒先までの断片を読み込む（読み込み済みのものは除く）
 // - キーフレームから始まらない断片を飛び飛びに読み込む時は、キーフレームの断片までさかのぼって読み込む
 // - t より keepBehind 秒以上前と、keepAhead 秒以上先は捨てる
+// 先は録った分で数える（録っていない長い間があっても、その先を読み込んで、間を飛ばして再生を続けられるように）
 const planBuffer = (timeline: Timeline, t: number, appended: ReadonlySet<string>, window: BufferWindow): BufferPlan => {
     const flat = timeline.fragments
     const at = timeline.indexAt(t)
@@ -223,7 +236,8 @@ const planBuffer = (timeline: Timeline, t: number, appended: ReadonlySet<string>
     const isPrevious = (a: PlacedFragment, b: PlacedFragment) => a.segmentId === b.segmentId && a.index === b.index - 1
     const chosen = new Set<string>()
     const append: PlacedFragment[] = []
-    for (let i = at; i < flat.length && flat[i].start < t + window.ahead; i++) {
+    const aheadEnd = recordedAhead(flat, at, t, window.ahead)
+    for (let i = at; i < flat.length && flat[i].start < aheadEnd; i++) {
         const fragment = flat[i]
         if (appended.has(fragmentKey(fragment)) || chosen.has(fragmentKey(fragment))) continue
         // 直前の断片から続けて読み込まないなら、キーフレームまでさかのぼる
@@ -242,7 +256,8 @@ const planBuffer = (timeline: Timeline, t: number, appended: ReadonlySet<string>
 
     const behind = timeline.indexAt(t - window.keepBehind)
     const removeBefore = behind > 0 && flat[behind].start < t ? flat[behind].start : null
-    const aheadIndex = flat.findIndex(f => f.start >= t + window.keepAhead)
+    const keepUntil = recordedAhead(flat, at, t, window.keepAhead)
+    const aheadIndex = flat.findIndex(f => f.start >= keepUntil)
     const removeFrom = aheadIndex >= 0 ? flat[aheadIndex].start : null
     return { append, removeBefore, removeFrom }
 }
