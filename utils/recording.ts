@@ -54,21 +54,6 @@ let recordingTimeout: any // ondataavailable の発火を監視する関数
 let startTime: number | null = null
 let recordTimer: ReturnType<typeof setInterval> | null = null
 
-let resetRecordIntervalId = null as ReturnType<typeof setInterval> | null
-
-// 指定間隔で録画をリセット
-const startResetRecordInterval = (
-    resetRecording: () => void = () => {},
-    RESTART_MEDIARECORDER_INTERVAL_MS: number
-) => {
-    if (resetRecordIntervalId !== null) {
-        clearInterval(resetRecordIntervalId)
-    }
-    resetRecordIntervalId = setInterval(() => {
-        resetRecording()
-    }, RESTART_MEDIARECORDER_INTERVAL_MS)
-}
-
 const startTimer = () => {
     // 前のタイマーを止めてから開始する（二重に動かないようにする）
     stopTimer()
@@ -93,18 +78,6 @@ const stopTimer = () => {
 
     const recordTimeElem = document.getElementById('recordTime')
     if (recordTimeElem) recordTimeElem.textContent = '00:00'
-}
-
-const startRecordingActions = async (
-    resetRecording: () => void,
-    mediaRecorder: MediaRecorder,
-    RESTART_MEDIARECORDER_INTERVAL_MS: number,
-    SAVE_CHUNK_INTERVAL_MS: number,
-    autoReloadOnFailure: boolean = false,
-) => {
-    startResetRecordInterval(resetRecording, RESTART_MEDIARECORDER_INTERVAL_MS)
-    resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
-    console.log("録画を開始しました。")
 }
 
 // 録画形式の候補（上から順に、対応している最初の形式を使う）
@@ -204,6 +177,8 @@ const resetTimeoutCheck = (
     SAVE_CHUNK_INTERVAL_MS: number,
     autoReloadOnFailure: boolean = false,
     failureCount: number = 0, // ライブ状態の確認に続けて失敗した回数（失敗が続くほど間隔を伸ばす）
+    // ライブが終わっていた時（複数の種類を録画している場合は、すべて止める）
+    onLiveEnded: () => void = () => mediaRecorder.stop(),
 ) => {
     clearTimeout(recordingTimeout)
     const delay = Math.min(SAVE_CHUNK_INTERVAL_MS * 3 * 2 ** failureCount, MAX_LIVE_STATUS_RETRY_INTERVAL_MS)
@@ -219,7 +194,7 @@ const resetTimeoutCheck = (
         if (liveStatus === 'ERROR') {
             // 取得失敗（ネットワーク断など）は放送終了と区別できないので、録画は止めずに再確認する
             console.log('ライブ状態を取得できなかったため再確認します')
-            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, failureCount + 1)
+            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, failureCount + 1, onLiveEnded)
         } else if (liveStatus === 'ON_AIR') {
             if (mediaRecorder.state === 'recording') {
                 // ライブが続いていて、かつ録画中の場合のみリロードボタンを押す
@@ -237,8 +212,8 @@ const resetTimeoutCheck = (
                 }
             }
         } else {
-            // 録画を停止（状態の更新は recorder の onstop で行う）
-            mediaRecorder.stop()
+            // 録画を停止
+            onLiveEnded()
             console.log('ライブが終了したため録画を停止します')
 
             clearTimeout(recordingTimeout)
@@ -310,10 +285,8 @@ const fixAudioTrack = (video: HTMLVideoElement) => {
 }
 
 export {
-    startResetRecordInterval,
     startTimer,
     stopTimer,
-    startRecordingActions,
     getRecordingMimeType,
     isQuotaExceeded,
     retryOnQuotaExceeded,

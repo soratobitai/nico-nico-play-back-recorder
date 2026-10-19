@@ -148,6 +148,19 @@ class Timeline {
         return segment.startedAt + (clamped - segment.offset!) * 1000
     }
 
+    // 録った時刻（ミリ秒）に映っているものの、時間軸の上の時刻。録っていない時間なら次に録った時刻、
+    // 最後より後なら終わり。断片がなければ null（別の種類の録画に切り替えた時に、同じ場面から見るために使う）
+    timeAtWallClock(wallClock: number): number | null {
+        if (this.flat.length === 0) return null
+        for (const fragment of this.flat) {
+            const segment = this.segment(fragment.segmentId)!
+            const wallStart = segment.startedAt + fragment.startTime * 1000
+            const wallEnd = wallStart + fragment.duration * 1000
+            if (wallClock < wallEnd) return fragment.start + Math.max(0, wallClock - wallStart) / 1000
+        }
+        return this.end
+    }
+
     private appendFragments(segment: PlacedSegment, fragments: TimelineFragment[]) {
         if (fragments.length === 0) return
         const sorted = [...fragments].sort((a, b) => a.index - b.index)

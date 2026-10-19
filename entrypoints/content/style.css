@@ -36,6 +36,25 @@
     border-radius: 5px;
     display: inline-block;
 }
+.recordedMovie .kindBadge {
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    line-height: 14px;
+    font-weight: 700;
+    pointer-events: none;
+}
+.recordedMovie .kind-comments {
+    background: #1fa88d;
+    color: #0d1412;
+}
+.recordedMovie .kind-screen {
+    background: #f5b54a;
+    color: #1c1406;
+}
 .recordedMovie img {
     width: 100%;
     height: 100%;

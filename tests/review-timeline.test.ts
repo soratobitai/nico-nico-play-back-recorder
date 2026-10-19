@@ -88,6 +88,20 @@ describe('Timeline（見直し用の時間軸）', () => {
         expect(new Timeline().indexAt(0)).toBe(-1)
     })
 
+    it('録った時刻から、時間軸の上の時刻を求める（別の種類に切り替えて同じ場面を見るため）', () => {
+        const timeline = new Timeline()
+        timeline.sync([segment('A', 100_000, fragments(2)), segment('B', 3_700_000, fragments(2))]) // A: 0〜6、B: 6〜12（詰めて並べる）
+
+        expect(timeline.timeAtWallClock(101_500)).toBe(1.5)
+        expect(timeline.timeAtWallClock(3_703_000)).toBe(9)
+        expect(timeline.timeAtWallClock(50_000)).toBe(0) // 録る前 → 最初
+        expect(timeline.timeAtWallClock(200_000)).toBe(6) // 録っていない間 → 次に録った所
+        expect(timeline.timeAtWallClock(9_999_999)).toBe(12) // 最後より後 → 終わり
+        expect(new Timeline().timeAtWallClock(0)).toBeNull()
+        // 行って戻ると同じ時刻
+        expect(timeline.timeAtWallClock(timeline.wallClockAt(4.2)!)).toBeCloseTo(4.2, 6)
+    })
+
     it('消されていた断片を外せる', () => {
         const timeline = new Timeline()
         timeline.sync([segment('A', 100_000, fragments(3))])

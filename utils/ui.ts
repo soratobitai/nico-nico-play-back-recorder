@@ -1,5 +1,5 @@
 import { listSegments, countSegments, deleteSegments, getSegmentFile } from "./library/api"
-import type { SegmentSummary } from "./library/db"
+import type { RecordingKind, SegmentSummary } from "./library/db"
 import { downloadSegment, getScreenShotAndDownload, formatDate } from "../utils/feature"
 import { UI_COLLAPSED } from "../utils/storage"
 
@@ -11,6 +11,11 @@ let reloadButton = null as HTMLButtonElement | null
 let recordingCount = null as HTMLDivElement | null
 let screenCaptureButton = null as HTMLButtonElement | null
 let reviewButton = null as HTMLButtonElement | null
+
+// 録画の種類の名前（一覧の印や、録画中の種類の表示に使う）
+const KIND_LABELS: Record<RecordingKind, string> = { video: '動画のみ', comments: 'コメント付き', screen: '画面' }
+// 一覧のサムネイルに付ける短い印（動画のみには付けない）
+const KIND_BADGES: Partial<Record<RecordingKind, string>> = { comments: 'コメ', screen: '画面' }
 
 let userScrolledAway = false
 
@@ -174,8 +179,17 @@ const insertRecordedMovie = (
     const img = document.createElement("img")
     img.src = segment.thumbnail || chrome.runtime.getURL("assets/images/defaultScreenshot.webp")
     // title属性を設定（録画開始日時 ユーザー名 タイトルの形式）
-    img.title = [formatDate(segment.startedAt), segment.userName, segment.title].filter(Boolean).join(' ')
+    img.title = [formatDate(segment.startedAt), KIND_LABELS[segment.kind], segment.userName, segment.title].filter(Boolean).join(' ')
     recordedMovie.appendChild(img)
+
+    // 種類の印（コメント付き・画面）
+    const badge = KIND_BADGES[segment.kind]
+    if (badge) {
+        const kindBadge = document.createElement("span")
+        kindBadge.classList.add("kindBadge", `kind-${segment.kind}`)
+        kindBadge.textContent = badge
+        recordedMovie.appendChild(kindBadge)
+    }
 
     // ✕ボタン（削除）
     const closeButton = document.createElement("button")
@@ -445,6 +459,12 @@ const setRecordingStatus = (isStartBtn: boolean, isStopBtn: boolean, message: st
     if (recordStatus) recordStatus.textContent = message
 }
 
+// 録画中の種類を表示する（録画の状態にマウスを重ねると出る）
+const setRecordingKinds = (kinds: RecordingKind[]) => {
+    if (!recordStatus) return
+    recordStatus.title = kinds.length > 0 ? `録画中の種類: ${kinds.map(kind => KIND_LABELS[kind]).join('・')}` : ''
+}
+
 // 録画時間を取得する関数
 const getTimeString = (startTime: number) => {
     const now = Date.now()
@@ -662,6 +682,7 @@ export {
     setRecordingStatus,
     setScreenCaptureButton,
     setReviewButton,
+    setRecordingKinds,
     getTimeString,
     insertToggleButton,
     updateToggleButton,

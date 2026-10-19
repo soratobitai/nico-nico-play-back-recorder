@@ -150,6 +150,9 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
 
     const applyPendingSeek = () => {
         if (pendingSeek === null || video.readyState < HTMLMediaElement.HAVE_METADATA) return
+        // 動画の長さがその位置まで延びてから移る（延ばせない間は、次の機会にもう一度）
+        if (!(mediaSource.duration >= pendingSeek)) extendDuration()
+        if (!(mediaSource.duration >= pendingSeek)) return
         const target = pendingSeek
         pendingSeek = null
         video.currentTime = target
@@ -239,10 +242,19 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
 
     const onTimeUpdate = () => update()
     const onWaiting = () => { jumpGap(); update() }
+    // 動画の情報が読み込まれたら、指定されていた再生位置へ移る（読み込みが全部終わった後に情報が届く場合もある）
+    const onLoadedMetadata = () => {
+        extendDuration()
+        applyPendingSeek()
+    }
     video.addEventListener('timeupdate', onTimeUpdate)
     video.addEventListener('seeking', onTimeUpdate)
     video.addEventListener('waiting', onWaiting)
-    const gapTimer = setInterval(jumpGap, 500)
+    video.addEventListener('loadedmetadata', onLoadedMetadata)
+    const gapTimer = setInterval(() => {
+        applyPendingSeek()
+        jumpGap()
+    }, 500)
 
     return {
         // 再生位置（秒）
@@ -276,6 +288,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
             video.removeEventListener('timeupdate', onTimeUpdate)
             video.removeEventListener('seeking', onTimeUpdate)
             video.removeEventListener('waiting', onWaiting)
+            video.removeEventListener('loadedmetadata', onLoadedMetadata)
             video.pause()
             video.removeAttribute('src')
             video.load()

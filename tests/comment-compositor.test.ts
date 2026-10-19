@@ -24,8 +24,8 @@ describe('getOutputSize（コメントを合成した映像の大きさ）', () 
 })
 
 describe('createCommentCompositor', () => {
-    it('コメントを合成するための API がない環境では null を返す（呼び出し側でコメントなしの録画にする）', () => {
+    it('コメントを合成するための API がない環境では null を返す（呼び出し側でコメント付きの録画をしない）', () => {
         // Node には MediaStreamTrackProcessor / MediaStreamTrackGenerator がない
-        expect(createCommentCompositor({} as HTMLVideoElement)).toBeNull()
+        expect(createCommentCompositor({} as HTMLVideoElement, {} as MediaStream)).toBeNull()
     })
 })

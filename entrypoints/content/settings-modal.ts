@@ -1,9 +1,12 @@
 import {
-  RESTART_MEDIARECORDER_INTERVAL_MS,
   MAX_STORAGE_SIZE,
   AUTO_START,
   AUTO_RELOAD_ON_FAILURE,
+  RECORD_VIDEO,
   RECORD_WITH_COMMENTS,
+  RESOLUTION_MODE,
+  FIXED_RESOLUTION_HEIGHT,
+  type ResolutionMode,
 } from '../../utils/storage'
 import { getUsage, clearAll, estimateStorage } from '../../utils/library/api'
 import { hasLegacyDatabase, deleteLegacyDatabase } from '../../hooks/indexedDB/recordingDB'
@@ -13,25 +16,36 @@ const MAX_STORAGE_SIZE_LIMIT = 100 * 1024 * 1024 * 1024 // 100GB
 const STORAGE_QUOTA_ESTIMATE = 30 * 1024 * 1024 * 1024 // 30GB
 
 interface Settings {
-  RESTART_MEDIARECORDER_INTERVAL_MS: number
   MAX_STORAGE_SIZE: number
   AUTO_START: boolean
   AUTO_RELOAD_ON_FAILURE: boolean
+  RECORD_VIDEO: boolean
   RECORD_WITH_COMMENTS: boolean
+  RESOLUTION_MODE: ResolutionMode
+  FIXED_RESOLUTION_HEIGHT: number
 }
+
+// 一定の解像度で録る時に選べる高さ
+const FIXED_RESOLUTION_OPTIONS = [
+  { height: 720, label: '720p（1280×720）' },
+  { height: 1080, label: '1080p（1920×1080）' },
+]
 
 class SettingsModal {
   private modal: HTMLDivElement | null = null
   private isVisible: boolean = false
   private clickOutsideHandler: ((e: MouseEvent) => void) | null = null
   private settings: Settings = {
-    RESTART_MEDIARECORDER_INTERVAL_MS: 1 * 60 * 1000,
     MAX_STORAGE_SIZE: 1 * 1024 * 1024 * 1024,
     AUTO_START: true,
     AUTO_RELOAD_ON_FAILURE: false,
+    RECORD_VIDEO: true,
     RECORD_WITH_COMMENTS: false,
+    RESOLUTION_MODE: 'split',
+    FIXED_RESOLUTION_HEIGHT: 720,
   }
   private currentStorageUsage: number | null = null
+  private usageError = false // 使用量を読み込めなかった
   private storageQuota: number = 0
   private clearMessage: { text: string; type: 'success' | 'error' } | null = null
   private usageUpdateInterval: ReturnType<typeof setInterval> | null = null
@@ -44,25 +58,31 @@ class SettingsModal {
 
   private async loadSettings() {
     const [
-      interval,
       size,
       autoStart,
       autoReload,
+      recordVideo,
       recordWithComments,
+      resolutionMode,
+      fixedResolutionHeight,
     ] = await Promise.all([
-      RESTART_MEDIARECORDER_INTERVAL_MS.getValue(),
       MAX_STORAGE_SIZE.getValue(),
       AUTO_START.getValue(),
       AUTO_RELOAD_ON_FAILURE.getValue(),
+      RECORD_VIDEO.getValue(),
       RECORD_WITH_COMMENTS.getValue(),
+      RESOLUTION_MODE.getValue(),
+      FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
 
     this.settings = {
-      RESTART_MEDIARECORDER_INTERVAL_MS: interval,
       MAX_STORAGE_SIZE: size,
       AUTO_START: autoStart,
       AUTO_RELOAD_ON_FAILURE: autoReload,
+      RECORD_VIDEO: recordVideo,
       RECORD_WITH_COMMENTS: recordWithComments,
+      RESOLUTION_MODE: resolutionMode,
+      FIXED_RESOLUTION_HEIGHT: fixedResolutionHeight,
     }
   }
 
@@ -70,9 +90,11 @@ class SettingsModal {
     try {
       const usage = await getUsage()
       this.currentStorageUsage = usage.bytes
+      this.usageError = false
     } catch (error) {
       console.error('ストレージ使用量の取得に失敗しました:', error)
       this.currentStorageUsage = null
+      this.usageError = true
     }
 
     // 使用量表示を更新
@@ -99,9 +121,6 @@ class SettingsModal {
     this.settings[key] = value
 
     switch (key) {
-      case 'RESTART_MEDIARECORDER_INTERVAL_MS':
-        await RESTART_MEDIARECORDER_INTERVAL_MS.setValue(value as number)
-        break
       case 'MAX_STORAGE_SIZE':
         await MAX_STORAGE_SIZE.setValue(value as number)
         break
@@ -111,8 +130,17 @@ class SettingsModal {
       case 'AUTO_RELOAD_ON_FAILURE':
         await AUTO_RELOAD_ON_FAILURE.setValue(value as boolean)
         break
+      case 'RECORD_VIDEO':
+        await RECORD_VIDEO.setValue(value as boolean)
+        break
       case 'RECORD_WITH_COMMENTS':
         await RECORD_WITH_COMMENTS.setValue(value as boolean)
+        break
+      case 'RESOLUTION_MODE':
+        await RESOLUTION_MODE.setValue(value as ResolutionMode)
+        break
+      case 'FIXED_RESOLUTION_HEIGHT':
+        await FIXED_RESOLUTION_HEIGHT.setValue(value as number)
         break
     }
   }
@@ -178,34 +206,65 @@ class SettingsModal {
             </div>
           </div>
 
-          <div class="setting-block">
-            <label for="recordWithCommentsCheckbox" title="流れるコメントを動画に重ねて録画します。">
-              <input
-                id="recordWithCommentsCheckbox"
-                type="checkbox"
-                ${this.settings.RECORD_WITH_COMMENTS ? 'checked' : ''}
-              />
-              コメントを含めて録画
-            </label>
+          <fieldset class="setting-block">
+            <legend>録画する種類</legend>
+            <div class="checkbox-settings-container">
+              <div class="checkbox-setting">
+                <label for="recordVideoCheckbox" title="動画をそのまま録画します。">
+                  <input
+                    id="recordVideoCheckbox"
+                    type="checkbox"
+                    ${this.settings.RECORD_VIDEO ? 'checked' : ''}
+                  />
+                  動画のみ
+                </label>
+              </div>
+              <div class="checkbox-setting">
+                <label for="recordWithCommentsCheckbox" title="流れるコメントを動画に重ねて録画します。">
+                  <input
+                    id="recordWithCommentsCheckbox"
+                    type="checkbox"
+                    ${this.settings.RECORD_WITH_COMMENTS ? 'checked' : ''}
+                  />
+                  コメント付き
+                </label>
+              </div>
+            </div>
             <p class="description">
-              流れるコメントを動画に重ねて録画します。コメントが重なるのはタブを表示している間だけです。PCの負荷が上がります。
+              両方を選ぶと、別々の録画として同時に保存します（PCの負荷が上がります）。コメントが重なるのはタブを表示している間だけです。ゲームやギフトも入れたい場合は、パネルの「画面録画」で画面ごとの録画を追加できます。
             </p>
-          </div>
+            <p class="description kinds-message" role="status"></p>
+          </fieldset>
 
-          <div class="setting-block">
-            <label for="intervalRange">
-              分割間隔: <span id="intervalMinutes">${Math.round(this.settings.RESTART_MEDIARECORDER_INTERVAL_MS / 60000)}</span> 分
-              <span style="font-size: 0.8em; color: #888; margin-left: 8px;">自動的に録画を分割保存します。</span>
+          <fieldset class="setting-block">
+            <legend>動画の解像度が変わった時</legend>
+            <label for="resolutionSplitRadio">
+              <input
+                id="resolutionSplitRadio"
+                type="radio"
+                name="resolutionMode"
+                value="split"
+                ${this.settings.RESOLUTION_MODE === 'split' ? 'checked' : ''}
+              />
+              録画を分ける（元の解像度のまま）
             </label>
-            <input
-              id="intervalRange"
-              type="range"
-              min="${1 * 60 * 1000}"
-              max="${60 * 60 * 1000}"
-              step="${1 * 60 * 1000}"
-              value="${this.settings.RESTART_MEDIARECORDER_INTERVAL_MS}"
-            />
-          </div>
+            <label for="resolutionFixedRadio">
+              <input
+                id="resolutionFixedRadio"
+                type="radio"
+                name="resolutionMode"
+                value="fixed"
+                ${this.settings.RESOLUTION_MODE === 'fixed' ? 'checked' : ''}
+              />
+              一定の解像度で録る
+            </label>
+            <select id="fixedResolutionSelect" aria-label="一定の解像度で録る時の解像度" ${this.settings.RESOLUTION_MODE === 'fixed' ? '' : 'disabled'}>
+              ${FIXED_RESOLUTION_OPTIONS.map(option => `<option value="${option.height}" ${option.height === this.settings.FIXED_RESOLUTION_HEIGHT ? 'selected' : ''}>${option.label}</option>`).join('')}
+            </select>
+            <p class="description">
+              画質が変わっても1本の録画として続けたい場合は「一定の解像度で録る」を選んでください。元の解像度と違う時は拡大・縮小して録ります。
+            </p>
+          </fieldset>
 
           <div class="setting-block">
             <label for="storageRange">
@@ -264,11 +323,9 @@ class SettingsModal {
                 "
               ></div>
             </div>
-            ${this.currentStorageUsage === null ? `
-              <p class="description" style="text-align: center; margin-top: 8px;">
-                ライブ視聴ページでのみ動作します
-              </p>
-            ` : ''}
+            <p class="description usage-error" style="text-align: center; margin-top: 8px;" ${this.usageError ? '' : 'hidden'}>
+              使用量を読み込めませんでした
+            </p>
             <div class="clear-button-container">
               <button class="clear-button" id="clearButton">
                 クリア
@@ -318,25 +375,40 @@ class SettingsModal {
       this.updateSetting('AUTO_RELOAD_ON_FAILURE', (e.target as HTMLInputElement).checked)
     })
 
-    // 録画中に切り替えた場合は、その場で区間を切り替えて反映される（App.ts で設定の変更を監視している）
+    // 録画する種類。録画中に切り替えた場合は、その場で始める・止める（App.ts で設定の変更を監視している）
+    const recordVideoCheckbox = this.modal.querySelector('#recordVideoCheckbox') as HTMLInputElement
     const recordWithCommentsCheckbox = this.modal.querySelector('#recordWithCommentsCheckbox') as HTMLInputElement
-    recordWithCommentsCheckbox?.addEventListener('change', (e) => {
-      this.updateSetting('RECORD_WITH_COMMENTS', (e.target as HTMLInputElement).checked)
+    const kindsMessage = this.modal.querySelector('.kinds-message') as HTMLParagraphElement
+    const onKindChange = (checkbox: HTMLInputElement, key: 'RECORD_VIDEO' | 'RECORD_WITH_COMMENTS') => {
+      // 少なくとも1つは録画する
+      if (!recordVideoCheckbox.checked && !recordWithCommentsCheckbox.checked) {
+        checkbox.checked = true
+        kindsMessage.textContent = '少なくとも1つは選んでください。'
+        return
+      }
+      kindsMessage.textContent = ''
+      this.updateSetting(key, checkbox.checked)
+    }
+    recordVideoCheckbox?.addEventListener('change', () => onKindChange(recordVideoCheckbox, 'RECORD_VIDEO'))
+    recordWithCommentsCheckbox?.addEventListener('change', () => onKindChange(recordWithCommentsCheckbox, 'RECORD_WITH_COMMENTS'))
+
+    // 解像度が変わった時の録り方。録画中に変えた場合は、録り直して反映する
+    const fixedResolutionSelect = this.modal.querySelector('#fixedResolutionSelect') as HTMLSelectElement
+    for (const radio of this.modal.querySelectorAll<HTMLInputElement>('input[name="resolutionMode"]')) {
+      radio.addEventListener('change', () => {
+        if (!radio.checked) return
+        fixedResolutionSelect.disabled = radio.value !== 'fixed'
+        this.updateSetting('RESOLUTION_MODE', radio.value as ResolutionMode)
+      })
+    }
+    fixedResolutionSelect?.addEventListener('change', () => {
+      this.updateSetting('FIXED_RESOLUTION_HEIGHT', Number(fixedResolutionSelect.value))
     })
 
     // スライダー
-    const intervalRange = this.modal.querySelector('#intervalRange') as HTMLInputElement
     const storageRange = this.modal.querySelector('#storageRange') as HTMLInputElement
 
     // 動かしている間は表示だけ更新し、保存は手を離した時に行う
-    // （保存のたびに全タブで分割タイマーがリセットされるため）
-    intervalRange?.addEventListener('input', (e) => {
-      this.updateIntervalLabel(Number((e.target as HTMLInputElement).value))
-    })
-    intervalRange?.addEventListener('change', (e) => {
-      this.updateSetting('RESTART_MEDIARECORDER_INTERVAL_MS', Number((e.target as HTMLInputElement).value))
-    })
-
     storageRange?.addEventListener('input', (e) => {
       this.updateStorageLabel(Number((e.target as HTMLInputElement).value))
     })
@@ -359,7 +431,6 @@ class SettingsModal {
     })
 
     // ホイールイベント
-    this.attachWheelHandler(intervalRange, 'RESTART_MEDIARECORDER_INTERVAL_MS', 60 * 1000, 1 * 60 * 1000, 60 * 60 * 1000)
     this.attachWheelHandler(storageRange, 'MAX_STORAGE_SIZE', 1 * 1024 * 1024 * 1024, 1 * 1024 * 1024 * 1024, MAX_STORAGE_SIZE_LIMIT)
   }
 
@@ -380,21 +451,11 @@ class SettingsModal {
         this.updateSetting(settingKey, newValue)
         element.value = newValue.toString()
         
-        if (settingKey === 'RESTART_MEDIARECORDER_INTERVAL_MS') {
-          this.updateIntervalLabel(newValue)
-        } else if (settingKey === 'MAX_STORAGE_SIZE') {
+        if (settingKey === 'MAX_STORAGE_SIZE') {
           this.updateStorageLabel(newValue)
         }
       }
     })
-  }
-
-  private updateIntervalLabel(value: number) {
-    const minutesElement = this.modal?.querySelector('#intervalMinutes')
-    if (minutesElement) {
-      const minutes = Math.round(value / 60000)
-      minutesElement.textContent = minutes.toString()
-    }
   }
 
   private updateStorageLabel(value: number) {
@@ -443,6 +504,8 @@ class SettingsModal {
 
     const usageInfo = this.modal.querySelector('.usage-info')
     const usageBar = this.modal.querySelector('.usage-bar')
+    const usageError = this.modal.querySelector<HTMLElement>('.usage-error')
+    if (usageError) usageError.hidden = !this.usageError
     // スライダーを動かしている間は、まだ保存していないスライダーの値で表示する
     const storageRange = this.modal.querySelector<HTMLInputElement>('#storageRange')
     const maxStorageSize = storageRange ? Number(storageRange.value) : this.settings.MAX_STORAGE_SIZE

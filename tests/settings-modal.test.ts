@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeBrowser } from 'wxt/testing'
 import SettingsModal from '@/entrypoints/content/settings-modal'
 import { getUsage } from '@/utils/library/api'
-import { MAX_STORAGE_SIZE, RESTART_MEDIARECORDER_INTERVAL_MS, RECORD_WITH_COMMENTS } from '@/utils/storage'
+import { MAX_STORAGE_SIZE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT } from '@/utils/storage'
 
 vi.mock('@/utils/library/api', () => ({
     getUsage: vi.fn(async () => ({ bytes: 2 * GB, segments: 1, bytesByKind: { video: 2 * GB, comments: 0, screen: 0 } })),
@@ -58,29 +58,95 @@ describe('設定画面', () => {
         await flush()
 
         moveSlider('storageRange', 5 * GB, 'input')
-        moveSlider('intervalRange', 10 * 60 * 1000, 'input')
         await flush()
         expect(await MAX_STORAGE_SIZE.getValue()).toBe(1 * GB)
-        expect(await RESTART_MEDIARECORDER_INTERVAL_MS.getValue()).toBe(1 * 60 * 1000)
-        expect(document.getElementById('intervalMinutes')?.textContent).toBe('10')
 
         moveSlider('storageRange', 5 * GB, 'change')
-        moveSlider('intervalRange', 10 * 60 * 1000, 'change')
         await flush()
         expect(await MAX_STORAGE_SIZE.getValue()).toBe(5 * GB)
-        expect(await RESTART_MEDIARECORDER_INTERVAL_MS.getValue()).toBe(10 * 60 * 1000)
     })
 
-    it('「コメントを含めて録画」は初期値 OFF で、切り替えると保存される', async () => {
+    it('録画を区切る間隔は設定にない（内部で区切る）', () => {
         modal.show()
-        const checkbox = document.getElementById('recordWithCommentsCheckbox') as HTMLInputElement
-        expect(checkbox.checked).toBe(false)
 
-        checkbox.checked = true
-        checkbox.dispatchEvent(new Event('change'))
+        expect(document.getElementById('intervalRange')).toBeNull()
+    })
+
+    describe('録画する種類', () => {
+        const checkbox = (id: string) => document.getElementById(id) as HTMLInputElement
+        const toggle = async (id: string) => {
+            checkbox(id).checked = !checkbox(id).checked
+            checkbox(id).dispatchEvent(new Event('change'))
+            await flush()
+        }
+
+        it('初期値は「動画のみ」だけで、「コメント付き」を足すと両方が保存される', async () => {
+            modal.show()
+            expect(checkbox('recordVideoCheckbox').checked).toBe(true)
+            expect(checkbox('recordWithCommentsCheckbox').checked).toBe(false)
+
+            await toggle('recordWithCommentsCheckbox')
+
+            expect(await RECORD_VIDEO.getValue()).toBe(true)
+            expect(await RECORD_WITH_COMMENTS.getValue()).toBe(true)
+        })
+
+        it('最後の1つは外せない（何も録画しない設定にはできない）', async () => {
+            modal.show()
+
+            await toggle('recordVideoCheckbox')
+
+            expect(checkbox('recordVideoCheckbox').checked).toBe(true)
+            expect(await RECORD_VIDEO.getValue()).toBe(true)
+            expect(document.querySelector('.kinds-message')?.textContent).toContain('少なくとも1つ')
+
+            // 「コメント付き」を選んでからなら、「動画のみ」を外せる
+            await toggle('recordWithCommentsCheckbox')
+            await toggle('recordVideoCheckbox')
+            expect(await RECORD_VIDEO.getValue()).toBe(false)
+            expect(await RECORD_WITH_COMMENTS.getValue()).toBe(true)
+            expect(document.querySelector('.kinds-message')?.textContent).toBe('')
+        })
+    })
+
+    describe('解像度が変わった時', () => {
+        it('初期値は「録画を分ける」で、解像度は選べない', () => {
+            modal.show()
+
+            expect((document.getElementById('resolutionSplitRadio') as HTMLInputElement).checked).toBe(true)
+            expect((document.getElementById('fixedResolutionSelect') as HTMLSelectElement).disabled).toBe(true)
+        })
+
+        it('「一定の解像度で録る」を選ぶと保存され、解像度を選べるようになる', async () => {
+            modal.show()
+            const fixed = document.getElementById('resolutionFixedRadio') as HTMLInputElement
+            const select = document.getElementById('fixedResolutionSelect') as HTMLSelectElement
+
+            fixed.checked = true
+            fixed.dispatchEvent(new Event('change'))
+            select.value = '1080'
+            select.dispatchEvent(new Event('change'))
+            await flush()
+
+            expect(select.disabled).toBe(false)
+            expect(await RESOLUTION_MODE.getValue()).toBe('fixed')
+            expect(await FIXED_RESOLUTION_HEIGHT.getValue()).toBe(1080)
+        })
+    })
+
+    it('使用量を読み込めた時は、読み込めなかったお知らせを出さない', async () => {
+        modal.show()
         await flush()
 
-        expect(await RECORD_WITH_COMMENTS.getValue()).toBe(true)
+        expect((document.querySelector('.usage-error') as HTMLElement).hidden).toBe(true)
+    })
+
+    it('使用量を読み込めなかった時は、そう知らせる', async () => {
+        vi.mocked(getUsage).mockRejectedValueOnce(new Error('unavailable'))
+        modal.show()
+        await flush()
+
+        expect((document.querySelector('.usage-error') as HTMLElement).hidden).toBe(false)
     })
 
     it('ラベルが入力欄と結び付いている（for 属性）', () => {

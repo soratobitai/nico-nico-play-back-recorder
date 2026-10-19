@@ -3,10 +3,12 @@
 // ウィンドウは大きさを変えられ、他のウィンドウの上に重なって表示される。
 // 録画は止めずに続け、録画中の最新の部分も届くたびに見直せるようになる。
 // 見直しの音は初めは消しておき（ライブの音はそのまま）、ボタンで出せる。
+// 種類（動画のみ・コメント付き・画面）を同時に録っている場合は、同じ場面のまま切り替えて見られる。
 import { getTimeline, getFragmentBlobs } from '../library/api'
+import type { RecordingKind, TimelineSegment } from '../library/db'
 import { subscribeLiveFeed, type LiveFeedEvent } from './live-feed'
 import { Timeline } from './timeline'
-import { createReviewPlayer } from './player'
+import { createReviewPlayer, type ReviewPlayer } from './player'
 import { REVIEW_STYLE } from './style'
 
 // Document Picture-in-Picture（TypeScript の型にまだないので必要な分だけ）
@@ -27,6 +29,9 @@ const SKIP_SECONDS = 10
 // 保存先から番組の録画を読み直す間隔（容量の上限を超えて消された部分などを反映する）
 const SYNC_INTERVAL_MS = 30 * 1000
 const WINDOW_SIZE = { width: 640, height: 420 }
+// 種類の名前と、初めに見る種類の優先順
+const KIND_LABELS: Record<RecordingKind, string> = { video: '動画のみ', comments: 'コメント付き', screen: '画面' }
+const KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
 
 const MESSAGE_EMPTY = 'まだ見直せる録画がありません。\n録画が始まると、ここで少し前から見直せます。'
 const MESSAGE_UNAVAILABLE = '拡張機能が更新されたため見直せません。\nページを開き直してください。'
@@ -57,6 +62,9 @@ const TEMPLATE = `
     <button type="button" class="forward" aria-label="${SKIP_SECONDS}秒進む" title="${SKIP_SECONDS}秒進む（→）"><span class="label">${SKIP_SECONDS}秒</span>${ICONS.forward}</button>
     <div class="time"><span class="clock">--:--:--</span><span class="behind"></span></div>
     <span class="spacer"></span>
+    <div class="kinds" role="group" aria-label="録画の種類" hidden>
+      ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" hidden>${KIND_LABELS[kind]}</button>`).join('')}
+    </div>
     <button type="button" class="mute" title="見直しの音（M）"></button>
     <button type="button" class="live" title="最新の録画へ（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブに戻る</span></button>
   </div>
@@ -128,7 +136,22 @@ const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWin
     const behind = $<HTMLSpanElement>('.behind')
     video.muted = true
 
-    const timeline = new Timeline()
+    const kindsGroup = $<HTMLDivElement>('.kinds')
+    const kindButtons = [...doc.querySelectorAll<HTMLButtonElement>('.kind')]
+
+    // 種類ごとの時間軸（見ているのは、そのうちの1つ）
+    const timelines = new Map<RecordingKind, Timeline>()
+    const timelineOf = (kind: RecordingKind) => {
+        let found = timelines.get(kind)
+        if (!found) {
+            found = new Timeline()
+            timelines.set(kind, found)
+        }
+        return found
+    }
+    const availableKinds = () => KIND_ORDER.filter(kind => !timelines.get(kind)?.isEmpty && timelines.has(kind))
+    let selectedKind: RecordingKind = 'video'
+    let timeline = timelineOf(selectedKind)
     let started = false // 最初の再生位置に移ったか
     let dragging = false // シークバーを動かしている間
 
@@ -137,19 +160,44 @@ const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWin
         message.textContent = text ?? ''
     }
 
-    const player = createReviewPlayer({
+    const createPlayer = (target: Timeline): ReviewPlayer => createReviewPlayer({
         video,
-        timeline,
+        timeline: target,
         readFragments: getFragmentBlobs,
         onError: (error) => {
             console.error('見直しの再生に失敗しました:', error)
             showMessage(MESSAGE_PLAY_ERROR)
         },
     })
+    let player = createPlayer(timeline)
 
-    // 録画があれば、最新の少し前から再生を始める
+    // 見る種類を切り替える（同じ場面から続けて見る）
+    const selectKind = (kind: RecordingKind) => {
+        if (kind === selectedKind) return
+        const wallClock = timeline.isEmpty ? null : timeline.wallClockAt(player.position)
+        const wasPlaying = !video.paused
+        player.destroy()
+        selectedKind = kind
+        timeline = timelineOf(kind)
+        player = createPlayer(timeline)
+        if (timeline.isEmpty) return
+        const target = wallClock === null ? null : timeline.timeAtWallClock(wallClock)
+        player.seek(target ?? Math.max(timeline.start, timeline.end - INITIAL_BEHIND_SECONDS))
+        if (wasPlaying || !started) video.play().catch(() => {})
+        started = true
+        showMessage(null)
+        render()
+    }
+
+    // 録画があれば、最新の少し前から再生を始める（初めは「動画のみ」、なければ録ってある種類）
     const startIfReady = () => {
-        if (started || timeline.isEmpty) return
+        if (started) return
+        const kind = availableKinds()[0]
+        if (!kind) return
+        if (kind !== selectedKind) {
+            selectKind(kind)
+            return
+        }
         started = true
         showMessage(null)
         player.seek(Math.max(timeline.start, timeline.end - INITIAL_BEHIND_SECONDS))
@@ -176,6 +224,15 @@ const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWin
         liveButton.disabled = empty || atLive
         liveLabel.textContent = atLive ? 'ライブ' : 'ライブに戻る'
         liveButton.setAttribute('aria-label', atLive ? 'ライブ（最新の録画）を再生中' : 'ライブに戻る')
+
+        // 種類が2つ以上ある時だけ、切り替えのボタンを出す
+        const kinds = availableKinds()
+        kindsGroup.hidden = kinds.length < 2
+        for (const button of kindButtons) {
+            const kind = button.dataset.kind as RecordingKind
+            button.hidden = !kinds.includes(kind)
+            button.setAttribute('aria-pressed', String(kind === selectedKind))
+        }
 
         // アイコンは変わった時だけ描き直す
         const playState = video.paused ? 'paused' : 'playing'
@@ -211,6 +268,7 @@ const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWin
     playButton.addEventListener('click', togglePlay)
     muteButton.addEventListener('click', toggleMute)
     liveButton.addEventListener('click', goLive)
+    for (const button of kindButtons) button.addEventListener('click', () => selectKind(button.dataset.kind as RecordingKind))
     doc.addEventListener('keydown', (event) => {
         if (event.ctrlKey || event.metaKey || event.altKey) return
         const actions: Record<string, () => void> = {
@@ -235,21 +293,24 @@ const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWin
             case 'init': {
                 const { segment } = event
                 if (segment.programId !== programId || segment.format !== 'fmp4') return
-                timeline.addSegment({
+                timelineOf(segment.kind).addSegment({
                     segmentId: segment.segmentId, kind: segment.kind, mimeType: segment.mimeType,
                     startedAt: segment.startedAt, endedAt: null, init: event.init,
                 })
                 break
             }
-            case 'fragments':
-                if (!timeline.segment(event.segmentId)) return
-                for (const f of event.fragments) player.cacheFragment(event.segmentId, f.index, f.blob)
-                timeline.addFragments(event.segmentId, event.fragments.map(f => ({
+            case 'fragments': {
+                const owner = [...timelines.values()].find(t => t.segment(event.segmentId))
+                if (!owner) return
+                // 見ている種類の断片は、保存先から読み直さずに使えるように覚えておく
+                if (owner === timeline) for (const f of event.fragments) player.cacheFragment(event.segmentId, f.index, f.blob)
+                owner.addFragments(event.segmentId, event.fragments.map(f => ({
                     index: f.index, startTime: f.startTime, duration: f.duration, keyframe: f.keyframe ?? true,
                 })))
                 break
+            }
             case 'finish':
-                timeline.finishSegment(event.segmentId, event.endedAt)
+                for (const t of timelines.values()) t.finishSegment(event.segmentId, event.endedAt)
                 break
         }
         startIfReady()
@@ -273,15 +334,20 @@ const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWin
 
     const sync = async () => {
         try {
-            timeline.sync(await getTimeline(programId))
+            const segments = await getTimeline(programId)
+            const byKind = new Map<RecordingKind, TimelineSegment[]>(KIND_ORDER.map(kind => [kind, []]))
+            for (const segment of segments) byKind.get(segment.kind)?.push(segment)
+            for (const [kind, list] of byKind) {
+                if (list.length > 0 || timelines.has(kind)) timelineOf(kind).sync(list)
+            }
             applyQueued()
-            if (timeline.isEmpty) showMessage(MESSAGE_EMPTY)
+            if (availableKinds().length === 0) showMessage(MESSAGE_EMPTY)
             startIfReady()
             player.update()
         } catch (error) {
             console.error('見直しの録画を読み込めませんでした:', error)
             applyQueued() // 録画中に届く分だけでも見直せるように
-            if (timeline.isEmpty) {
+            if (availableKinds().length === 0) {
                 showMessage(error instanceof Error && error.name === 'BridgeUnavailableError' ? MESSAGE_UNAVAILABLE : MESSAGE_LOAD_ERROR)
             }
         }

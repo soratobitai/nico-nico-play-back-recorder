@@ -56,7 +56,15 @@ button svg { flex: none; }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #6b6b73; display: inline-block; }
 .live.at-live .live-dot { background: var(--live); }
 .live.at-live { color: #ff8a8a; }
-.mute[aria-pressed="false"] { border-color: var(--accent); }
+.kinds { display: flex; gap: 4px; }
+.kinds[hidden], .kind[hidden] { display: none; }
+.kind { font-size: 12px; padding: 0 8px; }
+.kind[aria-pressed="true"].kind-video { background: #3567d6; border-color: #3567d6; color: #fff; }
+.kind[aria-pressed="true"].kind-comments { background: #1fa88d; border-color: #1fa88d; color: #0d1412; }
+.kind[aria-pressed="true"].kind-screen { background: #f5b54a; border-color: #f5b54a; color: #1c1406; }
+@media (max-width: 640px) {
+  .kind { padding: 0 6px; font-size: 11px; }
+}
 @media (max-width: 460px) {
   .label { display: none; }
   .bar { padding: 2px 6px 6px; }
