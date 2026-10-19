@@ -8,6 +8,7 @@ let stopButton = null as HTMLButtonElement | null
 let recordStatus = null as HTMLDivElement | null
 let reloadButton = null as HTMLButtonElement | null
 let recordingCount = null as HTMLDivElement | null
+let screenCaptureButton = null as HTMLButtonElement | null
 
 let userScrolledAway = false
 
@@ -27,6 +28,7 @@ const insertRecordedMovieAria = async (
     stop: () => void,
     reload: () => void,
     showSettings: () => void,
+    toggleScreenCapture: (() => void) | null, // 画面ごと録画を使えない環境では null（ボタンを表示しない）
 ) => {
     const controlArea = document.querySelector('[class*="_control-area_"]')
     if (!controlArea) return
@@ -58,8 +60,11 @@ const insertRecordedMovieAria = async (
                     <span style="color: #aaa; font-size: 11px;"><span id="recordingCount" style="font-size: 13px;">0</span></span>
                 </div>
               </div>
-              <div class="settings-button" id="settingsButton" title="設定">
-                <img src="${chrome.runtime.getURL("assets/images/settings.svg")}" alt="設定" />
+              <div class="control-buttons-right">
+                <button type="button" id="screenCaptureButton" hidden>画面録画</button>
+                <div class="settings-button" id="settingsButton" title="設定">
+                  <img src="${chrome.runtime.getURL("assets/images/settings.svg")}" alt="設定" />
+                </div>
               </div>
             </div>
           </div>
@@ -90,6 +95,14 @@ const insertRecordedMovieAria = async (
     // 設定ボタン
     const settingsButton = document.getElementById("settingsButton") as HTMLButtonElement
     settingsButton.addEventListener("click", showSettings)
+
+    // 画面ごと録画ボタン
+    screenCaptureButton = document.getElementById("screenCaptureButton") as HTMLButtonElement
+    if (toggleScreenCapture) {
+        screenCaptureButton.hidden = false
+        screenCaptureButton.addEventListener("click", toggleScreenCapture)
+        setScreenCaptureButton(false)
+    }
 
     // 録画リストのスクロール制御
     const setupScrollWatcher = () => {
@@ -613,6 +626,16 @@ const updateToggleButton = (isRecording: boolean) => {
     }
 }
 
+// 画面ごと録画ボタンの表示を更新
+function setScreenCaptureButton(active: boolean) {
+    if (!screenCaptureButton) return
+    screenCaptureButton.classList.toggle('active', active)
+    screenCaptureButton.textContent = active ? '画面録画中' : '画面録画'
+    screenCaptureButton.title = active
+        ? 'クリックすると、画面ごと録画をやめて通常の録画に戻ります。'
+        : 'ゲームやギフトも含めて、プレイヤーの画面ごと録画します。「このタブを共有」の許可が必要です。'
+}
+
 export {
     insertRecordedMovieAria,
     insertRecordedMovie,
@@ -622,6 +645,7 @@ export {
     loadRecordedMovieList,
     deleteMovieIcon,
     setRecordingStatus,
+    setScreenCaptureButton,
     getTimeString,
     insertToggleButton,
     updateToggleButton,

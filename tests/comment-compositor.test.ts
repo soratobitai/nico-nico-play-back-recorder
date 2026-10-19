@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createCommentCompositor, getOutputSize } from '@/utils/comment-compositor'
+import { createCommentCompositor } from '@/utils/comment-compositor'
+import { getOutputSize } from '@/utils/frame-pipeline'
 
 describe('getOutputSize（コメントを合成した映像の大きさ）', () => {
     it('縦は動画に合わせ、縦横比はコメントの canvas（1366x768）に合わせる', () => {

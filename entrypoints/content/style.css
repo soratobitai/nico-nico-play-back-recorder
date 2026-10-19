@@ -249,6 +249,20 @@
   background: gray;
   cursor: not-allowed;
 }
+.control-buttons-right {
+  display: flex;
+  align-items: center;
+}
+
+#screenCaptureButton {
+  background: #555;
+  color: white;
+}
+
+#screenCaptureButton.active {
+  background: red;
+}
+
 .control-buttons-left {
   display: flex;
   align-items: center;

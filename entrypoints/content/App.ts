@@ -1,9 +1,10 @@
 import { cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
 import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded, saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
-import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed } from "../../utils/ui"
+import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed, setScreenCaptureButton } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_WITH_COMMENTS } from '../../utils/storage'
 import { createCommentCompositor, type CommentCompositor } from '../../utils/comment-compositor'
+import { isScreenCaptureSupported, startScreenCapture, type ScreenCapture } from '../../utils/screen-capture'
 import { checkLiveStatus } from '../../services/api'
 import SettingsModal from './settings-modal'
 import './settings-modal.css'
@@ -75,18 +76,20 @@ export default async () => {
     RECORD_WITH_COMMENTS.watch((newValue) => {
         recordWithComments = newValue
         // 録画中ならすぐに区間を切り替えて反映する
-        switchRecordingStream()
+        // （画面ごと録画中はコメントも入っているので、画面ごと録画をやめた時に反映する）
+        if (!screenCapture) switchRecordingStream(createRecordingStream)
     })
 
     const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
     const { userName, title } = getProgramData() // 番組情報を取得
 
     const video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
-    let stream = new MediaStream() // 録画する映像（設定によっては流れるコメントを合成したもの）
+    let stream = new MediaStream() // 録画する映像（設定によっては流れるコメントを合成したもの、または画面ごと）
     let compositor: CommentCompositor | null = null // コメントを合成している場合はその処理
+    let screenCapture: ScreenCapture | null = null // 画面ごと録画している場合はその処理
     let mediaRecorder: MediaRecorder | null = null // 現在の録画区間の recorder
 
-    // 録画する映像を用意する（設定に応じて流れるコメントを合成する）
+    // 通常の録画の映像を用意する（設定に応じて流れるコメントを合成する）
     const createRecordingStream = (): MediaStream => {
         if (recordWithComments) {
             compositor = createCommentCompositor(video)
@@ -95,21 +98,63 @@ export default async () => {
         return (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
     }
 
-    // 録画していた映像を解放する（コメントの合成も止める）
+    // 録画していた映像を解放する（コメントの合成や画面の取り込みも止める）
     const releaseRecordingStream = () => {
         stream.getTracks().forEach(track => track.stop())
         compositor?.stop()
         compositor = null
+        if (screenCapture) {
+            screenCapture.stop()
+            screenCapture = null
+            setScreenCaptureButton(false)
+        }
     }
 
-    // 録画する映像を作り直して次の区間を始める（コメントを含めるかを録画中に切り替えた時）
-    const switchRecordingStream = () => {
-        if (mediaRecorder?.state !== "recording") return
+    // 録画中なら、録画する映像を next() で作り直して次の区間を始める。録画していなければ何もせず false を返す
+    const switchRecordingStream = (next: () => MediaStream): boolean => {
+        if (mediaRecorder?.state !== "recording") return false
 
         mediaRecorder.stop()
         releaseRecordingStream()
-        stream = createRecordingStream()
+        stream = next()
         startNewRecorder()
+        return true
+    }
+
+    // 画面ごと録画を始める・やめる（録画パネルのボタンから。共有の確認を出すためクリックから呼ぶ必要がある）
+    const toggleScreenCapture = async () => {
+        if (screenCapture) {
+            endScreenCapture()
+            return
+        }
+
+        let capture: ScreenCapture
+        try {
+            capture = await startScreenCapture(video.videoHeight, endScreenCapture)
+        } catch (error) {
+            // 「このタブを共有」でキャンセルされた場合など
+            console.log('画面ごと録画を開始できませんでした:', error)
+            return
+        }
+
+        const useCapture = () => {
+            screenCapture = capture
+            setScreenCaptureButton(true)
+            return capture.stream
+        }
+        // 録画中なら区間を切り替え、録画していなければ録画を始める
+        if (!switchRecordingStream(useCapture)) {
+            releaseRecordingStream()
+            stream = useCapture()
+            startNewRecorder()
+        }
+    }
+
+    // 画面ごと録画をやめる。録画中なら通常の録画（設定に応じてコメント付き）に戻して続ける
+    // （ボタンを押した時と、Chrome の「共有を停止」で取り込みが終わった時）
+    const endScreenCapture = () => {
+        if (!screenCapture) return
+        if (!switchRecordingStream(createRecordingStream)) releaseRecordingStream()
     }
 
 
@@ -166,6 +211,8 @@ export default async () => {
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
             const timeoutId = setTimeout(() => {
+                // 待っている間に別の方法（画面ごと録画など）で録画が始まっていれば何もしない
+                if (mediaRecorder?.state === "recording") return
                 // タイムアウトした場合は状態を停止中に設定
                 stateManager.setState('stopped')
                 clickReloadButton("動画の準備完了待機がタイムアウト")
@@ -177,7 +224,7 @@ export default async () => {
                 setTimeout(() => {
                     if (!video.paused && video.currentTime > 0) {
                         callback()
-                    } else {
+                    } else if (mediaRecorder?.state !== "recording") {
                         console.log("動画が再生可能になりましたが、まだ再生されていません")
                         // 再生されていない場合は状態を停止中に設定
                         stateManager.setState('stopped')
@@ -352,6 +399,9 @@ export default async () => {
 
             // 録画中でなければ何もしない
             if (mediaRecorder?.state !== "recording") return
+            // 画面ごと録画は画面を取り込んでいるので、動画の解像度が変わっても録画し直さなくてよい
+            // （録画し直すと共有の確認をもう一度出す必要があるが、クリックからでないと出せない）
+            if (screenCapture) return
 
             // 状態を準備中に設定（onstop で停止扱いにさせない）
             stateManager.setState('preparing')
@@ -388,7 +438,8 @@ export default async () => {
         start,
         stop,
         reload,
-        () => settingsModal.show()
+        () => settingsModal.show(),
+        isScreenCaptureSupported() ? toggleScreenCapture : null,
     )
     createModal()
 
