@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { savePendingRequest, flushPendingRequests } from '@/utils/library/pending'
+import { savePendingRequest, flushPendingRequests, clearPendingRequests } from '@/utils/library/pending'
 import { migrateLegacyRecordings } from '@/utils/library/migrate'
 import { handleBridgeRequest } from '@/utils/library/handler'
 import { clearAll, listAllSegments, buildDownloadFiles } from '@/utils/library/db'
@@ -68,6 +68,19 @@ describe('一時保存した書き込み', () => {
 
         expect(sent).toEqual(['B'])
         expect(await flushPendingRequests(async () => {}, isUnavailable)).toEqual({ sent: 0, complete: true })
+    })
+
+    it('すべての録画を削除する時は、録画のデータ（断片）だけ消し、区間を作る依頼などは残す（録画中の区間の続きを保存できるように）', async () => {
+        const create: BridgeRequest = { type: 'createSegment', segment: { segmentId: 'A', programId: 'lv1', kind: 'video', format: 'fmp4', mimeType: 'video/mp4', title: '', userName: '', startedAt: 0, thumbnail: null } }
+        const init: BridgeRequest = { type: 'setSegmentInit', segmentId: 'A', init: new Blob(['init']) }
+        const append: BridgeRequest = { type: 'appendFragments', segmentId: 'A', fragments: [] }
+        for (const request of [create, init, append, finish('A')]) await savePendingRequest(request)
+
+        await clearPendingRequests()
+
+        const sent: string[] = []
+        await flushPendingRequests(async (request) => { sent.push(request.type) }, isUnavailable)
+        expect(sent).toEqual(['createSegment', 'setSegmentInit', 'finishSegment'])
     })
 
     it('一時保存したことがなければ、DB を作らない', async () => {

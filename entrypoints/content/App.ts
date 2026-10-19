@@ -77,6 +77,7 @@ export default async () => {
     let splitTimer: ReturnType<typeof setInterval> | undefined
     let limitTimer: ReturnType<typeof setInterval> | undefined
     let restartTimer: ReturnType<typeof setTimeout> | undefined
+    let cancelRestarts: (() => VideoKind[]) | undefined // 順番待ちの録り直しを取り消す
 
     // 一定の解像度で録る場合の高さ
     const fixedHeight = () => resolutionMode === 'fixed' ? fixedResolutionHeight : null
@@ -129,6 +130,8 @@ export default async () => {
             console.log(`録画（${kind}）を開始できませんでした:`, error)
             return false
         }
+        // 順番待ちの区切り・録り直しは、これより KIND_STAGGER_MS 以上あとに行う
+        nextStartAt = Math.max(nextStartAt, Date.now() + KIND_STAGGER_MS)
         recorders.set(kind, recorder)
         return true
     }
@@ -162,19 +165,36 @@ export default async () => {
         }
     }
 
-    // 種類ごとに KIND_STAGGER_MS ずつずらして action を行い、最後に done を呼ぶ（録画を止めたら、残りは行わない）
+    // 録画を始める操作（区切る・録り直す）の順番待ち。どの操作も、前の操作から KIND_STAGGER_MS 以上あけて行う
+    // （区切りと録り直しが重なっても、エンコーダーの準備が重ならないように）。何ミリ秒後に行うかを返す
+    let nextStartAt = 0
+    const reserveStart = () => {
+        const now = Date.now()
+        const at = Math.max(now, nextStartAt)
+        nextStartAt = at + KIND_STAGGER_MS
+        return at - now
+    }
+
+    // 種類ごとに、順番待ちに入れて action を行い、最後に done を呼ぶ（録画を止めたら、残りは行わない）
+    // 返す関数で、まだ行っていない種類を取り消せる（取り消した種類を返す）
     const staggered = <K extends RecordingKind>(kinds: K[], action: (kind: K) => void, done?: () => void) => {
         const id = sessionId
+        const waiting = new Map<K, ReturnType<typeof setTimeout>>()
         if (kinds.length === 0) done?.()
-        kinds.forEach((kind, i) => {
-            const run = () => {
+        for (const kind of kinds) {
+            waiting.set(kind, setTimeout(() => {
+                waiting.delete(kind)
                 if (!sessionActive || sessionId !== id) return
                 action(kind)
-                if (i === kinds.length - 1) done?.()
-            }
-            if (i === 0) run()
-            else setTimeout(run, i * KIND_STAGGER_MS)
-        })
+                if (waiting.size === 0) done?.()
+            }, reserveStart()))
+        }
+        return (): K[] => {
+            for (const timer of waiting.values()) clearTimeout(timer)
+            const cancelled = [...waiting.keys()]
+            waiting.clear()
+            return cancelled
+        }
     }
 
     const beginSession = () => {
@@ -195,6 +215,8 @@ export default async () => {
         clearInterval(splitTimer)
         clearInterval(limitTimer)
         clearTimeout(restartTimer)
+        cancelRestarts?.()
+        cancelRestarts = undefined
         restartPending.clear()
         for (const kind of [...recorders.keys()]) stopKind(kind)
         stopTimer()
@@ -205,6 +227,9 @@ export default async () => {
     // 映像の大きさが変わらないように描き直している種類は、録り直すまで録り続ける（録画の間を空けない）。
     // 描き直せない種類は、大きさが変わった所から再生できなくなるので、すぐに止める
     const scheduleRestart = (kinds: VideoKind[]) => {
+        // 前の録り直しで、まだ順番待ちの種類は、今回まとめて録り直す（同じ種類を続けて2回録り直さない）
+        for (const kind of cancelRestarts?.() ?? []) restartPending.add(kind)
+        cancelRestarts = undefined
         for (const kind of kinds) {
             restartPending.add(kind)
             if (!recorders.get(kind)?.steadySize) stopKind(kind)
@@ -214,7 +239,7 @@ export default async () => {
             const pending = VIDEO_KINDS.filter(kind => restartPending.has(kind))
             restartPending.clear()
             if (!sessionActive) return
-            staggered(pending, (kind) => {
+            cancelRestarts = staggered(pending, (kind) => {
                 const previous = recorders.get(kind)
                 if (previous) {
                     recorders.delete(kind)

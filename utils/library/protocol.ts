@@ -29,7 +29,7 @@ type BridgeResults = {
     enforceLimit: DeletedSpace
     freeSpace: DeletedSpace
     closeStaleSegments: string[]
-    clearAll: void
+    clearAll: number // 残した録画中の区間の数
     deleteSegments: void
     estimateStorage: { usage?: number, quota?: number }
 }

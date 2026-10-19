@@ -31,6 +31,9 @@ type SegmentRecord = {
     bytes: number // 初期化セグメントと断片の合計
     fragmentCount: number
     duration: number // 区間の長さ（秒）
+    // 保存先に最後に書き込んだ時刻（ミリ秒）。一時保存から移した録画や以前のバージョンの録画は、
+    // 録った時刻が古くても書き込み中なので、終えられないまま残った区間と見分けるのに使う（以前の区間にはない）
+    updatedAt?: number
 }
 
 type FragmentRecord = {
@@ -44,7 +47,7 @@ type FragmentRecord = {
     keyframe?: boolean // 映像がキーフレームから始まる（この断片から再生を始められる）。ない場合は始められるものとする
 }
 
-type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration'>
+type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration' | 'updatedAt'>
 type NewFragment = Omit<FragmentRecord, 'segmentId'>
 // UI などに渡す区間の情報（大きなデータは含めない）
 type SegmentSummary = Omit<SegmentRecord, 'init'>
@@ -132,7 +135,7 @@ const getSegmentRecord = async (store: IDBObjectStore, segmentId: string) => {
 // ---- 録画中に使う操作 ----
 
 const createSegment = (segment: NewSegment) => withTransaction([SEGMENTS], 'readwrite', async (tx) => {
-    const record: SegmentRecord = { ...segment, endedAt: null, init: null, bytes: 0, fragmentCount: 0, duration: 0 }
+    const record: SegmentRecord = { ...segment, endedAt: null, init: null, bytes: 0, fragmentCount: 0, duration: 0, updatedAt: Date.now() }
     await promisify(tx.objectStore(SEGMENTS).add(record))
 })
 
@@ -141,6 +144,7 @@ const setSegmentInit = (segmentId: string, init: Blob) => withTransaction([SEGME
     const segment = await getSegmentRecord(store, segmentId)
     segment.bytes += init.size - (segment.init?.size ?? 0)
     segment.init = init
+    segment.updatedAt = Date.now()
     await promisify(store.put(segment))
 })
 
@@ -162,6 +166,7 @@ const appendFragments = (segmentId: string, fragments: NewFragment[]) => withTra
     }
     // 終えたことにした区間に続きが届いた場合（closeStaleSegments の後に一時保存から移された など）は、終わりを延ばす
     if (segment.endedAt !== null) segment.endedAt = Math.max(segment.endedAt, lastWriteOf(segment))
+    segment.updatedAt = Date.now()
     await promisify(segments.put(segment))
 })
 
@@ -253,6 +258,7 @@ const deleteSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAG
 })
 
 // すべての録画を消す。keepRecording なら、録画中の区間は（続きを書き込めるように）区間だけ残して中身を消す
+// 残した区間の数を返す
 const clearAll = ({ keepRecording = false } = {}) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
     const segments = tx.objectStore(SEGMENTS)
     const recording = keepRecording ? (await promisify<SegmentRecord[]>(segments.getAll())).filter(s => s.endedAt === null) : []
@@ -262,6 +268,7 @@ const clearAll = ({ keepRecording = false } = {}) => withTransaction([SEGMENTS, 
         // 最後に書き込んだ時刻（duration）は残す（終えられないまま残った区間を見分けるのに使う）
         await promisify(segments.put({ ...segment, bytes: segment.init?.size ?? 0, fragmentCount: 0 }))
     }
+    return recording.length
 })
 
 // ---- プレイバック・録画一覧（区切りをつないで見る） ----
@@ -326,12 +333,13 @@ const getUsage = () => withTransaction([SEGMENTS], 'readonly', usageIn)
 const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
 
 // 録画していたタブが閉じられるなどして、終えられないまま残った区間を確定する
-// 最後の書き込みから idleMs 以上たったものが対象。断片が1つもなければ消す。消した区間の ID を返す
+// 最後の書き込み（録った時刻と、保存先に書き込んだ時刻の新しい方）から idleMs 以上たったものが対象。
+// 断片が1つもなければ消す。消した区間の ID を返す
 const closeStaleSegments = (idleMs: number, now = Date.now()) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
     const store = tx.objectStore(SEGMENTS)
     const deletedSegmentIds: string[] = []
     for (const segment of await promisify<SegmentRecord[]>(store.getAll())) {
-        if (segment.endedAt !== null || now - lastWriteOf(segment) < idleMs) continue
+        if (segment.endedAt !== null || now - Math.max(lastWriteOf(segment), segment.updatedAt ?? 0) < idleMs) continue
         if (segment.fragmentCount <= 0) {
             await promisify(tx.objectStore(FRAGMENTS).delete(fragmentRange(segment.segmentId)))
             await promisify(store.delete(segment.segmentId))

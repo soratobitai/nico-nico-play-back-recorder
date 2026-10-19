@@ -24,8 +24,13 @@ type ReviewPlayerOptions = {
     video: HTMLVideoElement
     timeline: Timeline
     readFragments: ReadFragments
+    // 時間軸の最後まで読み込んだら、動画の終わりにする（最後まで再生したら止まる）。
+    // 録画中の番組を追いかけて見る場合は、区間の切り替わりで終わりにしないよう false にする
+    endAtLast?: boolean
     // 断片（とその区間の初期化セグメント）を再生用に読み込めなかった（録画が壊れている）
     onError?: (error: unknown, fragment: PlacedFragment) => void
+    // 保存先から読めなかった（少し待ってから読み直す）
+    onReadError?: (error: unknown) => void
 }
 
 // 断片を読み込めなかった（どの断片かを伝える）
@@ -40,8 +45,12 @@ const mimeTypeOf = (segment: PlacedSegment) =>
     /codecs/i.test(segment.mimeType) && MediaSource.isTypeSupported(segment.mimeType) ? segment.mimeType : FALLBACK_MIME_TYPE
 
 const isQuotaExceeded = (error: unknown) => error instanceof DOMException && error.name === 'QuotaExceededError'
+// 保存先とやり取りできない（拡張機能が更新された・応答がない）。録画が壊れているのではない
+const isUnavailable = (error: unknown) => error instanceof Error && error.name === 'BridgeUnavailableError'
+// 続けてこの回数読めなかったら、1つずつ読み直して、読めない断片を壊れているとみなす
+const MAX_READ_FAILURES = 3
 
-const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewPlayerOptions) => {
+const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, onError, onReadError }: ReviewPlayerOptions) => {
     const mediaSource = new MediaSource()
     const url = URL.createObjectURL(mediaSource)
     video.src = url
@@ -61,6 +70,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
     let destroyed = false
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let retryAt = 0 // 読み込みに失敗した時、この時刻まで読み直さない
+    let readFailures = 0 // 続けて読めなかった回数
 
     const position = () => pendingSeek ?? video.currentTime
 
@@ -127,8 +137,9 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
     const appendFragment = async (fragment: PlacedFragment, blob: Blob) => {
         const segment = timeline.segment(fragment.segmentId)
         if (!segment || segment.offset === null) return
-        const bytes = await blob.arrayBuffer()
         try {
+            // 読めないデータ（保存先のファイルが失われた など）も、壊れた録画として扱う
+            const bytes = await blob.arrayBuffer()
             if (currentSegmentId !== segment.segmentId) await switchSegment(segment)
             try {
                 await operate(buffer => buffer.appendBuffer(bytes))
@@ -149,7 +160,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
 
     // 時間軸の最後まで読み込んで、録画中の区間もなければ、動画の終わりにする（最後まで再生したら止まるように）
     const endIfComplete = () => {
-        if (mediaSource.readyState !== 'open' || !sourceBuffer || sourceBuffer.updating) return
+        if (!endAtLast || mediaSource.readyState !== 'open' || !sourceBuffer || sourceBuffer.updating) return
         const flat = timeline.fragments
         const last = flat[flat.length - 1]
         if (!last || !appended.has(fragmentKey(last))) return
@@ -159,18 +170,25 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
 
     // 録っていない間を指していたら、次に録った所へ（読み込めないので、そこへは移れない）
     // 断片の終わりぎりぎり（映像と音声の長さの違いで、読み込まれない端数）で、その後が空いている場合も同じ
-    const snapToRecorded = (t: number) => {
+    // backward（戻る操作）なら、間の前の録った所へ、間を飛ばして戻る（戻れずに同じ所へ移り続けないように）
+    const snapToRecorded = (t: number, backward = false) => {
         const flat = timeline.fragments
         const i = timeline.indexAt(t)
         const here = flat[i]
         if (!here) return t
-        if (here.start > t) return here.start
+        const inGap = here.start > t
+        if (inGap && backward && i > 0) {
+            const previous = flat[i - 1]
+            return Math.max(previous.start, previous.end - (here.start - t))
+        }
+        if (inGap) return here.start
         const next = flat[i + 1]
         if (next && here.end - t < FRAGMENT_TAIL_SECONDS && next.start > here.end + 0.05) return next.start
         return t
     }
 
     // 断片のデータを読む（録画中に届いたものは覚えているものを使う）
+    // 続けて読めない場合は、1つずつ読み直して、読めない断片を壊れた録画として知らせる（その断片のせいで、まわりも読めなくならないように）
     const read = async (fragments: PlacedFragment[]) => {
         const blobs = new Map<string, Blob | null>()
         const missing = new Map<string, PlacedFragment[]>()
@@ -180,9 +198,22 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
             else missing.set(fragment.segmentId, [...(missing.get(fragment.segmentId) ?? []), fragment])
         }
         for (const [segmentId, list] of missing) {
-            const read = await readFragments(segmentId, list.map(f => f.index))
-            list.forEach((fragment, i) => blobs.set(fragmentKey(fragment), read[i]))
+            try {
+                const read = await readFragments(segmentId, list.map(f => f.index))
+                list.forEach((fragment, i) => blobs.set(fragmentKey(fragment), read[i]))
+            } catch (error) {
+                if (isUnavailable(error) || ++readFailures < MAX_READ_FAILURES) throw error
+                for (const fragment of list) {
+                    try {
+                        blobs.set(fragmentKey(fragment), (await readFragments(segmentId, [fragment.index]))[0])
+                    } catch (fragmentError) {
+                        if (isUnavailable(fragmentError)) throw fragmentError
+                        throw new AppendError(fragment, fragmentError)
+                    }
+                }
+            }
         }
+        readFailures = 0
         return blobs
     }
 
@@ -256,6 +287,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
             } else {
                 // 保存先から読めなかった・容量不足など（録画が壊れているのではない）は、少し待ってから読み直す
                 console.warn('録画を読み込めませんでした。少し待ってから読み直します:', error)
+                onReadError?.(error)
                 retryAt = Date.now() + RETRY_DELAY_MS
                 clearTimeout(retryTimer)
                 retryTimer = setTimeout(update, RETRY_DELAY_MS)
@@ -335,8 +367,9 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
             return position()
         },
 
-        seek(t: number) {
-            const target = snapToRecorded(Math.min(Math.max(t, timeline.start), timeline.end))
+        // backward: 戻る操作（録っていない間に当たったら、間の前へ戻る）
+        seek(t: number, { backward = false } = {}) {
+            const target = snapToRecorded(Math.min(Math.max(t, timeline.start), timeline.end), backward)
             if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
                 extendDuration()
                 video.currentTime = target

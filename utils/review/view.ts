@@ -88,6 +88,15 @@ const formatDuration = (seconds: number) => {
     return h > 0 ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`
 }
 
+// 拡張機能が更新・削除されて、このページから拡張機能の機能を使えなくなった
+const isExtensionGone = () => {
+    try {
+        return !chrome.runtime?.id
+    } catch {
+        return true
+    }
+}
+
 // 文字を入力している所（検索欄など）では、キー操作を横取りしない
 const isTyping = (target: EventTarget | null) => {
     if (!(target instanceof Element)) return false
@@ -168,16 +177,28 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         video,
         timeline: target,
         readFragments,
+        // live は録画中の番組を追いかけるので、区間の切り替わりで動画を終わりにしない
+        endAtLast: mode === 'library',
         onError: (error, fragment) => {
             console.error('録画の再生に失敗しました:', error)
             recover(fragment)
+        },
+        onReadError: () => {
+            // 拡張機能が更新されて、保存先から読めなくなった（録画中に届いた分だけは見られる）
+            if (isExtensionGone()) showMessage(messages.unavailable)
         },
     })
     let player = createPlayer(timeline)
     let wantsPlaying = false // 再生しようとしているか（再生できない所を飛ばした後に、続けて再生する）
     const playVideo = () => {
         wantsPlaying = true
+        // 最後まで再生して止まった後に続きが増えていたら（録画中の番組）、最初からではなく続きから再生する
+        if (video.ended && timeline.end > video.currentTime + 0.5) player.seek(video.currentTime)
         video.play().catch(() => {})
+    }
+    // 最後まで再生して止まっている間に続きが届いたら、続けて再生する
+    const resumeIfEnded = () => {
+        if (wantsPlaying && video.ended && timeline.end > video.currentTime + 0.5) playVideo()
     }
 
     // ---- 再生できない所を飛ばす ----
@@ -327,7 +348,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         onChange?.({ kind: selectedKind, kinds, wallClock, playing: !video.paused })
     }
 
-    const skip = (seconds: number) => player.seek(player.position + seconds)
+    const skip = (seconds: number) => player.seek(player.position + seconds, { backward: seconds < 0 })
     const togglePlay = () => {
         if (video.paused) {
             playVideo()
@@ -445,6 +466,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             if (availableKinds().length === 0) showMessage(messages.empty)
             startIfReady()
             player.update()
+            resumeIfEnded()
         } catch (error) {
             if (destroyed) return
             console.error('録画を読み込めませんでした:', error)

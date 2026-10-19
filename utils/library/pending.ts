@@ -72,10 +72,24 @@ const flushPendingRequests = async (
     }
 }
 
-// 一時保存した書き込みをすべて消す（すべての録画を削除した時）
+// 一時保存した録画のデータを消す（すべての録画を削除した時）
+// 区間を作る・確定する依頼などは残す（録画中の区間を一時保存していた場合に、続きを保存できるように。
+// 終えた区間は、断片がないので移す時に消える）
 const clearPendingRequests = async () => {
     if (!(await hasPendingDB())) return
-    await run('readwrite', store => store.clear())
+    const db = await openPendingDB()
+    await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite')
+        const request = tx.objectStore(STORE).openCursor()
+        request.onsuccess = () => {
+            const cursor = request.result
+            if (!cursor) return
+            if ((cursor.value as BridgeRequest).type === 'appendFragments') cursor.delete()
+            cursor.continue()
+        }
+        tx.oncomplete = () => resolve()
+        tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
+    })
 }
 
 export { savePendingRequest, flushPendingRequests, clearPendingRequests }

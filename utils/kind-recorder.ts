@@ -14,7 +14,7 @@ type KindRecorderOptions = {
     segmentDetails: () => SegmentDetails
     chunkIntervalMs: number // この間隔でデータを受け取って保存する
     onStarted?: (recorder: MediaRecorder) => void // 区間の録画が始まった（区切るたびに呼ばれる）
-    onData?: (recorder: MediaRecorder) => void // データを保存できた（止まっていないかの見張りに使う）
+    onData?: (recorder: MediaRecorder) => void // データが届いた（止まっていないかの見張りに使う）
     onSegmentFinished?: (segment: SegmentSummary) => void
     onSaveFailed?: (error: unknown) => void // 古い録画を消しても保存できなかった
     onEnded?: () => void // stop() を呼ばずに録画が止まった（映像が終わった など）
@@ -64,11 +64,12 @@ const createKindRecorder = ({
 
         recorder.ondataavailable = (event: BlobEvent) => {
             if (event.data.size <= 0) return
+            // 録画は止まっていない（保存できたかどうかは別に扱う。保存の失敗で、ライブが止まったと誤って判断しないように）
+            if (recorder === current) onData?.(recorder)
             saving = saving
                 .then(async () => {
                     if (!created) return
                     await writer.write(event.data)
-                    if (recorder === current) onData?.(recorder)
                 })
                 .catch((error) => {
                     console.error('録画の保存に失敗しました:', error)

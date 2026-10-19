@@ -306,8 +306,9 @@ class SettingsModal {
     modal.querySelector('#clearButton')?.addEventListener('click', async () => {
       if (!confirm('すべての録画を削除しますか？\n（元に戻せません）')) return
       try {
-        await this.clearStorage()
-        this.showMessage('すべての録画を削除しました', 'success')
+        const kept = await this.clearStorage()
+        // 録画中の録画は、それまでの分を削除して続きを録画する
+        this.showMessage(kept > 0 ? 'すべての録画を削除しました（録画中の録画は、この後の分を続けて録画します）' : 'すべての録画を削除しました', 'success')
         await this.getStorageUsageData()
       } catch (error) {
         console.error('録画を削除できませんでした:', error)
@@ -325,10 +326,11 @@ class SettingsModal {
     this.updateUsageBar(value)
   }
 
+  // すべての録画データを削除（拡張機能側へ移す前の、以前のバージョンの録画も）。残した録画中の区間の数を返す
   private async clearStorage() {
-    // すべての録画データを削除（拡張機能側へ移す前の、以前のバージョンの録画も）
-    await clearAll()
+    const kept = await clearAll()
     if (await hasLegacyDatabase()) await deleteLegacyDatabase()
+    return kept ?? 0
   }
 
   // 使用量の表示（スライダーを動かしている間は、まだ保存していないスライダーの値で表示する）

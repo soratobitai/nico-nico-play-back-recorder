@@ -50,7 +50,9 @@ const getBridge = (): Promise<BridgeConnection> => {
         if (connection === connecting) connection = null
     }).catch((error) => {
         if (connection === connecting) connection = null
-        throw error
+        // つなぐ途中のエラー（background から返事がない など）は、すべて「やり取りできない」として扱う
+        // （書き込みは一時保存に回り、一時保存した分を移している途中なら、捨てずに次の機会に回す）
+        throw error instanceof BridgeUnavailableError ? error : new BridgeUnavailableError(`bridge に接続できませんでした: ${error}`)
     })
     connection = connecting
     return connecting

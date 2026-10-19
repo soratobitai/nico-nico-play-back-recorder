@@ -56,6 +56,26 @@ describe('一時保存', () => {
         expect(call.mock.calls.map(([request]) => request.type)).toEqual(['createSegment', 'appendFragments', 'finishSegment'])
     })
 
+    it('一時保存した分を移している間に、別の区間を一時保存したら、その区間の続きは移し終えても一時保存する', async () => {
+        call.mockRejectedValueOnce(new client.BridgeUnavailableError('timeout'))
+        await api.createSegment(segment('A'))
+        // A の続きを書く前に移す。移している間に、B を作る依頼が一時保存される
+        vi.mocked(pending.flushPendingRequests).mockImplementationOnce(async () => {
+            call.mockRejectedValueOnce(new client.BridgeUnavailableError('timeout'))
+            await api.createSegment(segment('B'))
+            return { sent: 1, complete: true }
+        })
+        await api.appendFragments('A', [fragment(0)])
+        vi.mocked(pending.flushPendingRequests).mockResolvedValue({ sent: 0, complete: false })
+
+        await api.appendFragments('B', [fragment(0)])
+
+        // A の続きも、B を移せたか分かるまでは一時保存する（順番が入れ替わらないように、控えめにする）
+        expect(vi.mocked(pending.savePendingRequest).mock.calls.map(([request]) => `${request.type}:${'segmentId' in request ? request.segmentId : request.type === 'createSegment' ? request.segment.segmentId : ''}`))
+            .toEqual(['createSegment:A', 'createSegment:B', 'appendFragments:A', 'appendFragments:B'])
+        expect(call.mock.calls.filter(([request]) => request.type === 'appendFragments')).toHaveLength(0)
+    })
+
     it('拡張機能が更新された後は、一時保存は上限まで。超えたら容量不足にする（録画を止めてお知らせする）', async () => {
         api.setPendingLimit(250)
         vi.mocked(client.isExtensionContextValid).mockReturnValue(false)

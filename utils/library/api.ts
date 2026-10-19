@@ -15,6 +15,8 @@ const pendingSegments = new Set<string>()
 // 拡張機能が更新されると、このページでは拡張機能側に保存できないまま録画が続くので、上限で止める
 let pendingBytes = 0
 let pendingLimit = Infinity
+// 一時保存を始めた回数（移している間に新しく一時保存したものがあれば、移し終えても pendingSegments を空にしない）
+let pendingSaves = 0
 
 const setPendingLimit = (bytes: number) => {
     pendingLimit = bytes
@@ -48,6 +50,7 @@ const saveToPending = async <T extends BridgeRequestType>(request: BridgeRequest
     console.log('拡張機能側に保存できないため、一時保存します:', request.type)
     const segmentId = segmentIdOf(request)
     if (segmentId !== null) pendingSegments.add(segmentId)
+    pendingSaves++
     await savePendingRequest(request)
     pendingBytes += bytes
     return (request.type === 'finishSegment' ? null : undefined) as BridgeResults[T]
@@ -82,10 +85,12 @@ const freeSpace = (bytes: number) => callLibrary({ type: 'freeSpace', bytes })
 const closeStaleSegments = (idleMs: number) => callLibrary({ type: 'closeStaleSegments', idleMs })
 const estimateStorage = () => callLibrary({ type: 'estimateStorage' })
 
-// すべての録画を削除する（録画中の区間は、続きを書き込めるように中身だけ消す）。一時保存した分も消す
+// すべての録画を削除する（録画中の区間は、続きを書き込めるように中身だけ消す）。一時保存した録画のデータも消す
+// 残した録画中の区間の数を返す
 const clearAll = async () => {
-    await callLibrary({ type: 'clearAll' })
+    const kept = await callLibrary({ type: 'clearAll' })
     await clearPendingRequests()
+    return kept
 }
 
 // 一時保存した書き込みを拡張機能側へ移す（同時には1つだけ。移した数を返す）
@@ -95,11 +100,16 @@ const flushPending = (): Promise<number> => flushing ??= (async () => {
     try {
         // 拡張機能が更新された後は移せない（この後も一時保存を続ける）
         if (!isExtensionContextValid()) return 0
+        const savesBefore = pendingSaves
         const { sent, complete } = await flushPendingRequests(
             async (request) => (await getBridge()).call(request),
             error => error instanceof BridgeUnavailableError,
         )
-        if (complete) pendingSegments.clear()
+        // 移している間に新しく一時保存したものは、まだ移したか分からないので、次の機会に移す
+        if (complete && pendingSaves === savesBefore) {
+            pendingSegments.clear()
+            pendingBytes = 0
+        }
         return sent
     } finally {
         flushing = null

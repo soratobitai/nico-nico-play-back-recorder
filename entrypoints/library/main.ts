@@ -93,17 +93,22 @@ const showToast = (text: string, ms: number | null = 4000) => {
 }
 
 // 一覧などを作り直しても、操作していたボタンにフォーカスを戻す（読み直すたびにフォーカスが外れないように）
-const keepFocus = (render: () => void) => {
+// 戻す時に画面をスクロールしない（ボタンを押した後にスクロールして見ている所が、読み直すたびに戻されないように）
+// 作り直してボタンがなくなった場合（消した区間など）は、fallback にフォーカスを移す
+const keepFocus = (render: () => void, fallback?: () => HTMLElement | null | undefined) => {
     const key = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.focusKey : undefined
     render()
-    if (key) document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`)?.focus()
+    if (!key) return
+    const target = document.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(key)}"]`) ?? fallback?.()
+    target?.focus({ preventScroll: true })
 }
 
 // ---- 読み込み ----
 
 const selectedProgram = () => programs.find(program => program.key === selectedKey) ?? null
 
-const load = async () => {
+// focusFallback: フォーカスしていたボタンが、作り直してなくなった時にフォーカスを移す先
+const load = async (focusFallback?: () => HTMLElement | null | undefined) => {
     try {
         // 録画していたタブが閉じられるなどして、録画中のまま残った区間を確定する
         await db.closeStaleSegments(db.STALE_SEGMENT_IDLE_MS).catch((error) => console.warn('残っていた録画を確定できませんでした:', error))
@@ -117,7 +122,7 @@ const load = async () => {
     keepFocus(() => {
         renderList()
         renderProgram()
-    })
+    }, focusFallback)
 }
 
 // ---- 使用量 ----
@@ -303,36 +308,42 @@ const updatePlayhead = (program: ProgramSummary) => {
 
 const kindSuffix = (kind: RecordingKind) => kind === 'video' ? '' : `_${KIND_LABELS[kind]}`
 
-// 区間をつないで保存する（設定が変わった所では、ファイルを分ける）
-let downloading = false // 保存するファイルを作っている間は、続けて押されても作らない
-const downloadSegments = async (program: ProgramSummary, segmentIds: string[]) => {
-    showToast('保存するファイルを作っています…', null)
-    if (downloading) return
-    downloading = true
-    try {
-        const files = await db.buildDownloadFiles(segmentIds)
-        if (files.length === 0) {
-            showToast('保存できる録画がありません。')
-            return
+// 区間をつないで保存する（設定が変わった所や、つなげない形式の録画は、ファイルを分ける）
+// 作っている間に押された分は、順に作って保存する（同時に作ると重いので）
+let downloads = Promise.resolve()
+let waitingDownloads = 0
+const downloadSegments = (program: ProgramSummary, segmentIds: string[]) => {
+    waitingDownloads++
+    showToast(waitingDownloads > 1 ? `保存するファイルを作っています…（あと${waitingDownloads}件）` : '保存するファイルを作っています…', null)
+    downloads = downloads.then(async () => {
+        try {
+            const files = await db.buildDownloadFiles(segmentIds)
+            if (files.length === 0) {
+                showToast('保存できる録画がありません。')
+                return
+            }
+            for (const [i, file] of files.entries()) {
+                const name = [program.userName, program.title, formatDateForFileName(file.startedAt)].filter(Boolean).join('_')
+                downloadBlob(file.blob, `${name}${kindSuffix(file.kind)}.${getVideoExtension(file.mimeType)}`)
+                if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
+            }
+            showToast(files.length > 1
+                ? `${files.length}個のファイルに分けて保存しました（録画の設定が変わった所や、つなげない形式の録画は、別のファイルになります）。`
+                : '保存しました。')
+        } catch (error) {
+            console.error('保存できませんでした:', error)
+            showToast('保存できませんでした。')
+        } finally {
+            waitingDownloads--
+            if (waitingDownloads > 0) showToast(`保存するファイルを作っています…（あと${waitingDownloads}件）`, null)
         }
-        for (const [i, file] of files.entries()) {
-            const name = [program.userName, program.title, formatDateForFileName(file.startedAt)].filter(Boolean).join('_')
-            downloadBlob(file.blob, `${name}${kindSuffix(file.kind)}.${getVideoExtension(file.mimeType)}`)
-            if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
-        }
-        showToast(files.length > 1
-            ? `録画の設定（解像度など）が変わった所で分けて、${files.length}個のファイルに保存しました。`
-            : '保存しました。')
-    } catch (error) {
-        console.error('保存できませんでした:', error)
-        showToast('保存できませんでした。')
-    } finally {
-        downloading = false
-    }
+    })
+    return downloads
 }
 
 // 区間を削除して、一覧を読み直す
-const deleteAndReload = async (segmentIds: string[]) => {
+// フォーカスしていたボタンがなくなったら、同じ位置の区間（なければ番組の一覧の選んでいる番組）に移す
+const deleteAndReload = async (segmentIds: string[], position?: number) => {
     try {
         await db.deleteSegments(segmentIds)
     } catch (error) {
@@ -341,7 +352,13 @@ const deleteAndReload = async (segmentIds: string[]) => {
         return
     }
     showToast('削除しました。')
-    await load()
+    await load(() => {
+        const buttons = [...segmentList.querySelectorAll<HTMLButtonElement>('.segment button:not(:disabled)')]
+        const items = [...segmentList.querySelectorAll<HTMLElement>('.segment')]
+        const item = position === undefined ? undefined : items[Math.min(position, items.length - 1)]
+        return item?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? buttons[0]
+            ?? programList.querySelector<HTMLElement>('.program-item[aria-current="true"]')
+    })
     await view?.refresh()
 }
 
@@ -352,7 +369,7 @@ const renderSegments = (program: ProgramSummary) => {
     segmentsTitle.textContent = program.kinds.length > 1 ? `区間（${KIND_LABELS[kind]}）` : '区間'
     downloadProgramButton.onclick = () => downloadSegments(program, segments.map(s => s.segmentId))
 
-    const items = segments.map((segment) => {
+    const items = segments.map((segment, position) => {
         const item = element('li', 'segment')
         item.dataset.start = String(segment.startedAt)
         item.dataset.end = String(segmentEnd(segment))
@@ -385,7 +402,7 @@ const renderSegments = (program: ProgramSummary) => {
         remove.title = recording ? '録画中の区間は削除できません' : ''
         remove.addEventListener('click', async () => {
             if (!confirm(`${formatTime(segment.startedAt, true)}からの区間（${formatBytes(segment.bytes)}）を削除しますか？`)) return
-            await deleteAndReload([segment.segmentId])
+            await deleteAndReload([segment.segmentId], position)
         })
         actions.append(save, remove)
         item.append(img, info, actions)

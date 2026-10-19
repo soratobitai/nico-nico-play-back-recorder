@@ -222,23 +222,31 @@ describe('終えられないまま残った区間', () => {
         await appendFragments('C', [fragment(0, 8000), fragment(1, 9000)])
     })
 
-    it('最後の書き込みから idleMs 以上たったら、最後の書き込みの時刻で確定する', async () => {
-        await closeStaleSegments(60_000, 10_000 + 59_999)
+    it('保存先に最後に書き込んでから idleMs 以上たったら、録った最後の時刻で確定する', async () => {
+        const written = Date.now()
+        await closeStaleSegments(60_000, written + 50_000)
         expect((await listAllSegments())[0].endedAt).toBeNull()
 
-        await closeStaleSegments(60_000, 10_000 + 60_000)
+        await closeStaleSegments(60_000, written + 60_000)
         expect((await listAllSegments())[0].endedAt).toBe(10_000)
     })
 
     it('断片が1つもない区間は消す', async () => {
         await createSegment(segment('E', 20_000))
 
-        expect(await closeStaleSegments(1000, 30_000)).toEqual(['E'])
+        expect(await closeStaleSegments(1000, Date.now() + 2000)).toEqual(['E'])
         expect((await listAllSegments()).map(s => s.segmentId)).toEqual(['C'])
     })
 
+    it('録った時刻が古くても、書き込んだばかりの区間（一時保存から移している・以前の録画を移している）は確定も削除もしない', async () => {
+        await createSegment(segment('E', 20_000)) // 断片はこれから届く
+
+        expect(await closeStaleSegments(60_000)).toEqual([])
+        expect((await listAllSegments()).map(s => [s.segmentId, s.endedAt])).toEqual([['E', null], ['C', null]])
+    })
+
     it('確定した後に続きの断片が届いたら（一時保存から移された など）、終わりを延ばす', async () => {
-        await closeStaleSegments(1000, 30_000)
+        await closeStaleSegments(1000, Date.now() + 2000)
 
         await appendFragments('C', [fragment(5, 13_000)]) // 5〜6秒の断片
 

@@ -132,6 +132,34 @@ describe('閉じた後', () => {
     })
 })
 
+describe('再生の作り方', () => {
+    it('録画中の番組を追いかけるプレイバック（live）では、区間の切り替わりで動画を終わりにしない', async () => {
+        const root = document.getElementById('root')!
+        const live = mountReviewView({ root, mode: 'live', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        expect(vi.mocked(createReviewPlayer).mock.calls.at(-1)![0]).toMatchObject({ endAtLast: false })
+        live.destroy()
+
+        const library = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        expect(vi.mocked(createReviewPlayer).mock.calls.at(-1)![0]).toMatchObject({ endAtLast: true })
+        library.destroy()
+    })
+
+    it('10秒戻る時は、録っていない間に当たったら間の前へ戻る（backward）', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        current().position = 12
+
+        root.querySelector<HTMLButtonElement>('.back')!.click()
+        expect(current().seek).toHaveBeenLastCalledWith(2, { backward: true })
+        root.querySelector<HTMLButtonElement>('.forward')!.click()
+        expect(current().seek).toHaveBeenLastCalledWith(12, { backward: false })
+        view.destroy()
+    })
+})
+
 describe('キー操作', () => {
     it('ボタンの上のスペースはそのボタンを押す（再生・一時停止にしない）', async () => {
         const root = document.getElementById('root')!

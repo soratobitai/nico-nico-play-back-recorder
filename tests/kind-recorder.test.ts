@@ -186,6 +186,19 @@ describe('createKindRecorder', () => {
         expect(sources[0].stop).toHaveBeenCalledTimes(1)
     })
 
+    it('保存に失敗しても、データが届いていれば見張りに知らせる（ライブが止まったと誤って判断しない）', async () => {
+        vi.mocked(library.appendFragments).mockRejectedValueOnce(Object.assign(new Error('unknown'), { name: 'UnknownError' }))
+        const { recorder, options } = create({ onSaveFailed: vi.fn() })
+        recorder.start()
+        await flush()
+
+        FakeRecorder.instances[0].emit('a')
+        await flush()
+
+        expect(options.onData).toHaveBeenCalledWith(FakeRecorder.instances[0])
+        expect(options.onSaveFailed).not.toHaveBeenCalled() // 容量不足でなければ止めない
+    })
+
     it('区切った後は、前の recorder のデータでは見張りに知らせない', async () => {
         const { recorder, options } = create()
         recorder.start()

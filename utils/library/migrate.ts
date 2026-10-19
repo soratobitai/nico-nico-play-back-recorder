@@ -77,7 +77,8 @@ const migrate = async (call: Call) => {
             activeTempsLeft = true
             continue
         }
-        await importRecording(call, `legacy-temps-${group[0].sessionId}`, {
+        // 古いバージョンの録画処理が長く止まってから続きを録った場合、続きは別の録画として移す（最初の番号で見分ける）
+        await importRecording(call, `legacy-temps-${group[0].sessionId}-${group[0].chunkIndex}`, {
             blob: new Blob(group.map(t => t.blob), { type: group[0].blob.type || 'video/mp4' }),
             title: group[0].title ?? '', userName: group[0].userName ?? '', thumbnail: null,
             startedAt: group[0].createdAt, endedAt: last.createdAt,
