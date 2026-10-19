@@ -1,7 +1,7 @@
 // 種類ごとに、録画する映像（と音声）を作る
-// - 動画のみ: 動画をそのまま。一定の解像度で録る場合は、決まった大きさに描き直す
-// - コメント付き: 動画に流れるコメントを重ねたもの（comment-compositor）
-// - 画面: プレイヤーの表示部分を画面ごと（screen-capture。ユーザーの操作から始める必要があるので、ここでは作らない）
+// - コメントなし: 動画をそのまま。一定の解像度で録る場合は、決まった大きさに描き直す
+// - コメントあり: 動画に流れるコメントを重ねたもの（comment-compositor）
+// - 演出あり: プレイヤーの表示部分を画面ごと（screen-capture。ユーザーの操作から始める必要があるので、ここでは作らない）
 import { createFramePipeline, drawContain, getOutputSize, isFramePipelineSupported } from './frame-pipeline'
 import { createCommentCompositor } from './comment-compositor'
 
@@ -47,7 +47,7 @@ const createVideoCapture = (video: HTMLVideoElement) => {
 
 type VideoCapture = ReturnType<typeof createVideoCapture>
 
-// 動画のみ。fixedHeight を指定すると、その高さ（16:9）に描き直して一定の解像度で録る
+// コメントなし。fixedHeight を指定すると、その高さ（16:9）に描き直して一定の解像度で録る
 // 指定しなければ、録り始めた時の動画の大きさのまま録る（動画の大きさが変わったら、呼び出し側で録り直す）。
 // どちらの場合も、録画の途中で大きさを変えないように描き直す
 // （MediaRecorder の mp4 は、録画の途中で映像の大きさが変わると、そこから先が再生できなくなる。
@@ -75,7 +75,7 @@ const createVideoSource = (capture: VideoCapture, video: HTMLVideoElement, fixed
     return { stream, fixedSize: false, steadySize: false, stop: release }
 }
 
-// コメント付き。この環境でコメントを合成できない場合は null
+// コメントあり。この環境でコメントを合成できない場合は null
 const createCommentSource = (capture: VideoCapture, video: HTMLVideoElement, fixedHeight: number | null): RecordingSource | null => {
     const { stream, release } = capture.acquire()
     const compositor = createCommentCompositor(video, stream, fixedHeight ?? undefined)

@@ -1,9 +1,12 @@
-// 録画バーの設定（バーの上に開く）
-// 録る種類（動画のみ・コメント付き）は、録画バーのチップで切り替える
+// 設定（画面の中央に開くダイアログ。横に「録画する種類」「録画」「保存」を並べる）
+// 録る種類は、録画バーのチップでも切り替えられる（チップはここの設定のショートカット）
 import {
   MAX_STORAGE_SIZE,
   AUTO_START,
   AUTO_RELOAD_ON_FAILURE,
+  RECORD_VIDEO,
+  RECORD_WITH_COMMENTS,
+  RECORD_SCREEN,
   RESOLUTION_MODE,
   FIXED_RESOLUTION_HEIGHT,
   type ResolutionMode,
@@ -15,15 +18,28 @@ const GB = 1024 * 1024 * 1024
 // 容量の上限の範囲
 const MAX_STORAGE_SIZE_LIMIT = 100 * GB
 const STORAGE_QUOTA_ESTIMATE = 30 * GB
-// 録画バー（設定はこの中に開く）
-const BAR_ID = 'playbackRecorderBar'
 
 interface Settings {
   MAX_STORAGE_SIZE: number
   AUTO_START: boolean
   AUTO_RELOAD_ON_FAILURE: boolean
+  RECORD_VIDEO: boolean
+  RECORD_WITH_COMMENTS: boolean
+  RECORD_SCREEN: boolean
   RESOLUTION_MODE: ResolutionMode
   FIXED_RESOLUTION_HEIGHT: number
+}
+
+// 演出あり（画面ごとの録画）を、このページで始める・やめる（録画している App が渡す）
+// 始めるには「このタブを共有」の許可が要るので、クリックの処理の中で start を呼ぶ
+type ScreenRecording = {
+  isRecording: () => boolean
+  start: () => Promise<boolean> // 始められたら true（共有の確認でキャンセルされたら false）
+  stop: () => void
+}
+
+type SettingsModalOptions = {
+  screen?: ScreenRecording | null // この環境で使えなければ null
 }
 
 // 一定の解像度で録る時に選べる高さ
@@ -37,25 +53,39 @@ const CLOSE_ICON = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 
 const toGB = (bytes: number) => Math.round(bytes / GB)
 const formatUsage = (bytes: number) => bytes >= GB ? `${(bytes / GB).toFixed(2)} GB` : `${Math.round(bytes / (1024 * 1024))} MB`
 
+// 設定の項目と、その入力欄（チェックボックス）
+const CHECKBOXES: Partial<Record<keyof Settings, string>> = {
+  AUTO_START: 'autostartCheckbox',
+  AUTO_RELOAD_ON_FAILURE: 'autoReloadCheckbox',
+  RECORD_VIDEO: 'recordVideoCheckbox',
+  RECORD_WITH_COMMENTS: 'recordCommentsCheckbox',
+  RECORD_SCREEN: 'recordScreenCheckbox',
+}
+
 class SettingsModal {
-  private modal: HTMLElement | null = null
+  private modal: HTMLDialogElement | null = null
   private isVisible: boolean = false
-  private clickOutsideHandler: ((e: MouseEvent) => void) | null = null
   private keyHandler: ((e: KeyboardEvent) => void) | null = null
   private settings: Settings = {
     MAX_STORAGE_SIZE: 1 * GB,
     AUTO_START: true,
     AUTO_RELOAD_ON_FAILURE: false,
+    RECORD_VIDEO: true,
+    RECORD_WITH_COMMENTS: false,
+    RECORD_SCREEN: false,
     RESOLUTION_MODE: 'split',
     FIXED_RESOLUTION_HEIGHT: 720,
   }
+  private screen: ScreenRecording | null
   private currentStorageUsage: number | null = null
   private usageError = false // 使用量を読み込めなかった
   private storageQuota: number = 0
   private messageTimer: ReturnType<typeof setTimeout> | null = null
+  private kindsMessageTimer: ReturnType<typeof setTimeout> | null = null
   private usageUpdateInterval: ReturnType<typeof setInterval> | null = null
 
-  constructor() {
+  constructor({ screen = null }: SettingsModalOptions = {}) {
+    this.screen = screen
     this.loadSettings()
     this.watchSettings()
     // 使用量は全録画を読んで数えるので、ここでは取らずに設定画面を開いた時に取る
@@ -63,25 +93,34 @@ class SettingsModal {
   }
 
   private async loadSettings() {
-    const [size, autoStart, autoReload, resolutionMode, fixedResolutionHeight] = await Promise.all([
+    const [size, autoStart, autoReload, recordVideo, recordComments, recordScreen, resolutionMode, fixedResolutionHeight] = await Promise.all([
       MAX_STORAGE_SIZE.getValue(),
       AUTO_START.getValue(),
       AUTO_RELOAD_ON_FAILURE.getValue(),
+      RECORD_VIDEO.getValue(),
+      RECORD_WITH_COMMENTS.getValue(),
+      RECORD_SCREEN.getValue(),
       RESOLUTION_MODE.getValue(),
       FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
     this.applySetting('MAX_STORAGE_SIZE', size)
     this.applySetting('AUTO_START', autoStart)
     this.applySetting('AUTO_RELOAD_ON_FAILURE', autoReload)
+    this.applySetting('RECORD_VIDEO', recordVideo)
+    this.applySetting('RECORD_WITH_COMMENTS', recordComments)
+    this.applySetting('RECORD_SCREEN', recordScreen)
     this.applySetting('RESOLUTION_MODE', resolutionMode)
     this.applySetting('FIXED_RESOLUTION_HEIGHT', fixedResolutionHeight)
   }
 
-  // 他のタブなどで設定が変わったら合わせる（古い値のまま容量の上限を書き戻すと、録画が大量に消えてしまう）
+  // 他のタブや録画バーのチップで設定が変わったら合わせる（古い値のまま容量の上限を書き戻すと、録画が大量に消えてしまう）
   private watchSettings() {
     MAX_STORAGE_SIZE.watch(value => this.applySetting('MAX_STORAGE_SIZE', value))
     AUTO_START.watch(value => this.applySetting('AUTO_START', value))
     AUTO_RELOAD_ON_FAILURE.watch(value => this.applySetting('AUTO_RELOAD_ON_FAILURE', value))
+    RECORD_VIDEO.watch(value => this.applySetting('RECORD_VIDEO', value))
+    RECORD_WITH_COMMENTS.watch(value => this.applySetting('RECORD_WITH_COMMENTS', value))
+    RECORD_SCREEN.watch(value => this.applySetting('RECORD_SCREEN', value))
     RESOLUTION_MODE.watch(value => this.applySetting('RESOLUTION_MODE', value))
     FIXED_RESOLUTION_HEIGHT.watch(value => this.applySetting('FIXED_RESOLUTION_HEIGHT', value))
   }
@@ -91,22 +130,17 @@ class SettingsModal {
     this.settings[key] = value
     const modal = this.modal
     if (!modal) return
-    const input = (id: string) => modal.querySelector<HTMLInputElement>(`#${id}`)
+    const checkboxId = CHECKBOXES[key]
+    if (checkboxId) {
+      const checkbox = modal.querySelector<HTMLInputElement>(`#${checkboxId}`)
+      if (checkbox) checkbox.checked = value as boolean
+      return
+    }
     switch (key) {
       case 'MAX_STORAGE_SIZE': {
-        const range = input('storageRange')
+        const range = modal.querySelector<HTMLInputElement>('#storageRange')
         if (range) range.value = String(value)
         this.updateStorageLabel(value as number)
-        break
-      }
-      case 'AUTO_START': {
-        const checkbox = input('autostartCheckbox')
-        if (checkbox) checkbox.checked = value as boolean
-        break
-      }
-      case 'AUTO_RELOAD_ON_FAILURE': {
-        const checkbox = input('autoReloadCheckbox')
-        if (checkbox) checkbox.checked = value as boolean
         break
       }
       case 'RESOLUTION_MODE': {
@@ -158,6 +192,15 @@ class SettingsModal {
       case 'AUTO_RELOAD_ON_FAILURE':
         await AUTO_RELOAD_ON_FAILURE.setValue(value as boolean)
         break
+      case 'RECORD_VIDEO':
+        await RECORD_VIDEO.setValue(value as boolean)
+        break
+      case 'RECORD_WITH_COMMENTS':
+        await RECORD_WITH_COMMENTS.setValue(value as boolean)
+        break
+      case 'RECORD_SCREEN':
+        await RECORD_SCREEN.setValue(value as boolean)
+        break
       case 'RESOLUTION_MODE':
         await RESOLUTION_MODE.setValue(value as ResolutionMode)
         break
@@ -178,75 +221,106 @@ class SettingsModal {
     }, 3000)
   }
 
+  // 録画する種類の欄に、短いお知らせを出す
+  private showKindsMessage(text: string) {
+    const element = this.modal?.querySelector<HTMLElement>('.npr-kinds-message')
+    if (!element) return
+    element.textContent = text
+    if (this.kindsMessageTimer) clearTimeout(this.kindsMessageTimer)
+    this.kindsMessageTimer = setTimeout(() => {
+      element.textContent = ''
+    }, 3000)
+  }
+
   private createModalHTML(): string {
     const s = this.settings
     const recommended = this.storageQuota > 0 ? `（おすすめ: ${toGB(Math.min(this.storageQuota, STORAGE_QUOTA_ESTIMATE))} GB 以下）` : ''
+    const checked = (value: boolean) => value ? 'checked' : ''
+    const kindSwitch = (id: string, kind: string, value: boolean, title: string, desc: string, disabled = false) => `
+      <label class="npr-switch npr-kind-switch npr-kind-${kind}" for="${id}">
+        <span class="npr-option-text">
+          <span class="npr-option-title"><span class="npr-kind-dot" aria-hidden="true"></span>${title}</span>
+          <span class="npr-option-desc">${desc}</span>
+        </span>
+        <input id="${id}" type="checkbox" role="switch" ${checked(value)} ${disabled ? 'disabled' : ''} />
+      </label>`
+    const optionSwitch = (id: string, value: boolean, title: string, desc: string) => `
+      <label class="npr-switch" for="${id}">
+        <span class="npr-option-text">
+          <span class="npr-option-title">${title}</span>
+          <span class="npr-option-desc">${desc}</span>
+        </span>
+        <input id="${id}" type="checkbox" role="switch" ${checked(value)} />
+      </label>`
     return `
-      <section class="npr-settings" id="settingsModal" role="dialog" aria-label="設定">
-        <header class="npr-settings-head">
-          <h2>設定</h2>
-          <button type="button" class="npr-settings-close" aria-label="設定を閉じる">${CLOSE_ICON}</button>
-        </header>
+      <dialog class="npr-settings" id="settingsModal" aria-labelledby="nprSettingsTitle" tabindex="-1">
+        <div class="npr-settings-panel">
+          <header class="npr-settings-head">
+            <h2 id="nprSettingsTitle">設定</h2>
+            <button type="button" class="npr-settings-close" aria-label="設定を閉じる">${CLOSE_ICON}</button>
+          </header>
 
-        <div class="npr-settings-body">
-          <section class="npr-section">
-            <h3>録画</h3>
-            <label class="npr-switch" for="autostartCheckbox">
-              <input id="autostartCheckbox" type="checkbox" role="switch" ${s.AUTO_START ? 'checked' : ''} />
-              <span class="npr-option-text">
-                <span class="npr-option-title">オートスタート</span>
-                <span class="npr-option-desc">番組を開いたら録画を始めます</span>
-              </span>
-            </label>
-            <label class="npr-switch" for="autoReloadCheckbox">
-              <input id="autoReloadCheckbox" type="checkbox" role="switch" ${s.AUTO_RELOAD_ON_FAILURE ? 'checked' : ''} />
-              <span class="npr-option-text">
-                <span class="npr-option-title">オートリロード</span>
-                <span class="npr-option-desc">映像が止まったら読み込み直します</span>
-              </span>
-            </label>
-          </section>
+          <div class="npr-settings-body">
+            <section class="npr-section" aria-labelledby="nprKindsTitle">
+              <h3 id="nprKindsTitle">録画する種類</h3>
+              ${kindSwitch('recordVideoCheckbox', 'video', s.RECORD_VIDEO, 'コメントなし', '映像と音声をそのまま録画します')}
+              ${kindSwitch('recordCommentsCheckbox', 'comments', s.RECORD_WITH_COMMENTS, 'コメントあり', '流れるコメントを重ねて録画します（タブを表示している間）')}
+              ${kindSwitch('recordScreenCheckbox', 'screen', s.RECORD_SCREEN, '演出あり（画面録画）',
+                this.screen
+                  ? 'ゲームやギフトなどの演出も含めて、画面ごと録画します。ページを開くたびに、録画バーの「演出あり」を押して始めます（画面共有の許可が必要です）'
+                  : 'この環境では使えません',
+                !this.screen)}
+              <p class="npr-option-desc npr-kinds-note">選んだ種類は、別々の録画として同時に録ります。録画バーのボタンでも切り替えられます</p>
+              <p class="npr-kinds-message" role="status"></p>
+            </section>
 
-          <fieldset class="npr-section">
-            <legend><h3>動画の解像度が変わった時</h3></legend>
-            <label class="npr-radio" for="resolutionSplitRadio">
-              <input id="resolutionSplitRadio" type="radio" name="resolutionMode" value="split" ${s.RESOLUTION_MODE === 'split' ? 'checked' : ''} />
-              <span class="npr-option-text">
-                <span class="npr-option-title">録画を分ける</span>
-                <span class="npr-option-desc">元の解像度のまま録ります</span>
-              </span>
-            </label>
-            <label class="npr-radio" for="resolutionFixedRadio">
-              <input id="resolutionFixedRadio" type="radio" name="resolutionMode" value="fixed" ${s.RESOLUTION_MODE === 'fixed' ? 'checked' : ''} />
-              <span class="npr-option-text">
-                <span class="npr-option-title">一定の解像度で録る</span>
-                <span class="npr-option-desc">画質が変わっても1本の録画のまま（拡大・縮小します）</span>
-              </span>
-            </label>
-            <select id="fixedResolutionSelect" class="npr-select" aria-label="一定の解像度で録る時の解像度" ${s.RESOLUTION_MODE === 'fixed' ? '' : 'disabled'}>
-              ${FIXED_RESOLUTION_OPTIONS.map(option => `<option value="${option.height}" ${option.height === s.FIXED_RESOLUTION_HEIGHT ? 'selected' : ''}>${option.label}</option>`).join('')}
-            </select>
-          </fieldset>
+            <section class="npr-section" aria-labelledby="nprRecordingTitle">
+              <h3 id="nprRecordingTitle">録画</h3>
+              ${optionSwitch('autostartCheckbox', s.AUTO_START, 'オートスタート', '番組を開いたら録画を始めます')}
+              ${optionSwitch('autoReloadCheckbox', s.AUTO_RELOAD_ON_FAILURE, 'オートリロード', '映像が止まったら読み込み直します')}
+              <fieldset class="npr-group">
+                <legend><h3>動画の解像度が変わった時</h3></legend>
+                <label class="npr-radio" for="resolutionSplitRadio">
+                  <input id="resolutionSplitRadio" type="radio" name="resolutionMode" value="split" ${checked(s.RESOLUTION_MODE === 'split')} />
+                  <span class="npr-option-text">
+                    <span class="npr-option-title">録画を分ける</span>
+                    <span class="npr-option-desc">元の解像度のまま録ります</span>
+                  </span>
+                </label>
+                <label class="npr-radio" for="resolutionFixedRadio">
+                  <input id="resolutionFixedRadio" type="radio" name="resolutionMode" value="fixed" ${checked(s.RESOLUTION_MODE === 'fixed')} />
+                  <span class="npr-option-text">
+                    <span class="npr-option-title">一定の解像度で録る</span>
+                    <span class="npr-option-desc">画質が変わっても1本の録画のまま（拡大・縮小します）</span>
+                  </span>
+                </label>
+                <select id="fixedResolutionSelect" class="npr-select" aria-label="一定の解像度で録る時の解像度" ${s.RESOLUTION_MODE === 'fixed' ? '' : 'disabled'}>
+                  ${FIXED_RESOLUTION_OPTIONS.map(option => `<option value="${option.height}" ${option.height === s.FIXED_RESOLUTION_HEIGHT ? 'selected' : ''}>${option.label}</option>`).join('')}
+                </select>
+              </fieldset>
+            </section>
 
-          <section class="npr-section">
-            <h3 class="npr-range-head">
-              <label for="storageRange">保存する容量の上限</label>
-              <span class="npr-value"><span id="storageGB">${toGB(s.MAX_STORAGE_SIZE)}</span> GB</span>
-            </h3>
-            <input id="storageRange" class="npr-range" type="range" min="${1 * GB}" max="${MAX_STORAGE_SIZE_LIMIT}" step="${1 * GB}" value="${s.MAX_STORAGE_SIZE}" />
-            <p class="npr-option-desc">上限を超えたら、古い録画から順に削除します${recommended}</p>
-            <div class="npr-usage">
-              <div class="usage-info"></div>
-              <div class="npr-usage-track"><div class="usage-bar"></div></div>
-              <p class="npr-option-desc usage-error" ${this.usageError ? '' : 'hidden'}>使用量を読み込めませんでした</p>
-            </div>
-            <div class="npr-clear">
-              <button type="button" class="npr-danger-button" id="clearButton">すべての録画を削除</button>
-              <p class="message-display" role="status"></p>
-            </div>
-          </section>
+            <section class="npr-section" aria-labelledby="nprStorageTitle">
+              <h3 id="nprStorageTitle">保存</h3>
+              <div class="npr-range-head">
+                <label for="storageRange">保存する容量の上限</label>
+                <span class="npr-value"><span id="storageGB">${toGB(s.MAX_STORAGE_SIZE)}</span> GB</span>
+              </div>
+              <input id="storageRange" class="npr-range" type="range" min="${1 * GB}" max="${MAX_STORAGE_SIZE_LIMIT}" step="${1 * GB}" value="${s.MAX_STORAGE_SIZE}" />
+              <p class="npr-option-desc">上限を超えたら、古い録画から順に削除します${recommended}</p>
+              <div class="npr-usage">
+                <div class="usage-info"></div>
+                <div class="npr-usage-track"><div class="usage-bar"></div></div>
+                <p class="npr-option-desc usage-error" ${this.usageError ? '' : 'hidden'}>使用量を読み込めませんでした</p>
+              </div>
+              <div class="npr-clear">
+                <button type="button" class="npr-danger-button" id="clearButton">すべての録画を削除</button>
+                <p class="message-display" role="status"></p>
+              </div>
+            </section>
+          </div>
         </div>
-      </section>
+      </dialog>
     `
   }
 
@@ -254,26 +328,54 @@ class SettingsModal {
     if (!this.modal) return
     const modal = this.modal
 
-    // 設定画面の外をクリックした時・Esc キーで閉じる（設定ボタン自体のクリックは、ボタンの方で開け閉めする）
-    this.clickOutsideHandler = (e: MouseEvent) => {
-      if (!this.isVisible || modal.contains(e.target as Node)) return
-      if ((e.target as HTMLElement).closest?.('#settingsButton')) return
-      this.close()
-    }
-    setTimeout(() => {
-      if (this.clickOutsideHandler) document.addEventListener('click', this.clickOutsideHandler)
-    }, 200)
+    // 閉じる: 閉じるボタン・Esc キー・ダイアログの外（暗くした所）のクリック
+    modal.querySelector('.npr-settings-close')?.addEventListener('click', () => this.close())
     this.keyHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && this.isVisible) this.close()
+      if (e.key === 'Escape' && this.isVisible) {
+        e.preventDefault()
+        this.close()
+      }
     }
     document.addEventListener('keydown', this.keyHandler)
-    modal.querySelector('.npr-settings-close')?.addEventListener('click', () => this.close())
-
-    modal.querySelector<HTMLInputElement>('#autostartCheckbox')?.addEventListener('change', (e) => {
-      this.updateSetting('AUTO_START', (e.target as HTMLInputElement).checked)
+    // Esc でブラウザがダイアログを閉じる時も、片付けをする
+    modal.addEventListener('cancel', (e) => {
+      e.preventDefault()
+      this.close()
     })
-    modal.querySelector<HTMLInputElement>('#autoReloadCheckbox')?.addEventListener('change', (e) => {
-      this.updateSetting('AUTO_RELOAD_ON_FAILURE', (e.target as HTMLInputElement).checked)
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) this.close()
+    })
+
+    for (const [key, id] of Object.entries(CHECKBOXES) as [keyof Settings, string][]) {
+      if (key === 'RECORD_VIDEO' || key === 'RECORD_WITH_COMMENTS' || key === 'RECORD_SCREEN') continue
+      modal.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('change', (e) => {
+        this.updateSetting(key, (e.target as HTMLInputElement).checked)
+      })
+    }
+
+    // 録画する種類（コメントなし・コメントありは、少なくとも1つ）
+    const videoCheckbox = modal.querySelector<HTMLInputElement>('#recordVideoCheckbox')!
+    const commentsCheckbox = modal.querySelector<HTMLInputElement>('#recordCommentsCheckbox')!
+    for (const [checkbox, key] of [[videoCheckbox, 'RECORD_VIDEO'], [commentsCheckbox, 'RECORD_WITH_COMMENTS']] as const) {
+      checkbox.addEventListener('change', () => {
+        if (!videoCheckbox.checked && !commentsCheckbox.checked) {
+          checkbox.checked = true
+          this.showKindsMessage('コメントなし・コメントありの、少なくとも1つは録画します')
+          return
+        }
+        this.updateSetting(key, checkbox.checked)
+      })
+    }
+
+    // 演出あり。オンにしたら、このページでもすぐに始める（「このタブを共有」の確認が出る）。
+    // 共有をキャンセルしても設定は覚えておき、録画バーの「演出あり」で始められるようにする
+    const screenCheckbox = modal.querySelector<HTMLInputElement>('#recordScreenCheckbox')!
+    screenCheckbox.addEventListener('change', () => {
+      const on = screenCheckbox.checked
+      this.updateSetting('RECORD_SCREEN', on)
+      if (!this.screen) return
+      if (on && !this.screen.isRecording()) void this.screen.start()
+      if (!on && this.screen.isRecording()) this.screen.stop()
     })
 
     // 解像度が変わった時の録り方。録画中に変えた場合は、録り直して反映する（App.ts で設定の変更を監視している）
@@ -378,15 +480,18 @@ class SettingsModal {
       this.close()
       return
     }
-    const bar = document.getElementById(BAR_ID)
-    if (!bar) return
-    bar.insertAdjacentHTML('beforeend', this.createModalHTML())
-    this.modal = document.getElementById('settingsModal')
+    document.body.insertAdjacentHTML('beforeend', this.createModalHTML())
+    this.modal = document.getElementById('settingsModal') as HTMLDialogElement | null
     if (!this.modal) return
     this.isVisible = true
     document.getElementById('settingsButton')?.setAttribute('aria-expanded', 'true')
 
     this.attachEventListeners()
+    // 画面の中央に、ページの他の部分（全画面のプレイヤーも）より手前に開く
+    if (typeof this.modal.showModal === 'function') this.modal.showModal()
+    else this.modal.setAttribute('open', '')
+    // 最初のボタン（閉じる）ではなく、ダイアログにフォーカスを置く（読み上げでは「設定」から始まる）
+    this.modal.focus({ preventScroll: true })
     this.updateUsageDisplay()
     this.getStorageUsageData()
     this.startUsageUpdateInterval()
@@ -394,14 +499,15 @@ class SettingsModal {
 
   public close() {
     this.stopUsageUpdateInterval()
-    this.modal?.remove()
+    const modal = this.modal
     this.modal = null
     this.isVisible = false
-    document.getElementById('settingsButton')?.setAttribute('aria-expanded', 'false')
-    if (this.clickOutsideHandler) {
-      document.removeEventListener('click', this.clickOutsideHandler)
-      this.clickOutsideHandler = null
+    if (modal) {
+      if (modal.open && typeof modal.close === 'function') modal.close()
+      modal.remove()
     }
+    const settingsButton = document.getElementById('settingsButton')
+    settingsButton?.setAttribute('aria-expanded', 'false')
     if (this.keyHandler) {
       document.removeEventListener('keydown', this.keyHandler)
       this.keyHandler = null
@@ -410,3 +516,4 @@ class SettingsModal {
 }
 
 export default SettingsModal
+export type { ScreenRecording }

@@ -26,17 +26,26 @@ export const UI_COLLAPSED = storage.defineItem<boolean>(
     }
 )
 
-// 録画する種類（両方 ON なら別々の録画として同時に録る。少なくとも1つは ON にする）
-// 動画のみ
+// 録画する種類（ON の種類は、別々の録画として同時に録る）
+// コメントなし・コメントありは、少なくとも1つは ON にする
+// コメントなし（映像と音声をそのまま）
 export const RECORD_VIDEO = storage.defineItem<boolean>(
     'local:RECORD_VIDEO',
     {
         fallback: true,
     }
 )
-// 流れるコメントを含めた録画
+// コメントあり（流れるコメントを重ねる）
 export const RECORD_WITH_COMMENTS = storage.defineItem<boolean>(
     'local:RECORD_WITH_COMMENTS',
+    {
+        fallback: false,
+    }
+)
+// 演出あり（プレイヤーの画面ごと。ゲームやギフトも入る）
+// ブラウザの決まりで自動では始められないので、ON の時はページを開くたびに録画バーのボタンで始めるよう促す
+export const RECORD_SCREEN = storage.defineItem<boolean>(
+    'local:RECORD_SCREEN',
     {
         fallback: false,
     }

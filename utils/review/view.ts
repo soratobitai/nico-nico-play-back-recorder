@@ -3,7 +3,7 @@
 // - live: 録画中の番組を、ライブの少し前から見る。音は初めは消しておく（ライブの音はそのまま）。
 //         「ライブに戻る」で最新の録画へ移り、録画中に届く断片を追いかける。
 // - library: 録画した番組を見る。音は出す。録った時刻を指定して見られる。
-// 種類（動画のみ・コメント付き・画面）を同時に録っている場合は、同じ場面のまま切り替えて見られる。
+// 種類（コメントなし・コメントあり・演出あり）を同時に録っている場合は、同じ場面のまま切り替えて見られる。
 import type { RecordingKind, TimelineSegment } from '../library/db'
 import type { LiveFeedEvent } from './live-feed'
 import { Timeline } from './timeline'
@@ -21,7 +21,7 @@ const SYNC_INTERVAL_MS = 30 * 1000
 // 再生できない所を飛ばすのは、1分にこの回数まで（それより多ければ、飛ばし続けずにお知らせする）
 const MAX_RECOVERIES_PER_MINUTE = 5
 // 種類の名前と、初めに見る種類の優先順
-const KIND_LABELS: Record<RecordingKind, string> = { video: '動画のみ', comments: 'コメント付き', screen: '画面' }
+const KIND_LABELS: Record<RecordingKind, string> = { video: 'コメントなし', comments: 'コメントあり', screen: '演出あり' }
 const KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
 
 const MESSAGES = {
@@ -280,7 +280,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         moveTo(kind, wallClock, !video.paused || (!started && mode === 'live'))
     }
 
-    // 初めて録画が読めた時に見始める（初めは「動画のみ」、なければ録ってある種類）
+    // 初めて録画が読めた時に見始める（初めは「コメントなし」、なければ録ってある種類）
     const startIfReady = () => {
         if (started || destroyed) return
         const kinds = availableKinds()

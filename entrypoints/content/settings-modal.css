@@ -1,36 +1,55 @@
-/* 録画バーの設定（バーの上に開く。色は録画バーの --npr-* を使う） */
+/* 設定（画面の中央に開くダイアログ。横に「録画する種類」「録画」「保存」を並べる） */
 .npr-settings {
-  position: absolute;
-  right: 8px;
-  bottom: calc(100% + 8px);
-  width: 360px;
-  max-width: calc(100% - 16px);
-  max-height: min(70vh, 640px);
-  display: flex;
-  flex-direction: column;
+  --npr-text: #e7e9ee;
+  --npr-muted: #8b909c;
+  --npr-line: rgba(255, 255, 255, 0.07);
+  --npr-surface: rgba(255, 255, 255, 0.045);
+  --npr-surface-hover: rgba(255, 255, 255, 0.09);
+  --npr-border: rgba(255, 255, 255, 0.09);
+  --npr-border-strong: rgba(255, 255, 255, 0.16);
+  --npr-accent: #5c8dff;
+  --npr-focus: #8fb3ff;
+  --npr-video-rgb: 92, 141, 255;
+  --npr-comments-rgb: 32, 201, 151;
+  --npr-screen-rgb: 245, 177, 66;
+  --npr-rec-rgb: 255, 77, 94;
+
+  box-sizing: border-box;
+  width: min(880px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(86vh, 640px);
+  margin: auto;
+  padding: 0;
   overflow: hidden;
-  border: 1px solid var(--npr-line-strong);
-  border-radius: 12px;
-  background: #15161a;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--npr-border-strong);
+  border-radius: 14px;
+  background: #131418;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4);
   color: var(--npr-text);
-  font-size: 13px;
-  line-height: 1.4;
+  font: 12px/1.45 "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+  letter-spacing: 0.02em;
   text-align: left;
-  z-index: 10000;
 }
+.npr-settings[open] { display: flex; }
+.npr-settings:focus { outline: none; }
+.npr-settings::backdrop { background: rgba(5, 6, 9, 0.55); backdrop-filter: blur(2px); }
+.npr-settings *,
+.npr-settings *::before,
+.npr-settings *::after { box-sizing: border-box; }
+
+.npr-settings-panel { display: flex; flex-direction: column; width: 100%; min-height: 0; }
 
 .npr-settings-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 10px 10px 16px;
+  padding: 12px 12px 12px 20px;
   border-bottom: 1px solid var(--npr-line);
 }
-.npr-settings-head h2 { margin: 0; font-size: 14px; font-weight: 700; color: var(--npr-text); }
+.npr-settings-head h2 { margin: 0; font-size: 14px; font-weight: 700; color: var(--npr-text); letter-spacing: 0.04em; }
 .npr-settings-close {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -43,92 +62,168 @@
 }
 .npr-settings-close:hover { background: var(--npr-surface-hover); color: var(--npr-text); }
 
-.npr-settings-body { overflow-y: auto; padding: 0 16px 16px; }
-
+/* 3列（狭い画面では縦に並べる） */
+.npr-settings-body {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  min-height: 0;
+  overflow-y: auto;
+}
 .npr-section {
   min-width: 0;
   margin: 0;
-  padding: 14px 0;
+  padding: 16px 20px 18px;
   border: none;
-  border-bottom: 1px solid var(--npr-line);
+  border-left: 1px solid var(--npr-line);
 }
-.npr-section:last-child { border-bottom: none; }
-.npr-section legend { padding: 0; }
-.npr-section h3 { margin: 0 0 6px; font-size: 12px; font-weight: 700; color: var(--npr-muted); }
+.npr-section:first-child { border-left: none; }
+.npr-settings h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--npr-muted);
+}
+.npr-group { min-width: 0; margin: 14px 0 0; padding: 12px 0 0; border: none; border-top: 1px solid var(--npr-line); }
+.npr-group legend { padding: 0; float: left; width: 100%; }
+.npr-group legend + * { clear: both; }
 
+/* スイッチ（右に切り替え、左に説明） */
 .npr-switch,
 .npr-radio {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 7px 0;
+  gap: 12px;
+  padding: 8px 0;
   cursor: pointer;
 }
-.npr-switch input,
-.npr-radio input {
-  width: 16px;
-  height: 16px;
+.npr-switch { justify-content: space-between; }
+.npr-option-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.npr-option-title { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--npr-text); }
+.npr-option-desc { margin: 0; font-size: 11px; line-height: 1.55; color: var(--npr-muted); }
+
+.npr-switch input {
+  position: relative;
+  width: 30px;
+  height: 18px;
   margin: 1px 0 0;
   flex: none;
-  accent-color: var(--npr-video);
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+.npr-switch input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #cfd2da;
+  transition: transform 0.15s, background-color 0.15s;
+}
+.npr-switch input:checked { background: var(--npr-accent); }
+.npr-switch input:checked::after { transform: translateX(12px); background: #fff; }
+.npr-switch input:disabled { opacity: 0.4; cursor: default; }
+.npr-switch:has(input:disabled) { cursor: default; }
+
+/* 録画する種類（色の丸と、オンの時はその色のスイッチ） */
+.npr-kind-video { --npr-kind-rgb: var(--npr-video-rgb); }
+.npr-kind-comments { --npr-kind-rgb: var(--npr-comments-rgb); }
+.npr-kind-screen { --npr-kind-rgb: var(--npr-screen-rgb); }
+.npr-kind-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: rgb(var(--npr-kind-rgb));
+  box-shadow: 0 0 6px rgba(var(--npr-kind-rgb), 0.7);
+}
+.npr-kind-switch input:checked { background: rgb(var(--npr-kind-rgb)); }
+.npr-kinds-note { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--npr-line); }
+.npr-kinds-message { margin: 6px 0 0; font-size: 11px; color: #ffb3ba; }
+.npr-kinds-message:empty { display: none; }
+
+.npr-radio input {
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0;
+  flex: none;
+  accent-color: var(--npr-accent);
   cursor: pointer;
 }
-.npr-option-text { display: flex; flex-direction: column; gap: 2px; }
-.npr-option-title { font-weight: 600; color: var(--npr-text); }
-.npr-option-desc { margin: 0; font-size: 12px; line-height: 1.5; color: var(--npr-muted); }
 
 .npr-select {
-  height: 32px;
+  height: 30px;
   margin: 2px 0 0 26px;
   padding: 0 8px;
-  border: 1px solid var(--npr-line-strong);
+  border: 1px solid var(--npr-border-strong);
   border-radius: 6px;
-  background: var(--npr-surface);
+  background: #1c1d22;
   color: var(--npr-text);
   font: inherit;
 }
 .npr-select:disabled { opacity: 0.45; }
 
+/* 容量の上限 */
 .npr-range-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
 }
-.npr-settings .npr-range-head { color: var(--npr-text); font-size: 13px; }
-.npr-range-head label { font-weight: 600; }
-.npr-value { font-size: 15px; font-weight: 700; }
-.npr-range { width: 100%; margin: 6px 0; accent-color: var(--npr-video); cursor: pointer; }
+.npr-range-head label { font-size: 12.5px; font-weight: 600; color: var(--npr-text); }
+.npr-value { font-size: 14px; font-weight: 700; color: var(--npr-text); font-variant-numeric: tabular-nums; }
+.npr-range { width: 100%; margin: 8px 0 6px; accent-color: var(--npr-accent); cursor: pointer; }
 
 .npr-usage {
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: 8px;
   background: var(--npr-surface);
+  border: 1px solid var(--npr-line);
 }
-.npr-usage .usage-info { margin-bottom: 8px; font-size: 12px; color: var(--npr-muted); }
-.npr-usage-track { height: 6px; overflow: hidden; border-radius: 3px; background: #2a2c33; }
-.npr-usage .usage-bar { width: 0; height: 100%; border-radius: 3px; background: var(--npr-comments); transition: width 0.3s; }
+.npr-usage .usage-info { margin-bottom: 8px; font-size: 11px; color: var(--npr-muted); font-variant-numeric: tabular-nums; }
+.npr-usage-track { height: 5px; overflow: hidden; border-radius: 3px; background: rgba(255, 255, 255, 0.08); }
+.npr-usage .usage-bar { width: 0; height: 100%; border-radius: 3px; background: rgb(var(--npr-comments-rgb)); transition: width 0.3s; }
 .npr-usage .usage-bar.is-high { background: #ff6b6b; }
 .npr-usage .usage-error { margin-top: 8px; }
 .npr-usage .usage-error[hidden] { display: none; }
 
-.npr-clear { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.npr-clear { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; }
 .npr-danger-button {
-  height: 32px;
+  height: 28px;
   padding: 0 12px;
-  border: 1px solid #6b2a33;
-  border-radius: 8px;
-  background: transparent;
-  color: #ff9aa4;
+  border: 1px solid rgba(var(--npr-rec-rgb), 0.45);
+  border-radius: 6px;
+  background: rgba(var(--npr-rec-rgb), 0.08);
+  color: #ffadb6;
   font: inherit;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
 }
-.npr-danger-button:hover { background: var(--npr-danger-bg); }
-.npr-settings .message-display { margin: 0; font-size: 12px; }
+.npr-danger-button:hover { background: rgba(var(--npr-rec-rgb), 0.18); color: #fff; }
+.npr-settings .message-display { margin: 0; font-size: 11px; }
 .npr-settings .message-display[data-type="success"] { color: #5be3b5; }
 .npr-settings .message-display[data-type="error"] { color: #ff9aa4; }
 .npr-settings button:focus-visible,
 .npr-settings input:focus-visible,
 .npr-settings select:focus-visible { outline: 2px solid var(--npr-focus); outline-offset: 2px; }
+
+/* 狭い画面では、縦に並べる */
+@media (max-width: 760px) {
+  .npr-settings-body { grid-template-columns: 1fr; }
+  .npr-section { border-left: none; border-top: 1px solid var(--npr-line); }
+  .npr-section:first-child { border-top: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .npr-switch input,
+  .npr-switch input::after { transition: none; }
+}

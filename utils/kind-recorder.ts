@@ -1,4 +1,4 @@
-// 1つの種類（動画のみ・コメント付き・画面）の録画
+// 1つの種類（コメントなし・コメントあり・演出あり）の録画
 // 同じ映像のまま区間を区切りながら（split）録り続ける。種類ごとに別々の区間として保存する。
 // 録ったデータは届くたびに保存先へ書き込むので、録画中でもプレイバックできる。
 import { createSegmentWriter, getRecordingMimeType, segmentFormatOf, isQuotaExceeded } from './recording'

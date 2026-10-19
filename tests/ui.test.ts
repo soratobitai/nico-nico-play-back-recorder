@@ -103,7 +103,7 @@ describe('録画バー', () => {
         expect($('#capButton').getAttribute('aria-label')).toBe('スクリーンショット')
     })
 
-    describe('画面ごと録画のチップ', () => {
+    describe('演出あり（画面ごとの録画）のチップ', () => {
         it('使えない環境では出さない', () => {
             insertRecorderBar(options())
 
@@ -116,14 +116,27 @@ describe('録画バー', () => {
             const chip = $<HTMLButtonElement>('#screenCaptureButton')
 
             expect(chip.hidden).toBe(false)
-            expect(chip.textContent?.trim()).toBe('画面')
+            expect(chip.querySelector('.npr-long')?.firstChild?.textContent).toBe('演出あり')
             chip.click()
             expect(toggleScreenCapture).toHaveBeenCalledTimes(1)
 
-            setScreenCaptureButton(true)
+            setScreenCaptureButton('on')
             expect(chip.getAttribute('aria-pressed')).toBe('true')
-            setScreenCaptureButton(false)
+            setScreenCaptureButton('off')
             expect(chip.getAttribute('aria-pressed')).toBe('false')
+        })
+
+        it('設定で「演出あり」を選んでいて、まだ始めていない時は、押すよう促す表示にする', () => {
+            insertRecorderBar(options({ toggleScreenCapture: vi.fn() }))
+            const chip = $<HTMLButtonElement>('#screenCaptureButton')
+
+            setScreenCaptureButton('ready')
+
+            expect(chip.classList.contains('is-ready')).toBe(true)
+            expect(chip.getAttribute('aria-pressed')).toBe('false')
+            expect(chip.title).toContain('クリックして')
+            setScreenCaptureButton('on')
+            expect(chip.classList.contains('is-ready')).toBe(false)
         })
     })
 

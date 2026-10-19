@@ -1,5 +1,5 @@
 // ニコ生のページに置く録画バー（プレイヤーの下の1行）
-// 左: 録画の状態と録画時間 / 中: 録る種類（動画のみ・コメント付き・画面） / 右: プレイバック・録画一覧・スクリーンショット・設定・録画開始/停止
+// 左: 録画の状態と録画時間 / 中: 録る種類（コメントなし・コメントあり・演出あり。設定のショートカット） / 右: プレイバック・録画一覧・スクリーンショット・設定・録画開始/停止
 // 録画の再生・保存・削除は、録画一覧のページ（拡張機能のページ）で行う。
 import { getScreenShotAndDownload } from "./feature"
 import { UI_COLLAPSED } from "./storage"
@@ -11,8 +11,8 @@ type RecorderBarOptions = {
     start: () => void
     stop: () => void
     showSettings: () => void
-    toggleKind: (kind: VideoKind) => void // 録る種類（動画のみ・コメント付き）を切り替える
-    toggleScreenCapture: (() => void) | null // 画面ごと録画を使えない環境では null（チップを出さない）
+    toggleKind: (kind: VideoKind) => void // 録る種類（コメントなし・コメントあり）を切り替える
+    toggleScreenCapture: (() => void) | null // 演出あり（画面ごとの録画）を始める・やめる。使えない環境では null（チップを出さない）
     togglePlayback: (() => void) | null // プレイバック（別ウィンドウ）を使えない環境では null（ボタンを出さない）
     openRecordings: () => void // 録画一覧のページを開く
 }
@@ -43,14 +43,14 @@ const BAR_HTML = `
   </div>
 
   <div class="npr-kinds" role="group" aria-label="録画する種類">
-    <button type="button" class="npr-chip npr-chip-video" data-kind="video" aria-pressed="true" title="動画をそのまま録画します">
-      <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">動画のみ</span><span class="npr-short" aria-hidden="true">動画</span>
+    <button type="button" class="npr-chip npr-chip-video" data-kind="video" aria-pressed="true" title="コメントなし: 映像と音声をそのまま録画します">
+      <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">コメントなし</span><span class="npr-short" aria-hidden="true">コメなし</span>
     </button>
-    <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" title="流れるコメントを重ねて録画します（タブを表示している間）">
-      <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">コメント付き</span><span class="npr-short" aria-hidden="true">コメ</span>
+    <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" title="コメントあり: 流れるコメントを重ねて録画します（タブを表示している間）">
+      <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">コメントあり</span><span class="npr-short" aria-hidden="true">コメあり</span>
     </button>
     <button type="button" id="screenCaptureButton" class="npr-chip npr-chip-screen" aria-pressed="false" hidden>
-      <span class="npr-chip-icon">${ICONS.plus}</span><span>画面</span>
+      <span class="npr-chip-icon">${ICONS.plus}</span><span class="npr-long">演出あり<span class="npr-ready-label">：クリックで開始</span></span><span class="npr-short" aria-hidden="true">演出</span>
     </button>
     <span class="npr-hint" role="status"></span>
   </div>
@@ -109,7 +109,7 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     if (toggleScreenCapture) {
         screenCaptureButton.hidden = false
         screenCaptureButton.addEventListener('click', toggleScreenCapture)
-        setScreenCaptureButton(false)
+        setScreenCaptureButton('off')
     }
 
     if (togglePlayback) {
@@ -158,14 +158,19 @@ const showBarHint = (text: string) => {
     hintTimer = setTimeout(() => hint.classList.remove('is-visible'), 3000)
 }
 
-// 画面ごと録画のチップの表示
-function setScreenCaptureButton(active: boolean) {
+// 演出あり（画面ごとの録画）のチップの表示
+// off: 録っていない / ready: 設定で「演出あり」を選んでいるが、まだ始めていない（押して共有を許可すると始まる）/ on: 録っている
+type ScreenChipState = 'off' | 'ready' | 'on'
+function setScreenCaptureButton(chipState: ScreenChipState) {
     if (!screenCaptureButton) return
-    screenCaptureButton.setAttribute('aria-pressed', String(active))
-    screenCaptureButton.querySelector('.npr-chip-icon')!.innerHTML = active ? ICONS.check : ICONS.plus
-    screenCaptureButton.title = active
-        ? 'クリックすると、画面ごとの録画だけをやめます'
-        : 'ゲームやギフトも含めて、プレイヤーの画面ごと録画を追加します（「このタブを共有」の許可が必要です）'
+    screenCaptureButton.setAttribute('aria-pressed', String(chipState === 'on'))
+    screenCaptureButton.classList.toggle('is-ready', chipState === 'ready')
+    screenCaptureButton.querySelector('.npr-chip-icon')!.innerHTML = chipState === 'on' ? ICONS.check : ICONS.plus
+    screenCaptureButton.title = {
+        on: '演出あり: クリックすると、演出ありの録画だけをやめます',
+        ready: '演出あり: クリックして「このタブを共有」を許可すると、ゲームやギフトなどの演出も含めた録画を始めます',
+        off: '演出あり: ゲームやギフトなどの演出も含めて、プレイヤーの画面ごと録画します（「このタブを共有」の許可が必要です）',
+    }[chipState]
 }
 
 // プレイバックのボタンの表示
@@ -236,4 +241,4 @@ export {
     insertToggleButton,
     updateToggleButton,
 }
-export type { BarState }
+export type { BarState, ScreenChipState }

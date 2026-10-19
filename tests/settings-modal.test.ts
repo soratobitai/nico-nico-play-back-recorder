@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeBrowser } from 'wxt/testing'
 import SettingsModal from '@/entrypoints/content/settings-modal'
 import { getUsage, clearAll } from '@/utils/library/api'
-import { MAX_STORAGE_SIZE, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT } from '@/utils/storage'
+import { MAX_STORAGE_SIZE, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, RECORD_VIDEO, RECORD_WITH_COMMENTS, RECORD_SCREEN } from '@/utils/storage'
 
 vi.mock('@/utils/library/api', () => ({
     getUsage: vi.fn(async () => ({ bytes: 2 * GB, segments: 1, bytesByKind: { video: 2 * GB, comments: 0, screen: 0 } })),
@@ -88,9 +88,11 @@ describe('設定画面', () => {
         expect(document.getElementById('intervalRange')).toBeNull()
     })
 
-    it('録画バーの上に開き、もう一度押す・閉じるボタン・Esc で閉じる', () => {
+    it('画面の中央にダイアログで開き、もう一度押す・閉じるボタン・Esc・ダイアログの外のクリックで閉じる', () => {
         modal.show()
-        expect(document.querySelector('#playbackRecorderBar #settingsModal')).not.toBeNull()
+        const dialog = document.getElementById('settingsModal')!
+        expect(dialog.tagName).toBe('DIALOG')
+        expect(dialog.parentElement).toBe(document.body) // 録画バーの中ではなく、ページの上に開く
         expect(document.getElementById('settingsButton')?.getAttribute('aria-expanded')).toBe('true')
 
         modal.show()
@@ -104,13 +106,78 @@ describe('設定画面', () => {
         modal.show()
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
         expect(document.getElementById('settingsModal')).toBeNull()
+
+        modal.show()
+        document.getElementById('settingsModal')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) // 暗くした所
+        expect(document.getElementById('settingsModal')).toBeNull()
+
+        modal.show()
+        ;(document.querySelector('.npr-settings-body') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true })) // ダイアログの中
+        expect(document.getElementById('settingsModal')).not.toBeNull()
     })
 
-    it('録る種類は設定画面ではなく録画バーのチップで選ぶ', () => {
-        modal.show()
+    describe('録画する種類', () => {
+        const checkbox = (id: string) => document.getElementById(id) as HTMLInputElement
+        const toggle = (id: string) => {
+            checkbox(id).checked = !checkbox(id).checked
+            checkbox(id).dispatchEvent(new Event('change'))
+        }
 
-        expect(document.getElementById('recordVideoCheckbox')).toBeNull()
-        expect(document.getElementById('recordWithCommentsCheckbox')).toBeNull()
+        it('コメントなし・コメントあり・演出ありを選べ、選ぶと保存する（録画バーのチップと同じ設定）', async () => {
+            modal.show()
+            expect([checkbox('recordVideoCheckbox').checked, checkbox('recordCommentsCheckbox').checked, checkbox('recordScreenCheckbox').checked])
+                .toEqual([true, false, false])
+
+            toggle('recordCommentsCheckbox')
+            await flush()
+
+            expect(await RECORD_WITH_COMMENTS.getValue()).toBe(true)
+        })
+
+        it('コメントなし・コメントありの両方は外せない（少なくとも1つは録る）', async () => {
+            modal.show()
+
+            toggle('recordVideoCheckbox')
+            await flush()
+
+            expect(checkbox('recordVideoCheckbox').checked).toBe(true)
+            expect(await RECORD_VIDEO.getValue()).toBe(true)
+            expect(document.querySelector('.npr-kinds-message')?.textContent).toContain('少なくとも1つ')
+        })
+
+        it('録画バーのチップで切り替えたら、開いている設定画面も合わせる', async () => {
+            modal.show()
+
+            await RECORD_WITH_COMMENTS.setValue(true)
+            await flush()
+
+            expect(checkbox('recordCommentsCheckbox').checked).toBe(true)
+        })
+
+        it('演出ありをオンにすると覚えておき、このページでもすぐ始める。オフにするとやめる', async () => {
+            modal.close()
+            const screen = { isRecording: vi.fn(() => false), start: vi.fn(async () => true), stop: vi.fn() }
+            modal = new SettingsModal({ screen })
+            await flush()
+            modal.show()
+
+            toggle('recordScreenCheckbox')
+            await flush()
+            expect(await RECORD_SCREEN.getValue()).toBe(true)
+            expect(screen.start).toHaveBeenCalledTimes(1)
+
+            screen.isRecording.mockReturnValue(true)
+            toggle('recordScreenCheckbox')
+            await flush()
+            expect(await RECORD_SCREEN.getValue()).toBe(false)
+            expect(screen.stop).toHaveBeenCalledTimes(1)
+        })
+
+        it('演出ありを使えない環境では選べない', () => {
+            modal.show()
+
+            expect(checkbox('recordScreenCheckbox').disabled).toBe(true)
+        })
     })
 
     it('すべての録画を削除する前に確かめる（やめたら削除しない）', async () => {
