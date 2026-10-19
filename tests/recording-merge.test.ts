@@ -59,6 +59,19 @@ describe('mergeStaleChunks', () => {
         expect(await tempsOf('S1')).toHaveLength(0)
     })
 
+    it('作成時刻が前後していても、録画した順（通し番号順）に結合する', async () => {
+        // PC の時計が途中で戻った場合を想定
+        const createdAt = [OLD + 2000, OLD + 1000, OLD + 3000]
+        for (let i = 0; i < 3; i++) {
+            await saveChunk('Temps', 'S-clock', i, new Blob([`ok-${i}`], { type: 'video/mp4' }), null, createdAt[i], 'user', 'title')
+        }
+
+        await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
+
+        const [chunk] = await chunksOf('S-clock')
+        expect(await chunk.blob.text()).toBe('ok-0ok-1ok-2')
+    })
+
     it('録画中（ロック保持中）の区間は古く見えても結合せず、解放後に結合する', async () => {
         await putTemps('S2', 3, OLD)
         const release = holdSegmentLock('S2')

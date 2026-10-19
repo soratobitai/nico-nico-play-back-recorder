@@ -173,7 +173,10 @@ const holdSegmentLock = (sessionId: string): (() => void) => {
 // 同じ区間を同時に結合しないよう、呼び出し側で区間のロックを持っていること
 // 保存した動画データを返す（保存しなかった場合は null）
 const mergeTemps = async (sessionId: string, createdAt: number): Promise<ChunkRecord | null> => {
-    const temps = (await getAllChunks('Temps')).filter(temp => temp.sessionId === sessionId)
+    const temps = (await getAllChunks('Temps'))
+        .filter(temp => temp.sessionId === sessionId)
+        // 録画した順に並べる（作成時刻は PC の時計の補正でずれることがあるので通し番号を使う）
+        .sort((a, b) => a.chunkIndex - b.chunkIndex)
     if (temps.length === 0) return null
 
     const keys = temps.map(temp => [temp.sessionId, temp.chunkIndex])
@@ -271,13 +274,18 @@ const mergeStaleChunks = async (SAVE_CHUNK_INTERVAL_MS: number) => {
     }
 }
 
+// ライブ状態の確認に続けて失敗した時の、再確認の間隔の上限
+const MAX_LIVE_STATUS_RETRY_INTERVAL_MS = 60 * 1000
+
 // ondataavailable の発火が止まったことを検知する
 const resetTimeoutCheck = (
     mediaRecorder: MediaRecorder,
     SAVE_CHUNK_INTERVAL_MS: number,
     autoReloadOnFailure: boolean = false,
+    failureCount: number = 0, // ライブ状態の確認に続けて失敗した回数（失敗が続くほど間隔を伸ばす）
 ) => {
     clearTimeout(recordingTimeout)
+    const delay = Math.min(SAVE_CHUNK_INTERVAL_MS * 3 * 2 ** failureCount, MAX_LIVE_STATUS_RETRY_INTERVAL_MS)
     recordingTimeout = setTimeout(async () => {
         // 既に停止している recorder は監視しない（ライブ状態の確認中に停止される場合もあるので確認後にも見る）
         const isInactive = () => mediaRecorder.state === 'inactive'
@@ -290,7 +298,7 @@ const resetTimeoutCheck = (
         if (liveStatus === 'ERROR') {
             // 取得失敗（ネットワーク断など）は放送終了と区別できないので、録画は止めずに再確認する
             console.log('ライブ状態を取得できなかったため再確認します')
-            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
+            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, failureCount + 1)
         } else if (liveStatus === 'ON_AIR') {
             if (mediaRecorder.state === 'recording') {
                 // ライブが続いていて、かつ録画中の場合のみリロードボタンを押す
@@ -314,7 +322,7 @@ const resetTimeoutCheck = (
 
             clearTimeout(recordingTimeout)
         }
-    }, SAVE_CHUNK_INTERVAL_MS * 3)
+    }, delay)
 }
 
 // ミュート対策

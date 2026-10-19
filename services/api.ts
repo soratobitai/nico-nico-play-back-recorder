@@ -6,7 +6,9 @@ const checkLiveStatus = async () => {
             headers: {
                 'Content-Type': 'text/html',
                 'Cache-Control': 'no-cache'
-            }
+            },
+            // 通信が応答しないまま止まると、録画の監視（再確認や停止）も止まってしまうので打ち切る
+            signal: AbortSignal.timeout(10 * 1000),
         })
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
