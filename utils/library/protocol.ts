@@ -1,5 +1,5 @@
 // ニコ生のページ（content script）と、拡張機能側の保存先（bridge）とのやり取りの決まり
-import type { NewSegment, NewFragment, SegmentSummary, Usage } from './db'
+import type { NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment } from './db'
 
 type BridgeRequest =
     | { type: 'createSegment', segment: NewSegment }
@@ -10,6 +10,8 @@ type BridgeRequest =
     | { type: 'countSegments' }
     | { type: 'getSegmentFile', segmentId: string }
     | { type: 'deleteSegments', segmentIds: string[] }
+    | { type: 'getTimeline', programId: string }
+    | { type: 'getFragmentBlobs', segmentId: string, indexes: number[] }
     | { type: 'getUsage' }
     | { type: 'enforceLimit', maxBytes: number }
     | { type: 'freeSpace', bytes: number }
@@ -28,6 +30,8 @@ type BridgeResults = {
     countSegments: number
     getSegmentFile: { blob: Blob, segment: SegmentSummary }
     deleteSegments: void
+    getTimeline: TimelineSegment[]
+    getFragmentBlobs: (Blob | null)[]
     getUsage: Usage
     enforceLimit: DeletedSpace
     freeSpace: DeletedSpace

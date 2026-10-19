@@ -45,7 +45,7 @@ const importRecording = async (call: Call, recording: LegacyRecording) => {
                 type: 'appendFragments',
                 segmentId,
                 fragments: fragments.slice(i, i + FRAGMENTS_PER_REQUEST).map((f, j) => ({
-                    index: i + j, blob: f.blob, moofSize: f.moofSize, startTime: f.startTime, duration: f.duration,
+                    index: i + j, blob: f.blob, moofSize: f.moofSize, startTime: f.startTime, duration: f.duration, keyframe: f.keyframe,
                     wallClock: startedAt + (f.startTime - firstStart) * 1000,
                 })),
             })

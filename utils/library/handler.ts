@@ -12,6 +12,8 @@ const handleBridgeRequest = (request: BridgeRequest): Promise<unknown> => {
         case 'countSegments': return db.countSegments()
         case 'getSegmentFile': return db.getSegmentFile(request.segmentId)
         case 'deleteSegments': return db.deleteSegments(request.segmentIds)
+        case 'getTimeline': return db.getTimeline(request.programId)
+        case 'getFragmentBlobs': return db.getFragmentBlobs(request.segmentId, request.indexes)
         case 'getUsage': return db.getUsage()
         case 'enforceLimit': return db.enforceLimit(request.maxBytes)
         case 'freeSpace': return db.freeSpace(request.bytes)

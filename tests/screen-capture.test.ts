@@ -32,14 +32,14 @@ describe('画面ごと録画ボタン', () => {
     })
 
     it('使えない環境ではボタンを表示しない', async () => {
-        await insertRecordedMovieAria(() => {}, () => {}, () => {}, () => {}, null)
+        await insertRecordedMovieAria(() => {}, () => {}, () => {}, () => {}, null, null)
 
         expect(button().hidden).toBe(true)
     })
 
     it('使える環境ではボタンを表示し、押すと切り替えの処理を呼ぶ', async () => {
         const toggle = vi.fn()
-        await insertRecordedMovieAria(() => {}, () => {}, () => {}, () => {}, toggle)
+        await insertRecordedMovieAria(() => {}, () => {}, () => {}, () => {}, toggle, null)
 
         expect(button().hidden).toBe(false)
         expect(button().textContent).toBe('画面録画')
@@ -48,7 +48,7 @@ describe('画面ごと録画ボタン', () => {
     })
 
     it('画面ごと録画中は「画面録画中」と表示し、やめると元に戻す', async () => {
-        await insertRecordedMovieAria(() => {}, () => {}, () => {}, () => {}, () => {})
+        await insertRecordedMovieAria(() => {}, () => {}, () => {}, () => {}, () => {}, null)
 
         setScreenCaptureButton(true)
         expect(button().textContent).toBe('画面録画中')

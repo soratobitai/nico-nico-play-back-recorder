@@ -29,6 +29,8 @@ const listSegments = (limit: number, before?: number) => callLibrary({ type: 'li
 const countSegments = () => callLibrary({ type: 'countSegments' })
 const getSegmentFile = (segmentId: string) => callLibrary({ type: 'getSegmentFile', segmentId })
 const deleteSegments = (segmentIds: string[]) => callLibrary({ type: 'deleteSegments', segmentIds })
+const getTimeline = (programId: string) => callLibrary({ type: 'getTimeline', programId })
+const getFragmentBlobs = (segmentId: string, indexes: number[]) => callLibrary({ type: 'getFragmentBlobs', segmentId, indexes })
 const getUsage = () => callLibrary({ type: 'getUsage' })
 const enforceLimit = (maxBytes: number) => callLibrary({ type: 'enforceLimit', maxBytes })
 const freeSpace = (bytes: number) => callLibrary({ type: 'freeSpace', bytes })
@@ -48,6 +50,6 @@ const migrateLegacy = () => migrateLegacyRecordings(async (request) => (await ge
 
 export {
     createSegment, setSegmentInit, appendFragments, finishSegment,
-    listSegments, countSegments, getSegmentFile, deleteSegments,
+    listSegments, countSegments, getSegmentFile, deleteSegments, getTimeline, getFragmentBlobs,
     getUsage, enforceLimit, freeSpace, closeStaleSegments, clearAll, estimateStorage, flushPending, migrateLegacy,
 }

@@ -1,11 +1,12 @@
 import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments } from "../../utils/library/api"
 import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded, createSegmentWriter, segmentFormatOf, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
-import { insertRecordedMovieAria, insertRecordedMovie, createModal, loadRecordedMovieList, removeSegmentItems, updateRecordingCount, insertToggleButton, updateToggleButton, isUICollapsed, setScreenCaptureButton } from "../../utils/ui"
+import { insertRecordedMovieAria, insertRecordedMovie, createModal, loadRecordedMovieList, removeSegmentItems, updateRecordingCount, insertToggleButton, updateToggleButton, isUICollapsed, setScreenCaptureButton, setReviewButton } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_WITH_COMMENTS } from '../../utils/storage'
 import { createCommentCompositor, type CommentCompositor } from '../../utils/comment-compositor'
 import { isScreenCaptureSupported, startScreenCapture, type ScreenCapture } from '../../utils/screen-capture'
 import { checkLiveStatus } from '../../services/api'
+import { isReviewSupported, isReviewOpen, toggleReviewWindow } from '../../utils/review/window'
 import SettingsModal from './settings-modal'
 import './settings-modal.css'
 
@@ -446,6 +447,13 @@ export default async () => {
         }
     }
 
+    // 見直しのウィンドウを開く・閉じる（録画は止めない）
+    const toggleReview = () => {
+        toggleReviewWindow({ programId, title, onClose: () => setReviewButton(false) })
+            .then(() => setReviewButton(isReviewOpen()))
+            .catch((error) => console.log("見直しのウィンドウを開けませんでした:", error))
+    }
+
     // 設定モーダルを初期化
     const settingsModal = new SettingsModal()
 
@@ -456,6 +464,8 @@ export default async () => {
         reload,
         () => settingsModal.show(),
         isScreenCaptureSupported() ? toggleScreenCapture : null,
+        // 見直しは mp4 の録画だけ（webm でしか録画できない環境では使えない）
+        isReviewSupported() && segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? toggleReview : null,
     )
     createModal()
 

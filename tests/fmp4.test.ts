@@ -63,6 +63,30 @@ describe('createFmp4Splitter（録画中のデータを分ける）', () => {
         expect(sum(fragments.map(f => f.duration))).toBeGreaterThan(7)
         expect(sum(fragments.map(f => f.duration))).toBeLessThan(9)
     })
+
+    it('映像がキーフレームから始まる断片かを見分ける（MediaRecorder はキーフレームごとに断片を区切る）', () => {
+        const { inits, fragments } = splitInChunks([fixture.length])
+        expect(fragments.every(f => f.keyframe)).toBe(true)
+
+        // 2つ目の断片の映像の最初のサンプルを、キーフレームでないことにする
+        const bytes = fixture.slice()
+        const moofStart = inits[0].length + fragments[0].bytes.length
+        const view = new DataView(bytes.buffer)
+        let changed = 0
+        for (let p = moofStart; p < moofStart + fragments[1].moofSize - 4; p++) {
+            if (String.fromCharCode(...bytes.subarray(p, p + 4)) !== 'trun') continue
+            const flags = view.getUint32(p + 4) & 0xffffff
+            if (!(flags & 0x4)) continue // 映像の trun だけが first_sample_flags を持つ
+            const firstFlags = p + 4 + 8 + (flags & 0x1 ? 4 : 0)
+            view.setUint32(firstFlags, view.getUint32(firstFlags) | 0x10000) // sample_is_non_sync_sample
+            changed++
+        }
+        expect(changed).toBe(1)
+
+        const splitter = createFmp4Splitter()
+        const result = splitter.push(bytes).fragments
+        expect(result.map(f => f.keyframe)).toEqual([true, false, true])
+    })
 })
 
 describe('splitFmp4Blob（保存済みのファイルを分ける）', () => {

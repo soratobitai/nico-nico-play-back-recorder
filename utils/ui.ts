@@ -10,6 +10,7 @@ let recordStatus = null as HTMLDivElement | null
 let reloadButton = null as HTMLButtonElement | null
 let recordingCount = null as HTMLDivElement | null
 let screenCaptureButton = null as HTMLButtonElement | null
+let reviewButton = null as HTMLButtonElement | null
 
 let userScrolledAway = false
 
@@ -30,6 +31,7 @@ const insertRecordedMovieAria = async (
     reload: () => void,
     showSettings: () => void,
     toggleScreenCapture: (() => void) | null, // 画面ごと録画を使えない環境では null（ボタンを表示しない）
+    toggleReview: (() => void) | null, // 見直しのウィンドウを使えない環境では null（ボタンを表示しない）
 ) => {
     const controlArea = document.querySelector('[class*="_control-area_"]')
     if (!controlArea) return
@@ -62,6 +64,7 @@ const insertRecordedMovieAria = async (
                 </div>
               </div>
               <div class="control-buttons-right">
+                <button type="button" id="reviewButton" hidden>見直す</button>
                 <button type="button" id="screenCaptureButton" hidden>画面録画</button>
                 <div class="settings-button" id="settingsButton" title="設定">
                   <img src="${chrome.runtime.getURL("assets/images/settings.svg")}" alt="設定" />
@@ -103,6 +106,14 @@ const insertRecordedMovieAria = async (
         screenCaptureButton.hidden = false
         screenCaptureButton.addEventListener("click", toggleScreenCapture)
         setScreenCaptureButton(false)
+    }
+
+    // 見直しボタン
+    reviewButton = document.getElementById("reviewButton") as HTMLButtonElement
+    if (toggleReview) {
+        reviewButton.hidden = false
+        reviewButton.addEventListener("click", toggleReview)
+        setReviewButton(false)
     }
 
     // 録画リストのスクロール制御
@@ -629,6 +640,16 @@ function setScreenCaptureButton(active: boolean) {
         : 'ゲームやギフトも含めて、プレイヤーの画面ごと録画します。「このタブを共有」の許可が必要です。'
 }
 
+// 見直しボタンの表示を更新
+function setReviewButton(open: boolean) {
+    if (!reviewButton) return
+    reviewButton.classList.toggle('active', open)
+    reviewButton.textContent = open ? '見直し中' : '見直す'
+    reviewButton.title = open
+        ? 'クリックすると、見直しのウィンドウを閉じます。'
+        : '録画を止めずに、少し前の映像を別のウィンドウで見直します。'
+}
+
 export {
     insertRecordedMovieAria,
     insertRecordedMovie,
@@ -640,6 +661,7 @@ export {
     updateRecordingCount,
     setRecordingStatus,
     setScreenCaptureButton,
+    setReviewButton,
     getTimeString,
     insertToggleButton,
     updateToggleButton,

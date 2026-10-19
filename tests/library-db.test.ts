@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
     createSegment, setSegmentInit, appendFragments, finishSegment, listSegments, countSegments,
-    getSegmentFile, deleteSegments, clearAll, getUsage, freeSpace, enforceLimit, closeStaleSegments,
+    getSegmentFile, deleteSegments, clearAll, getUsage, freeSpace, enforceLimit, closeStaleSegments, getTimeline, getFragmentBlobs,
     type NewSegment, type NewFragment,
 } from '@/utils/library/db'
 import { splitFmp4Blob } from '@/utils/fmp4'
@@ -93,6 +93,39 @@ describe('再生・ダウンロード用のファイル', () => {
         const { blob } = await getSegmentFile('W')
         expect(await blob.text()).toBe('ab')
         expect(blob.type).toBe('video/webm')
+    })
+})
+
+describe('見直し用の読み出し', () => {
+    it('番組の mp4 の区間を始めた順に、断片の時刻だけ返す（初期化セグメントのない区間・webm・他の番組は除く）', async () => {
+        await createSegment(segment('B', 2000))
+        await setSegmentInit('B', new Blob(['init']))
+        await appendFragments('B', [{ ...fragment(0, 2000), keyframe: false }, fragment(1, 3000)])
+        await createSegment(segment('A', 1000))
+        await setSegmentInit('A', new Blob(['init']))
+        await createSegment(segment('N', 3000)) // 初期化セグメントがまだ届いていない
+        await createSegment(segment('W', 4000, { format: 'opaque' }))
+        await createSegment(segment('O', 5000, { programId: 'lv2' }))
+        await setSegmentInit('O', new Blob(['init']))
+
+        const timeline = await getTimeline('lv1')
+
+        expect(timeline.map(s => s.segmentId)).toEqual(['A', 'B'])
+        // 以前のデータ（keyframe がない）は、どこからでも再生できるものとする
+        expect(timeline[1].fragments).toEqual([
+            { index: 0, startTime: 0, duration: 1, keyframe: false },
+            { index: 1, startTime: 1, duration: 1, keyframe: true },
+        ])
+        expect(await timeline[1].init.text()).toBe('init')
+    })
+
+    it('断片のデータを読み、消された断片は null にする', async () => {
+        await createSegment(segment('A', 1000))
+        await appendFragments('A', [{ ...fragment(0, 1000), blob: new Blob(['a']) }, { ...fragment(2, 3000), blob: new Blob(['c']) }])
+
+        const blobs = await getFragmentBlobs('A', [0, 1, 2])
+
+        expect(await Promise.all(blobs.map(b => b?.text() ?? null))).toEqual(['a', null, 'c'])
     })
 })
 

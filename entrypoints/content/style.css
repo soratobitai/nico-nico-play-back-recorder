@@ -199,6 +199,7 @@
 .control-panel {
   min-width: 120px;
   padding: 0 5px;
+  flex: none; /* ボタンが増えても縮めずに、録画リストの方を狭くする */
 }
 .control-buttons {
   display: flex;
@@ -252,6 +253,22 @@
 .control-buttons-right {
   display: flex;
   align-items: center;
+}
+
+#reviewButton,
+#screenCaptureButton {
+  white-space: nowrap;
+}
+
+#reviewButton {
+  background: #3567d6;
+  color: white;
+  margin-right: 4px;
+}
+
+#reviewButton.active {
+  background: #26262b;
+  outline: 1px solid #4d7ff0;
 }
 
 #screenCaptureButton {

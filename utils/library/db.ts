@@ -3,7 +3,7 @@
 // ニコ生のページ（content script）からは bridge を通して使う（utils/library/api.ts）。
 //
 // 録画は「区間（segment）」ごとに保存する。区間は1回の録画処理（MediaRecorder）で録った範囲で、
-// fmp4 の区間は「初期化セグメント」と約1秒ごとの「断片（fragment）」に分けて持つ。
+// fmp4 の区間は「初期化セグメント」と数秒ごとの「断片（fragment）」に分けて持つ。
 // 断片のまま持つので、録画中でも再生でき、容量の上限を超えたら古い断片から消していける。
 import { buildFmp4File } from '../fmp4'
 
@@ -41,6 +41,7 @@ type FragmentRecord = {
     startTime: number // 区間の中での開始時刻（秒）
     duration: number
     wallClock: number // 録画した時刻（ミリ秒）。容量の上限を超えた時に古い順に消すために使う
+    keyframe?: boolean // 映像がキーフレームから始まる（この断片から再生を始められる）。ない場合は始められるものとする
 }
 
 type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration'>
@@ -235,6 +236,37 @@ const clearAll = () => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async
     await promisify(tx.objectStore(SEGMENTS).clear())
 })
 
+// ---- 見直し（録画中の番組を、ページ内で少し前から見る） ----
+
+type TimelineFragment = { index: number, startTime: number, duration: number, keyframe: boolean }
+type TimelineSegment = Pick<SegmentRecord, 'segmentId' | 'kind' | 'mimeType' | 'startedAt' | 'endedAt'> & {
+    init: Blob
+    fragments: TimelineFragment[]
+}
+
+// 番組の録画を、始めた順に区間と断片の時刻だけ返す（断片のデータは getFragmentBlobs で読む）
+// 途中から再生できる mp4 の区間で、初期化セグメントが届いているものだけ
+const getTimeline = (programId: string) => withTransaction([SEGMENTS, FRAGMENTS], 'readonly', async (tx) => {
+    const segments = await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).index('programId').getAll(programId))
+    const timeline: TimelineSegment[] = []
+    for (const segment of segments.sort((a, b) => a.startedAt - b.startedAt)) {
+        if (segment.format !== 'fmp4' || !segment.init) continue
+        const fragments = await getSegmentFragments(tx.objectStore(FRAGMENTS), segment.segmentId)
+        timeline.push({
+            segmentId: segment.segmentId, kind: segment.kind, mimeType: segment.mimeType,
+            startedAt: segment.startedAt, endedAt: segment.endedAt, init: segment.init,
+            fragments: fragments.map(f => ({ index: f.index, startTime: f.startTime, duration: f.duration, keyframe: f.keyframe ?? true })),
+        })
+    }
+    return timeline
+})
+
+// 断片のデータを読む。消された断片は null
+const getFragmentBlobs = (segmentId: string, indexes: number[]) => withTransaction([FRAGMENTS], 'readonly', (tx) => {
+    const store = tx.objectStore(FRAGMENTS)
+    return Promise.all(indexes.map(async index => (await promisify<FragmentRecord | undefined>(store.get([segmentId, index])))?.blob ?? null))
+})
+
 // ---- 容量 ----
 
 type Usage = { bytes: number, segments: number, bytesByKind: Record<RecordingKind, number> }
@@ -344,6 +376,8 @@ export {
     countSegments,
     getSegmentFile,
     deleteSegments,
+    getTimeline,
+    getFragmentBlobs,
     clearAll,
     getUsage,
     closeStaleSegments,
@@ -351,4 +385,4 @@ export {
     enforceLimit,
     SegmentNotFoundError,
 }
-export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage }
+export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment, TimelineFragment }

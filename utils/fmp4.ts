@@ -1,16 +1,18 @@
 // MediaRecorder が作る MP4（fragmented MP4）を扱う
 // 録画データは「再生に必要な情報（初期化セグメント: ftyp + moov）」のあとに、
-// 約1秒ごとの「断片（moof + mdat）」が並んだ形になっている。
+// 数秒ごとの「断片（moof + mdat）」が並んだ形になっている（Chrome の MediaRecorder は、キーフレームごとに断片を区切る）。
 // 断片のまま保存しておけば、録画中でも再生でき、古い断片から消していける。
 
-type TrackInfo = { timescale: number, defaultDuration: number }
+type TrackInfo = { timescale: number, defaultDuration: number, defaultFlags: number, isVideo: boolean }
 type Tracks = Map<number, TrackInfo>
 
 // 断片の中の、1つのトラック（映像・音声）の情報。時刻を書き換えるために moof の中での位置も持つ
-type TrackFragment = { trackId: number, tfdtOffset: number, tfdtVersion: number, baseTime: number, duration: number }
+// startsWithSync: 最初のサンプルが、それだけで表示できるフレーム（キーフレーム）か
+type TrackFragment = { trackId: number, tfdtOffset: number, tfdtVersion: number, baseTime: number, duration: number, startsWithSync: boolean }
 type MoofInfo = { sequenceOffset: number, trackFragments: TrackFragment[] }
 
-type FragmentTiming = { startTime: number, duration: number } // 秒
+// keyframe: 映像がキーフレームから始まる（この断片から再生を始められる）
+type FragmentTiming = { startTime: number, duration: number, keyframe: boolean } // 秒
 type Fragment = FragmentTiming & { bytes: Uint8Array, moofSize: number }
 type FragmentBlob = FragmentTiming & { blob: Blob, moofSize: number }
 
@@ -63,13 +65,17 @@ const parseInit = (init: Uint8Array): Tracks => {
         const tkhd = child(trak, 'tkhd')
         const mdhd = child(child(trak, 'mdia'), 'mdhd')
         if (!tkhd || !mdhd) continue
+        const hdlr = child(child(trak, 'mdia'), 'hdlr')
         const trackId = view.getUint32(tkhd.bodyStart + (init[tkhd.bodyStart] === 1 ? 20 : 12))
         const timescale = view.getUint32(mdhd.bodyStart + (init[mdhd.bodyStart] === 1 ? 20 : 12))
-        tracks.set(trackId, { timescale, defaultDuration: 0 })
+        const isVideo = !!hdlr && readBoxType(init, hdlr.bodyStart + 4) === 'vide' // handler_type
+        tracks.set(trackId, { timescale, defaultDuration: 0, defaultFlags: 0, isVideo })
     }
     for (const trex of children(child(moov, 'mvex'), 'trex')) {
         const track = tracks.get(view.getUint32(trex.bodyStart + 4))
-        if (track) track.defaultDuration = view.getUint32(trex.bodyStart + 12)
+        if (!track) continue
+        track.defaultDuration = view.getUint32(trex.bodyStart + 12)
+        track.defaultFlags = view.getUint32(trex.bodyStart + 20)
     }
     return tracks
 }
@@ -92,24 +98,35 @@ const parseMoof = (moof: Uint8Array, tracks: Tracks): MoofInfo => {
         if (tfhdFlags & 0x1) q += 8 // base_data_offset
         if (tfhdFlags & 0x2) q += 4 // sample_description_index
         const defaultDuration = (tfhdFlags & 0x8) ? view.getUint32(q) : (tracks.get(trackId)?.defaultDuration ?? 0)
+        if (tfhdFlags & 0x8) q += 4
+        if (tfhdFlags & 0x10) q += 4 // default_sample_size
+        const defaultFlags = (tfhdFlags & 0x20) ? view.getUint32(q) : (tracks.get(trackId)?.defaultFlags ?? 0)
 
         const tfdtVersion = moof[tfdt.bodyStart]
         const baseTime = tfdtVersion === 1 ? Number(view.getBigUint64(tfdt.bodyStart + 4)) : view.getUint32(tfdt.bodyStart + 4)
 
         let duration = 0
+        let firstSampleFlags: number | null = null
         for (const trun of children(traf, 'trun')) {
             const trunFlags = view.getUint32(trun.bodyStart) & 0xffffff
             const sampleCount = view.getUint32(trun.bodyStart + 4)
             let r = trun.bodyStart + 8
             if (trunFlags & 0x1) r += 4 // data_offset
-            if (trunFlags & 0x4) r += 4 // first_sample_flags
+            const firstFlags = (trunFlags & 0x4) ? view.getUint32(r) : null // first_sample_flags
+            if (trunFlags & 0x4) r += 4
+            const flagsOffset = 4 * [0x100, 0x200].filter(f => trunFlags & f).length // サンプルごとの sample_flags の位置
             const bytesPerSample = 4 * [0x100, 0x200, 0x400, 0x800].filter(f => trunFlags & f).length
+            if (firstSampleFlags === null && sampleCount > 0) {
+                firstSampleFlags = firstFlags ?? ((trunFlags & 0x400) ? view.getUint32(r + flagsOffset) : defaultFlags)
+            }
             for (let i = 0; i < sampleCount; i++) {
                 duration += (trunFlags & 0x100) ? view.getUint32(r) : defaultDuration
                 r += bytesPerSample
             }
         }
-        return { trackId, tfdtOffset: tfdt.bodyStart + 4, tfdtVersion, baseTime, duration }
+        // sample_is_non_sync_sample が立っていなければキーフレーム
+        const startsWithSync = firstSampleFlags === null || ((firstSampleFlags >> 16) & 1) === 0
+        return { trackId, tfdtOffset: tfdt.bodyStart + 4, tfdtVersion, baseTime, duration, startsWithSync }
     })
     return { sequenceOffset: mfhd.bodyStart + 4, trackFragments }
 }
@@ -129,8 +146,10 @@ const fragmentTiming = (info: MoofInfo, tracks: Tracks): FragmentTiming => {
         start = Math.min(start, t.baseTime / timescale)
         end = Math.max(end, (t.baseTime + t.duration) / timescale)
     }
-    if (start === Infinity) return { startTime: 0, duration: 0 }
-    return { startTime: start, duration: end - start }
+    // 映像のトラックがない（音声だけの）断片は、どこからでも再生できる
+    const keyframe = info.trackFragments.every(t => !tracks.get(t.trackId)?.isVideo || t.startsWithSync)
+    if (start === Infinity) return { startTime: 0, duration: 0, keyframe }
+    return { startTime: start, duration: end - start, keyframe }
 }
 
 // 録画中に届くデータを、初期化セグメントと断片に分ける（届く区切りは自由でよい）

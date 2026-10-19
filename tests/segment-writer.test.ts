@@ -6,6 +6,7 @@ import { createSegmentWriter } from '@/utils/recording'
 import { removeSegmentItems } from '@/utils/ui'
 import * as library from '@/utils/library/api'
 import type { NewFragment, NewSegment } from '@/utils/library/db'
+import { subscribeLiveFeed, type LiveFeedEvent } from '@/utils/review/live-feed'
 
 vi.mock('@/utils/ui', () => ({
     removeSegmentItems: vi.fn(),
@@ -55,6 +56,34 @@ describe('mp4 の書き込み', () => {
         for (const f of fragments) expect(f.wallClock).toBe(1_000_000 + f.startTime * 1000)
         // 初期化セグメントと断片で、届いたデータを過不足なく保存している
         expect(init.size + fragments.reduce((sum, f) => sum + f.blob.size, 0)).toBe(fixture.length)
+    })
+
+    it('保存したら、見直しのウィンドウへ初期化セグメントと断片を知らせる', async () => {
+        const events: LiveFeedEvent[] = []
+        const unsubscribe = subscribeLiveFeed(event => events.push(event))
+        const writer = createSegmentWriter(segment('fmp4', 'video/mp4'))
+
+        await writeFixture(writer)
+        await writer.finish(2_000_000)
+        unsubscribe()
+
+        expect(events.filter(e => e.type === 'init')).toHaveLength(1)
+        const fragments = events.flatMap(e => e.type === 'fragments' ? e.fragments : [])
+        expect(fragments.map(f => f.index)).toEqual(appended().map(f => f.index))
+        expect(fragments.every(f => f.keyframe)).toBe(true)
+        expect(events[events.length - 1]).toEqual({ type: 'finish', segmentId: 'S', endedAt: 2_000_000 })
+    })
+
+    it('保存できなかった断片は知らせない', async () => {
+        vi.mocked(library.appendFragments).mockRejectedValueOnce(new Error('failed'))
+        const events: LiveFeedEvent[] = []
+        const unsubscribe = subscribeLiveFeed(event => events.push(event))
+        const writer = createSegmentWriter(segment('fmp4', 'video/mp4'))
+
+        await expect(writeFixture(writer)).rejects.toThrow('failed')
+        unsubscribe()
+
+        expect(events.filter(e => e.type === 'fragments')).toHaveLength(0)
     })
 
     it('容量不足なら古い録画を消し、一覧からも外してから同じ断片をもう一度保存する', async () => {

@@ -2,6 +2,7 @@ import { checkLiveStatus } from '../services/api'
 import { setRecordingStatus, removeSegmentItems } from './ui'
 import { createFmp4Splitter, isMp4MimeType } from './fmp4'
 import * as library from './library/api'
+import { publishLiveFeed } from './review/live-feed'
 import type { NewSegment, NewFragment, SegmentSummary } from './library/db'
 
 // 録画状態の一元管理クラス
@@ -138,7 +139,8 @@ const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<
 }
 
 // 1回の録画処理（区間）で録ったデータを、保存先へ書き込む
-// mp4 は初期化セグメントと約1秒ごとの断片に分けて書き込む（録画中でも再生でき、古い断片から消していける）。
+// mp4 は初期化セグメントと数秒ごとの断片に分けて書き込む（録画中でも再生でき、古い断片から消していける）。
+// 書き込んだら、同じページの見直しのウィンドウへ知らせる。
 // webm などは、届いたデータをそのまま断片として書き込む。
 // write は届いた順に1つずつ呼ぶこと（前の write が終わってから次を呼ぶ）
 const createSegmentWriter = (segment: NewSegment) => {
@@ -162,21 +164,31 @@ const createSegmentWriter = (segment: NewSegment) => {
                 return
             }
             const { init, fragments } = splitter.push(new Uint8Array(await data.arrayBuffer()))
-            if (init) await library.setSegmentInit(segment.segmentId, new Blob([init], { type: segment.mimeType }))
+            if (init) {
+                const initBlob = new Blob([init], { type: segment.mimeType })
+                await library.setSegmentInit(segment.segmentId, initBlob)
+                publishLiveFeed({ type: 'init', segment, init: initBlob })
+            }
             if (fragments.length === 0) return
-            await append(fragments.map(f => ({
+            const saved = fragments.map(f => ({
                 index: index++,
                 blob: new Blob([f.bytes]),
                 moofSize: f.moofSize,
                 startTime: f.startTime,
                 duration: f.duration,
                 wallClock: segment.startedAt + f.startTime * 1000,
-            })))
+                keyframe: f.keyframe,
+            }))
+            await append(saved)
+            publishLiveFeed({ type: 'fragments', segmentId: segment.segmentId, fragments: saved })
         },
 
         // 録画を終えた区間を確定する。断片が1つもない区間は消して null を返す
-        finish: (endedAt: number, mimeType?: string): Promise<SegmentSummary | null> =>
-            library.finishSegment(segment.segmentId, endedAt, mimeType),
+        async finish(endedAt: number, mimeType?: string): Promise<SegmentSummary | null> {
+            const summary = await library.finishSegment(segment.segmentId, endedAt, mimeType)
+            publishLiveFeed({ type: 'finish', segmentId: segment.segmentId, endedAt })
+            return summary
+        },
     }
 }
 
