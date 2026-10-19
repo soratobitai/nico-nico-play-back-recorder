@@ -27,7 +27,6 @@ const insertRecordedMovieAria = async (
     start: () => void,
     stop: () => void,
     reload: () => void,
-    clear: () => void,
     showSettings: () => void,
 ) => {
     const controlArea = document.querySelector('[class*="_control-area_"]')

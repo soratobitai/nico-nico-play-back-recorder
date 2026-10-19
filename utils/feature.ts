@@ -17,7 +17,8 @@ const getProgramData = () => {
 }
 
 // 動画の最初のフレームを取得する関数
-const extractFirstFrame = async (blob: Blob) => {
+// 成功時は JPEG の dataURL、動画として読み込めない場合は ''、時間内に取得できなかった場合は null を返す
+const extractFirstFrame = async (blob: Blob, timeoutMs: number = 10 * 1000): Promise<string | null> => {
 
     if (!blob.type.startsWith('video/')) {
         console.log(`Invalid blob type: ${blob.type}, returning default image`)
@@ -32,10 +33,21 @@ const extractFirstFrame = async (blob: Blob) => {
     video.playsInline = true
 
     return new Promise((resolve) => {
-        const cleanUp = () => {
+        let settled = false
+        const finish = (result: string | null) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timeoutId)
             URL.revokeObjectURL(objectURL)
             video.remove()
+            resolve(result)
         }
+
+        // イベントが発火しないまま待ち続けないようにする
+        const timeoutId = setTimeout(() => {
+            console.log('Timed out while capturing first frame')
+            finish(null)
+        }, timeoutMs)
 
         video.onloadeddata = () => {
             video.currentTime = 0
@@ -43,6 +55,7 @@ const extractFirstFrame = async (blob: Blob) => {
 
         video.onseeked = () => {
             setTimeout(() => {  // ★ 500ms 待ってからキャプチャ
+                if (settled) return
                 try {
                     const canvas = document.createElement('canvas')
                     const aspectRatio = video.videoHeight / video.videoWidth
@@ -52,24 +65,21 @@ const extractFirstFrame = async (blob: Blob) => {
                     const ctx = canvas.getContext('2d', { willReadFrequently: true })
                     if (ctx) {
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-                        resolve(canvas.toDataURL('image/jpeg', 0.7)) // 成功時はJPEGデータを返す
+                        finish(canvas.toDataURL('image/jpeg', 0.7)) // 成功時はJPEGデータを返す
                     } else {
                         console.log('Canvas context is not available, returning default image')
-                        resolve('') // エラー時は空を返す
+                        finish(null) // 動画の問題ではないのでデフォルト画像にする
                     }
                 } catch (err) {
                     console.log('Error capturing first frame:', err)
-                    resolve('') // エラー時は空を返す
-                } finally {
-                    cleanUp()
+                    finish('') // エラー時は空を返す
                 }
             }, 500)
         }
 
         video.onerror = (e) => {
             console.log('Video load error:', e)
-            cleanUp()
-            resolve('') // エラー時は空を返す
+            finish('') // エラー時は空を返す
         }
     })
 }

@@ -63,6 +63,40 @@ const saveChunk = async (
     })
 }
 
+// 結合した動画を Chunks に保存し、元になった Temps を削除する
+// 1つのトランザクションで行うので、片方だけ反映されて重複・消失することがない
+const saveMergedChunk = async (
+    sessionId: string,
+    chunkIndex: number,
+    blob: Blob,
+    imgUrl: string | null,
+    createdAt: number,
+    userName: string | null,
+    title: string | null,
+    tempKeys: IDBValidKey[],
+): Promise<[string, number]> => {
+    const db = await openDB()
+    const tx = db.transaction(["Chunks", "Temps"], "readwrite")
+
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve([sessionId, chunkIndex])
+        tx.onabort = () => {
+            console.error("Failed to save merged chunk:", tx.error)
+            reject(tx.error ?? new Error("Transaction aborted"))
+        }
+
+        try {
+            tx.objectStore("Chunks").put({ sessionId, chunkIndex, blob, imgUrl, createdAt, userName, title })
+            const temps = tx.objectStore("Temps")
+            tempKeys.forEach(key => temps.delete(key))
+        } catch (error) {
+            // 途中で例外が出たら、それまでの put / delete もまとめて取り消す
+            tx.abort()
+            reject(error)
+        }
+    })
+}
+
 
 const getChunkByKey = async (
     storeName: string,
@@ -436,9 +470,10 @@ const getStorageUsage = async (): Promise<number> => {
     }
 }
 
-export { 
-    saveChunk, 
-    getChunkByKey, 
+export {
+    saveChunk,
+    saveMergedChunk,
+    getChunkByKey,
     getAllChunks, 
     getLatestChunks,
     getOlderChunks,
