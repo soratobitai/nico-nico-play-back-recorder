@@ -12,6 +12,7 @@ vi.mock('@/utils/feature', async (importOriginal) => ({
 }))
 vi.mock('@/utils/ui', () => ({
     insertRecordedMovie: vi.fn(),
+    deleteMovieIcon: vi.fn(),
     setRecordingStatus: vi.fn(),
     getTimeString: () => '00:00',
 }))

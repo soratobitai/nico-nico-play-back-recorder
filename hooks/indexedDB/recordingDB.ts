@@ -43,22 +43,18 @@ const saveChunk = async (
             title,
         }
 
-        const request = store.put(data)
+        store.put(data)
 
-        request.onsuccess = () => {
+        // Blob の書き込みや容量不足（QuotaExceededError）の判定は確定時に行われるので、確定を待ってから成功とする
+        tx.oncomplete = () => {
             const key: [string, number] = [sessionId, chunkIndex]  // 🔹 明示的に key をセット
             console.log("Chunk saved successfully with key:", key)
             resolve(key)
         }
 
-        request.onerror = () => {
-            console.error("Failed to save chunk:", request.error)
-            reject(request.error)
-        }
-
         tx.onabort = () => {
-            console.error("Transaction aborted")
-            reject(new Error("Transaction aborted"))
+            console.error("Failed to save chunk:", tx.error)
+            reject(tx.error ?? new Error("Transaction aborted"))
         }
     })
 }
@@ -352,35 +348,36 @@ const deleteChunkByKeys = async (storeName: string, keys: IDBValidKey[]): Promis
     })
 }
 
+// 古いものから順に、合計 bytesToFree バイト以上になるまで削除する
+const deleteOldestChunks = async (storeName: string, bytesToFree: number): Promise<IDBValidKey[]> => {
+    const chunks = await getAllChunks(storeName) // createdAt の古い順
+    const deletedKeys: IDBValidKey[] = []
+    let freed = 0
+
+    for (const chunk of chunks) {
+        if (freed >= bytesToFree) break // 削除が不要になったら終了
+
+        // データサイズを計算して加算
+        if (chunk.blob instanceof Blob) {
+            freed += chunk.blob.size
+        } else {
+            freed += new Blob([JSON.stringify(chunk)]).size
+        }
+
+        deletedKeys.push([chunk.sessionId, chunk.chunkIndex]) // 複合キーを保存
+    }
+
+    await deleteChunkByKeys(storeName, deletedKeys) // 既存の削除関数を利用
+    return deletedKeys
+}
+
 const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Promise<IDBValidKey[]> => {
     try {
         const currentUsage = await getStorageUsage()
-        const deletedKeys: IDBValidKey[] = []
 
         if (currentUsage > maxStorageSize) {
             console.log(`ストレージ超過: ${currentUsage} バイト使用中（上限: ${maxStorageSize} バイト）`)
-
-            const chunks = await getAllChunks(storeName) // getAllChunksを使って全データを取得
-            let totalSize = currentUsage
-
-            for (const chunk of chunks) {
-                if (totalSize <= maxStorageSize) break // 削除が不要になったら終了
-
-                // データサイズを計算して減算
-                if (chunk.blob instanceof Blob) {
-                    totalSize -= chunk.blob.size
-                } else {
-                    totalSize -= new Blob([JSON.stringify(chunk)]).size
-                }
-
-                const key = [chunk.sessionId, chunk.chunkIndex] as [string, number]  // 複合キーを取得
-                // console.log(`ストレージ超過のため削除:`, key)
-                deletedKeys.push(key) // 複合キーを保存
-            }
-
-            await deleteChunkByKeys(storeName, deletedKeys) // 既存の削除関数を利用
-
-            return deletedKeys
+            return await deleteOldestChunks(storeName, currentUsage - maxStorageSize)
         } else {
             console.log("ストレージ容量超過はありません")
             return []
@@ -479,6 +476,7 @@ export {
     getOlderChunks,
     getChunksCount,
     deleteChunkByKeys, 
+    deleteOldestChunks,
     cleanUpOldChunks, 
     cleanUpAllChunks, 
     deleteAllChunks,

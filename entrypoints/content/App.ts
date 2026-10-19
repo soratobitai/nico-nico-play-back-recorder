@@ -1,5 +1,5 @@
-import { saveChunk, cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startRecordingActions, holdSegmentLock, mergeChunksBySession,mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
+import { cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
+import { startResetRecordInterval, startRecordingActions, isQuotaExceeded, saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks,resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
@@ -231,13 +231,22 @@ export default async () => {
             const createdAt = Date.now()
             saving = saving
                 .then(async () => {
-                    await saveChunk('Temps', segmentId, index, event.data, null, createdAt, userName, title)
+                    await saveTempChunk(segmentId, index, event.data, createdAt, userName, title)
                     // 次の区間に切り替わった後は、そちらの監視を上書きしない
                     if (recorder === mediaRecorder) {
                         resetTimeoutCheck(recorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure)
                     }
                 })
-                .catch((error) => console.error("チャンクの保存に失敗しました:", error))
+                .catch((error) => {
+                    console.error("チャンクの保存に失敗しました:", error)
+
+                    // 古い録画を消しても容量が足りない場合は、録画を続けても保存されないので止める
+                    if (isQuotaExceeded(error) && recorder === mediaRecorder && recorder.state === 'recording') {
+                        stopTimer()
+                        stateManager.setState('error')
+                        recorder.stop()
+                    }
+                })
         }
 
         recorder.onstop = async () => {

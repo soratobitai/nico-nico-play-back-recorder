@@ -1,6 +1,6 @@
-import { saveMergedChunk, getAllChunks, deleteChunkByKeys } from "../hooks/indexedDB/recordingDB"
+import { saveChunk, saveMergedChunk, getAllChunks, deleteChunkByKeys, deleteOldestChunks } from "../hooks/indexedDB/recordingDB"
 import { checkLiveStatus } from '../services/api'
-import { setRecordingStatus } from './ui'
+import { setRecordingStatus, deleteMovieIcon } from './ui'
 
 // 録画状態の一元管理クラス
 export type RecordingState = 'preparing' | 'recording' | 'stopped' | 'error'
@@ -47,7 +47,8 @@ export class RecordingStateManager {
         setRecordingStatus(true, false, '停止中')
         break
       case 'error':
-        setRecordingStatus(true, false, 'エラー')
+        // 現在は容量不足で保存できない場合のみ
+        setRecordingStatus(true, false, '保存エラー')
         break
     }
   }
@@ -113,6 +114,35 @@ const startRecordingActions = async (
 
 type ChunkRecord = Awaited<ReturnType<typeof getAllChunks>>[number]
 
+const isQuotaExceeded = (error: unknown) => error instanceof DOMException && error.name === 'QuotaExceededError'
+
+// 容量不足で保存できなかった場合は、古い録画を bytesNeeded バイト以上削除してから1回だけ再試行する
+// （設定の上限より実際に使える容量が少ない場合もここで古いものから消える）
+const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<T>): Promise<T> => {
+    try {
+        return await save()
+    } catch (error) {
+        if (!isQuotaExceeded(error)) throw error
+
+        const deletedKeys = await deleteOldestChunks('Chunks', bytesNeeded)
+        if (deletedKeys.length === 0) throw error // 削除できる録画がない
+        console.log(`容量不足のため古い録画を削除しました: ${deletedKeys.length}件`)
+        deleteMovieIcon(deletedKeys)
+
+        return await save()
+    }
+}
+
+// 録画中のチャンクを一時データ（Temps）に保存する
+const saveTempChunk = (
+    sessionId: string,
+    chunkIndex: number,
+    blob: Blob,
+    createdAt: number,
+    userName: string | null,
+    title: string | null,
+) => retryOnQuotaExceeded(blob.size, () => saveChunk('Temps', sessionId, chunkIndex, blob, null, createdAt, userName, title))
+
 // 録画中〜結合完了までの区間を、他のタブや「録画リスト更新」から結合させないためのロック
 // タブを閉じたり再読み込みしたりすると自動で解放されるので、解放されている区間は放置されたものとみなせる
 const segmentLockName = (sessionId: string) => `recording-segment-${sessionId}`
@@ -159,8 +189,11 @@ const mergeTemps = async (sessionId: string, createdAt: number): Promise<ChunkRe
     const title = temps[0].title || ''
 
     // `Chunks` への保存と Temps の削除を同時に行う（失敗した場合は Temps が残り、mergeStaleChunks で再試行される）
+    // 保存が確定するまでは結合前と結合後の両方を持つので、容量不足なら結合後のサイズ分を空けて再試行する
     // サムネイルが時間内に取得できなかった場合（null）はデフォルト画像で表示される
-    const [, chunkIndex] = await saveMergedChunk(sessionId, createdAt, blob, screenShot, createdAt, userName, title, keys)
+    const [, chunkIndex] = await retryOnQuotaExceeded(blob.size, () =>
+        saveMergedChunk(sessionId, createdAt, blob, screenShot, createdAt, userName, title, keys)
+    )
 
     return { sessionId, chunkIndex, blob, imgUrl: screenShot, createdAt, userName, title }
 }
@@ -340,6 +373,9 @@ export {
     startTimer,
     stopTimer,
     startRecordingActions,
+    isQuotaExceeded,
+    retryOnQuotaExceeded,
+    saveTempChunk,
     holdSegmentLock,
     mergeChunksBySession,
     mergeStaleChunks,
