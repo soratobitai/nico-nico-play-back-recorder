@@ -79,16 +79,15 @@ export default async () => {
 
 
 
-    const initStream = (startRecording: boolean = true) => {
+    // 動画の再生を待って録画を開始する
+    const initStream = () => {
         if (!video) return
-        
+
         // mediaRecorder.state のチェックを削除し、代わりに stateManager の状態をチェック
         if (stateManager.getState() === 'recording') return
 
         // 録画開始前の状態を準備中に設定
-        if (startRecording) {
-            stateManager.setState('preparing')
-        }
+        stateManager.setState('preparing')
 
         // リロードボタンを押す共通関数
         const clickReloadButton = (reason: string) => {
@@ -113,34 +112,27 @@ export default async () => {
         }
 
         const startRecordingFromStream = (video: HTMLVideoElement) => {
-            if (startRecording) {
-                // 既に録画中の recorder があれば二重に開始しない
-                if (mediaRecorder?.state === "recording") return
+            // 既に録画中の recorder があれば二重に開始しない
+            if (mediaRecorder?.state === "recording") return
 
-                // 録画開始処理
-                try {
-                    stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
-                    startNewRecorder()
-                } catch (error) {
-                    console.log("録画の開始に失敗しました:", error)
-                    // 録画開始に失敗した場合は状態を停止中に設定
-                    stateManager.setState('stopped')
-                    // リロードボタンを押す
-                    clickReloadButton("録画開始に失敗")
-                }
-            } else {
-                // 準備完了のみ
+            // 録画開始処理
+            try {
+                stream = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
+                startNewRecorder()
+            } catch (error) {
+                console.log("録画の開始に失敗しました:", error)
+                // 録画開始に失敗した場合は状態を停止中に設定
                 stateManager.setState('stopped')
+                // リロードボタンを押す
+                clickReloadButton("録画開始に失敗")
             }
         }
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
             const timeoutId = setTimeout(() => {
                 // タイムアウトした場合は状態を停止中に設定
-                if (startRecording) {
-                    stateManager.setState('stopped')
-                    clickReloadButton("動画の準備完了待機がタイムアウト")
-                }
+                stateManager.setState('stopped')
+                clickReloadButton("動画の準備完了待機がタイムアウト")
             }, 3000)
 
             video.addEventListener("canplay", () => {
@@ -152,9 +144,7 @@ export default async () => {
                     } else {
                         console.log("動画が再生可能になりましたが、まだ再生されていません")
                         // 再生されていない場合は状態を停止中に設定
-                        if (startRecording) {
-                            stateManager.setState('stopped')
-                        }
+                        stateManager.setState('stopped')
                     }
                 }, 500)
             }, { once: true })
@@ -327,7 +317,7 @@ export default async () => {
 
             // 新しいストリームを取得し録画を開始
             setTimeout(() => {
-                initStream(true) // 明示的に録画開始を指定
+                initStream()
             }, 1000)
         })
     }
@@ -391,10 +381,11 @@ export default async () => {
 
                 executeWhenIdle(async () => {
                     if (autoStart) {
-                        initStream(true) // 録画を開始
+                        initStream() // 録画を開始
                     } else {
-                        stateManager.setState('preparing') // 初期状態を準備中に設定
-                        initStream(false) // 動画の準備完了を確認（録画開始なし）
+                        // 動画の準備は録画開始ボタンを押した時に待つので、ここでは待たずに開始できる状態にする
+                        // （動画が一時停止中だと準備完了を検知できず、準備中のまま固まっていた）
+                        stateManager.setState('stopped')
                     }
 
                     await new Promise(resolve => setTimeout(resolve, 1000))

@@ -6,7 +6,7 @@ import { setRecordingStatus } from './ui'
 export type RecordingState = 'preparing' | 'recording' | 'stopped' | 'error'
 
 export class RecordingStateManager {
-  private state: RecordingState = 'stopped'
+  private state: RecordingState = 'preparing' // 画面の初期表示（準備中・ボタン無効）に合わせる
   private listeners: Array<(state: RecordingState) => void> = []
   private isUpdating = false // 状態更新中のフラグ
 
