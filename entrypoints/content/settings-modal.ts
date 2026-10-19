@@ -34,7 +34,8 @@ class SettingsModal {
 
   constructor() {
     this.loadSettings()
-    this.getStorageUsageData()
+    // 使用量は全録画を読んで数えるので、ここでは取らずに設定画面を開いた時に取る
+    this.loadStorageQuota()
   }
 
   private async loadSettings() {
@@ -67,7 +68,12 @@ class SettingsModal {
       this.currentStorageUsage = null
     }
 
-    // ストレージ上限を取得
+    // 使用量表示を更新
+    this.updateUsageDisplay()
+  }
+
+  // ストレージ上限を取得（推奨値の表示に使う）
+  private async loadStorageQuota() {
     try {
       const estimate = await navigator.storage.estimate()
       if (estimate.quota) {
@@ -77,9 +83,6 @@ class SettingsModal {
     } catch (error) {
       console.warn('ストレージ上限の取得に失敗:', error)
     }
-
-    // 使用量表示を更新
-    this.updateUsageDisplay()
   }
 
   private async updateSetting<K extends keyof Settings>(
@@ -143,7 +146,7 @@ class SettingsModal {
 
           <div class="checkbox-settings-container">
             <div class="setting-block checkbox-setting">
-              <label htmlFor="autostartCheckbox" title="ページを開いたら自動的に録画を開始します。">
+              <label for="autostartCheckbox" title="ページを開いたら自動的に録画を開始します。">
                 <input
                   id="autostartCheckbox"
                   type="checkbox"
@@ -154,7 +157,7 @@ class SettingsModal {
             </div>
 
             <div class="setting-block checkbox-setting">
-              <label htmlFor="autoReloadCheckbox" title="映像が止まった時に自動的に映像をリロードします。">
+              <label for="autoReloadCheckbox" title="映像が止まった時に自動的に映像をリロードします。">
                 <input
                   id="autoReloadCheckbox"
                   type="checkbox"
@@ -166,7 +169,7 @@ class SettingsModal {
           </div>
 
           <div class="setting-block">
-            <label htmlFor="intervalRange">
+            <label for="intervalRange">
               分割間隔: <span id="intervalMinutes">${Math.round(this.settings.RESTART_MEDIARECORDER_INTERVAL_MS / 60000)}</span> 分
               <span style="font-size: 0.8em; color: #888; margin-left: 8px;">自動的に録画を分割保存します。</span>
             </label>
@@ -181,7 +184,7 @@ class SettingsModal {
           </div>
 
           <div class="setting-block">
-            <label htmlFor="storageRange">
+            <label for="storageRange">
               ストレージ上限: <span id="storageGB">${Math.round(this.settings.MAX_STORAGE_SIZE / (1024 * 1024 * 1024))}</span> GB
               ${this.storageQuota > 0 ? `
               <span storage-quota-info style="font-size: 0.8em; color: #888; margin-left: 8px;">推奨値: ${Math.round(Math.min(this.storageQuota, STORAGE_QUOTA_ESTIMATE) / (1024 * 1024 * 1024))} GB以下</span>
@@ -295,16 +298,20 @@ class SettingsModal {
     const intervalRange = this.modal.querySelector('#intervalRange') as HTMLInputElement
     const storageRange = this.modal.querySelector('#storageRange') as HTMLInputElement
 
+    // 動かしている間は表示だけ更新し、保存は手を離した時に行う
+    // （保存のたびに全タブで分割タイマーがリセットされるため）
     intervalRange?.addEventListener('input', (e) => {
-      const value = Number((e.target as HTMLInputElement).value)
-      this.updateSetting('RESTART_MEDIARECORDER_INTERVAL_MS', value)
-      this.updateIntervalLabel(value)
+      this.updateIntervalLabel(Number((e.target as HTMLInputElement).value))
+    })
+    intervalRange?.addEventListener('change', (e) => {
+      this.updateSetting('RESTART_MEDIARECORDER_INTERVAL_MS', Number((e.target as HTMLInputElement).value))
     })
 
     storageRange?.addEventListener('input', (e) => {
-      const value = Number((e.target as HTMLInputElement).value)
-      this.updateSetting('MAX_STORAGE_SIZE', value)
-      this.updateStorageLabel(value)
+      this.updateStorageLabel(Number((e.target as HTMLInputElement).value))
+    })
+    storageRange?.addEventListener('change', (e) => {
+      this.updateSetting('MAX_STORAGE_SIZE', Number((e.target as HTMLInputElement).value))
     })
 
     // クリアボタン
@@ -406,8 +413,12 @@ class SettingsModal {
 
     const usageInfo = this.modal.querySelector('.usage-info')
     const usageBar = this.modal.querySelector('.usage-bar')
-    
+    // スライダーを動かしている間は、まだ保存していないスライダーの値で表示する
+    const storageRange = this.modal.querySelector<HTMLInputElement>('#storageRange')
+    const maxStorageSize = storageRange ? Number(storageRange.value) : this.settings.MAX_STORAGE_SIZE
+
     if (usageInfo) {
+      // スライダーを動かした時に updateStorageLabel が書き換えられるよう、id 付きの要素を残す
       usageInfo.innerHTML = `
         <span>
           現在の使用量: ${
@@ -419,7 +430,7 @@ class SettingsModal {
           }
         </span>
         <span>
-          設定上限: ${Math.round(this.settings.MAX_STORAGE_SIZE / (1024 * 1024 * 1024))} GB
+          設定上限: <span id="usageStorageGB">${Math.round(maxStorageSize / (1024 * 1024 * 1024))}</span> GB
         </span>
       `
     }
@@ -429,14 +440,14 @@ class SettingsModal {
         width: ${
           this.currentStorageUsage !== null
             ? Math.min(
-                (this.currentStorageUsage / this.settings.MAX_STORAGE_SIZE) * 100,
+                (this.currentStorageUsage / maxStorageSize) * 100,
                 100
               )
             : 0
         }%;
         background-color: ${
           this.currentStorageUsage !== null &&
-          this.currentStorageUsage > this.settings.MAX_STORAGE_SIZE * 0.8
+          this.currentStorageUsage > maxStorageSize * 0.8
             ? '#ff6b6b'
             : '#4CAF50'
         };
