@@ -2,8 +2,13 @@ const DB_NAME = "RecordingDB"
 const DB_VERSION = 1
 const STORE_NAMES = ["Chunks", "Temps"]
 
+// 接続は使い回す（操作のたびに開くと、閉じられないまま接続が増えていく）
+let dbPromise: Promise<IDBDatabase> | null = null
+
 const openDB = (): Promise<IDBDatabase> => {
-    return new Promise((resolve, reject) => {
+    if (dbPromise) return dbPromise
+
+    dbPromise = new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION)
         request.onupgradeneeded = (event) => {
             const db = (event.target as IDBOpenDBRequest).result;
@@ -13,9 +18,25 @@ const openDB = (): Promise<IDBDatabase> => {
                 }
             })
         }
-        request.onsuccess = () => resolve(request.result)
-        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+            const db = request.result
+            // 他のタブなどから DB の削除・更新が要求されたら、妨げないように閉じて次回開き直す
+            db.onversionchange = () => {
+                db.close()
+                dbPromise = null
+            }
+            // サイトデータの削除などで接続が閉じられた場合も次回開き直す
+            db.onclose = () => {
+                dbPromise = null
+            }
+            resolve(db)
+        }
+        request.onerror = () => {
+            dbPromise = null
+            reject(request.error)
+        }
     })
+    return dbPromise
 }
 
 const saveChunk = async (
