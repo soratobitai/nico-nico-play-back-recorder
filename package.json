@@ -12,13 +12,15 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
+    "test": "vitest run",
     "postinstall": "wxt prepare"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/chrome": "^0.0.280",
     "@wxt-dev/auto-icons": "^1.0.2",
+    "fake-indexeddb": "^6.2.6",
     "typescript": "^5.6.3",
+    "vitest": "^3.2.7",
     "wxt": "^0.19.29"
   }
 }
