@@ -155,7 +155,8 @@ const getScreenShotAndDownload = async () => {
     }
 }
 
-const formatDateForFileName = (input: string | number) => {
+// 日時を「YYYY-MM-DD hh mm ss」の形にする（時・分・秒の区切りを timeSeparator で指定する）
+const formatDateTime = (input: string | number, timeSeparator: string) => {
     const date = new Date(input)
 
     const pad = (n: number) => n.toString().padStart(2, '0')
@@ -167,23 +168,14 @@ const formatDateForFileName = (input: string | number) => {
     const minutes = pad(date.getMinutes())
     const seconds = pad(date.getSeconds())
 
-    return `${year}-${month}-${day} ${hours}${minutes}${seconds}`
+    return `${year}-${month}-${day} ${[hours, minutes, seconds].join(timeSeparator)}`
 }
 
-const formatDate = (input: string | number) => {
-    const date = new Date(input)
+// ファイル名用（ファイル名に使えない「:」を含めない）: 2025-01-02 030405
+const formatDateForFileName = (input: string | number) => formatDateTime(input, '')
 
-    const pad = (n: number) => n.toString().padStart(2, '0')
-
-    const year = date.getFullYear()
-    const month = pad(date.getMonth() + 1)
-    const day = pad(date.getDate())
-    const hours = pad(date.getHours())
-    const minutes = pad(date.getMinutes())
-    const seconds = pad(date.getSeconds())
-
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
-}
+// 表示用: 2025-01-02 03:04:05
+const formatDate = (input: string | number) => formatDateTime(input, ':')
 
 
 

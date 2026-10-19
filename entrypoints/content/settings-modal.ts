@@ -405,7 +405,7 @@ class SettingsModal {
     
     // 録画リストを更新（空の状態になる）
     const { loadRecordedMovieList } = await import('../../utils/ui')
-    await loadRecordedMovieList('latest')
+    await loadRecordedMovieList()
   }
 
   private updateUsageDisplay() {

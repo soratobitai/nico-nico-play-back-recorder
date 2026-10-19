@@ -1,4 +1,4 @@
-import { saveChunk, saveMergedChunk, getAllChunks, deleteChunkByKeys, deleteOldestChunks } from "../hooks/indexedDB/recordingDB"
+import { saveChunk, saveMergedChunk, getAllChunks, deleteChunkByKeys, deleteOldestChunks, type ChunkRecord } from "../hooks/indexedDB/recordingDB"
 import { checkLiveStatus } from '../services/api'
 import { setRecordingStatus, deleteMovieIcon } from './ui'
 
@@ -115,7 +115,6 @@ const RECORDING_MIME_TYPES = [
 const getRecordingMimeType = (): string | undefined =>
     RECORDING_MIME_TYPES.find(type => MediaRecorder.isTypeSupported(type))
 
-type ChunkRecord = Awaited<ReturnType<typeof getAllChunks>>[number]
 
 const isQuotaExceeded = (error: unknown) => error instanceof DOMException && error.name === 'QuotaExceededError'
 

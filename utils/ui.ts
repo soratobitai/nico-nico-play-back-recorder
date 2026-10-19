@@ -1,4 +1,4 @@
-import { getChunkByKey, getAllChunks, deleteChunkByKeys, getLatestChunks, getOlderChunks, getChunksCount } from "../hooks/indexedDB/recordingDB"
+import { getChunkByKey, deleteChunkByKeys, getLatestChunks, getOlderChunks, getChunksCount, type ChunkRecord } from "../hooks/indexedDB/recordingDB"
 import { downloadRecordedMovie, getScreenShotAndDownload, formatDate } from "../utils/feature"
 import { UI_COLLAPSED } from "../utils/storage"
 
@@ -15,7 +15,6 @@ let userScrolledAway = false
 let isLoadingOlder = false
 let hasMoreOlder = true
 let oldestLoadedTimestamp = Infinity
-let loadedChunksCount = 0
 const CHUNKS_PER_LOAD = 20
 const CHUNK_WIDTH = 102 // 固定幅（90px + 左右ボーダー2px + margin 10px）
 
@@ -121,15 +120,7 @@ const insertRecordedMovieAria = async (
 }
 
 const insertRecordedMovie = async (
-    chunk: {
-        sessionId: string,
-        chunkIndex: number,
-        blob: Blob,
-        imgUrl: string | null,
-        createdAt: number,
-        userName: string | null,
-        title: string | null
-    },
+    chunk: ChunkRecord,
     insertPosition: "start" | "end" = "start" // ← "start"（左に追加）または "end"（右に追加）
 ) => {
     const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
@@ -416,8 +407,6 @@ const deleteMovieIcon = async (deletedKeys: IDBValidKey[]) => {
         elements.forEach(element => {
             if (element.getAttribute('sessionId') == sessionId && element.getAttribute('chunkIndex') == chunkIndex) {
                 element.remove()
-                // 削除された録画の数を減らす
-                loadedChunksCount = Math.max(0, loadedChunksCount - 1)
             }
         })
     }
@@ -450,8 +439,8 @@ const getTimeString = (startTime: number) => {
     return timeString
 }
 
-// 録画リストを読み込む共通関数
-const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
+// 録画リストを読み込む（最新の CHUNKS_PER_LOAD 件。それより古いものは左へスクロールした時に読み込む）
+const loadRecordedMovieList = async () => {
     const recordedMovieBox = document.querySelector('.recordedMovieBox') as HTMLElement | null
     if (!recordedMovieBox) return
 
@@ -463,24 +452,9 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
     recordedMovieBox.innerHTML = `<div class="loading-spinner"></div>`
 
     try {
-        let chunks: Array<{
-            sessionId: string,
-            chunkIndex: number,
-            blob: Blob,
-            imgUrl: string | null,
-            createdAt: number,
-            userName: string | null,
-            title: string | null
-        }> = []
+        // 最新の録画を取得（新しい順）
+        const chunks = await getLatestChunks('Chunks', CHUNKS_PER_LOAD)
 
-        if (mode === 'latest') {
-            // 最新の録画を取得（最初の20件のみ）
-            chunks = await getLatestChunks('Chunks', CHUNKS_PER_LOAD)
-        } else {
-            // すべての録画を取得
-            chunks = await getAllChunks('Chunks')
-        }
-        
         if (chunks.length === 0) {
             // データがなければメッセージ表示
             recordedMovieBox.innerHTML = `<div class="no-video">録画リストはありません</div>`
@@ -491,28 +465,15 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
 
         // 状態を初期化
         oldestLoadedTimestamp = Math.min(...chunks.map(chunk => chunk.createdAt))
-        loadedChunksCount = chunks.length
 
         await new Promise(resolve => setTimeout(resolve, 500)) // 負荷軽減のため
 
         // 表示リセット
         recordedMovieBox.innerHTML = ""
 
-        // 録画を表示（最新のものから右端に）
-        if (mode === 'latest') {
-            // 最新の録画は逆順で表示（新しいものを右端に）
-            for (const chunk of chunks) {
-                insertRecordedMovie(chunk, "start")
-
-                // await new Promise(resolve => setTimeout(resolve, 20)) // 負荷軽減のため
-            }
-        } else {
-            // 全件取得時は時系列順で表示（古いものを左端から、新しいものを右端に）
-            for (const chunk of chunks.reverse()) {
-                insertRecordedMovie(chunk, "start")
-
-                await new Promise(resolve => setTimeout(resolve, 20)) // 負荷軽減のため
-            }
+        // 新しい順に左端へ追加していき、新しいものが右端に来るようにする
+        for (const chunk of chunks) {
+            insertRecordedMovie(chunk, "start")
         }
 
         // 総録画数を取得して更新
@@ -520,15 +481,10 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
         if (recordingCount) recordingCount.textContent = `${totalCount}`
 
         // 処理完了後に適切な状態に戻す
-        if (mode === 'latest') {
-            hasMoreOlder = chunks.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
-        } else {
-            hasMoreOlder = false // 全件表示なので古い録画の読み込みは不要
-        }
+        hasMoreOlder = chunks.length === CHUNKS_PER_LOAD // 20件取得できた場合は古い録画がある可能性
 
     } catch (error) {
-        const errorMessage = mode === 'latest' ? '録画リストの初期化に失敗しました' : '録画リストの更新に失敗しました'
-        console.error(errorMessage + ':', error)
+        console.error('録画リストの読み込みに失敗しました:', error)
         recordedMovieBox.innerHTML = `<div class="no-video">エラーが発生しました</div>`
         // エラー時も録画数を0に更新
         if (recordingCount) recordingCount.textContent = '0'
@@ -539,9 +495,10 @@ const loadRecordedMovieList = async (mode: 'latest' | 'all') => {
 const loadOlderRecordings = async () => {
     if (isLoadingOlder || !hasMoreOlder) return
 
-    isLoadingOlder = true
+    // 読み込み中フラグを立てる前に確認する（立てたまま戻ると、以後読み込めなくなる）
     const box = document.querySelector('.recordedMovieBox') as HTMLElement
     if (!box) return
+    isLoadingOlder = true
 
     try {
         // ローディングインジケーターを左端に追加
@@ -577,8 +534,6 @@ const loadOlderRecordings = async () => {
             // スクロール位置を調整（固定幅で計算）
             const addedWidth = olderChunks.length * CHUNK_WIDTH
             box.scrollLeft = currentScrollLeft + addedWidth
-            
-            loadedChunksCount += olderChunks.length
         }
 
         // ローディングインジケーターを削除

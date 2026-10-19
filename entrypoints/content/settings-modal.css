@@ -180,22 +180,4 @@
   transition: width 0.3s ease, background-color 0.3s ease;
 }
 
-/* 設定ボタンのスタイル */
-.settings-button {
-  background-color: #4a4a4a;
-  color: #e0e0e0;
-  border: 1px solid #666;
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 12px;
-  cursor: pointer;
-  margin-left: 8px;
-  transition: background-color 0.2s;
-}
-
-.settings-button:hover {
-  background-color: #5a5a5a;
-  border-color: #777;
-}
-
  

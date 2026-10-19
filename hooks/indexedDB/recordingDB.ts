@@ -115,10 +115,8 @@ const saveMergedChunk = async (
 }
 
 
-const getChunkByKey = async (
-    storeName: string,
-    key: IDBValidKey
-): Promise<{
+// 保存されている録画（Chunks）・録画中の一時データ（Temps）の1件分
+type ChunkRecord = {
     sessionId: string,
     chunkIndex: number,
     blob: Blob,
@@ -126,7 +124,12 @@ const getChunkByKey = async (
     createdAt: number,
     userName: string | null,
     title: string | null
-} | undefined> => {
+}
+
+const getChunkByKey = async (
+    storeName: string,
+    key: IDBValidKey
+): Promise<ChunkRecord | undefined> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readonly")
     const store = tx.objectStore(storeName)
@@ -151,30 +154,14 @@ const getChunkByKey = async (
     })
 }
 
-const getAllChunks = async (
-    storeName: string
-): Promise<Array<{
-    sessionId: string,
-    chunkIndex: number,
-    blob: Blob,
-    imgUrl: string | null,
-    createdAt: number,
-    userName: string | null,
-    title: string | null
-}>> => {
+// ストアのすべてのデータを読み出す（並び順はキーの順）
+const readAllChunks = async (storeName: string): Promise<ChunkRecord[]> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readonly")
     const store = tx.objectStore(storeName)
 
     return new Promise((resolve, reject) => {
-        const chunks: Array<{
-            sessionId: string,
-            chunkIndex: number,
-            blob: Blob,
-            imgUrl: string | null,
-            createdAt: number,
-            userName: string | null,
-            title: string | null }> = []
+        const chunks: ChunkRecord[] = []
         const request = store.openCursor()
 
         request.onsuccess = (event) => {
@@ -195,8 +182,6 @@ const getAllChunks = async (
 
                 cursor.continue()
             } else {
-                // すべてのデータを取得した後に createdAt でソート
-                chunks.sort((a, b) => a.createdAt - b.createdAt)
                 resolve(chunks)
             }
         }
@@ -205,125 +190,22 @@ const getAllChunks = async (
     })
 }
 
-// 最新の録画データを取得する関数
-const getLatestChunks = async (
-    storeName: string,
-    limit: number = 20
-): Promise<Array<{
-    sessionId: string,
-    chunkIndex: number,
-    blob: Blob,
-    imgUrl: string | null,
-    createdAt: number,
-    userName: string | null,
-    title: string | null
-}>> => {
-    const db = await openDB()
-    const tx = db.transaction(storeName, "readonly")
-    const store = tx.objectStore(storeName)
+// すべてのデータを createdAt の古い順で取得する関数
+const getAllChunks = async (storeName: string): Promise<ChunkRecord[]> =>
+    (await readAllChunks(storeName)).sort((a, b) => a.createdAt - b.createdAt)
 
-    return new Promise((resolve, reject) => {
-        const chunks: Array<{
-            sessionId: string,
-            chunkIndex: number,
-            blob: Blob,
-            imgUrl: string | null,
-            createdAt: number,
-            userName: string | null,
-            title: string | null
-        }> = []
-        
-        const request = store.openCursor()
+// 最新の録画データを取得する関数（新しい順に limit 件）
+const getLatestChunks = async (storeName: string, limit: number = 20): Promise<ChunkRecord[]> =>
+    (await readAllChunks(storeName))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit)
 
-        request.onsuccess = (event) => {
-            const cursor = (event.target as IDBRequest).result
-            if (cursor) {
-                const [sessionId, chunkIndex] = cursor.key as [string, number]
-                const data = cursor.value
-
-                chunks.push({
-                    sessionId,
-                    chunkIndex,
-                    blob: data.blob,
-                    imgUrl: data.imgUrl || null,
-                    createdAt: data.createdAt,
-                    userName: data.userName || null,
-                    title: data.title || null,
-                })
-
-                cursor.continue()
-            } else {
-                // createdAtでソートして最新のlimit件を取得
-                chunks.sort((a, b) => b.createdAt - a.createdAt)
-                resolve(chunks.slice(0, limit))
-            }
-        }
-
-        request.onerror = () => reject(request.error)
-    })
-}
-
-// 指定した日時より古い録画データを取得する関数
-const getOlderChunks = async (
-    storeName: string,
-    beforeTimestamp: number,
-    limit: number = 20
-): Promise<Array<{
-    sessionId: string,
-    chunkIndex: number,
-    blob: Blob,
-    imgUrl: string | null,
-    createdAt: number,
-    userName: string | null,
-    title: string | null
-}>> => {
-    const db = await openDB()
-    const tx = db.transaction(storeName, "readonly")
-    const store = tx.objectStore(storeName)
-
-    return new Promise((resolve, reject) => {
-        const chunks: Array<{
-            sessionId: string,
-            chunkIndex: number,
-            blob: Blob,
-            imgUrl: string | null,
-            createdAt: number,
-            userName: string | null,
-            title: string | null
-        }> = []
-        
-        const request = store.openCursor()
-
-        request.onsuccess = (event) => {
-            const cursor = (event.target as IDBRequest).result
-            if (cursor) {
-                const [sessionId, chunkIndex] = cursor.key as [string, number]
-                const data = cursor.value
-
-                // 指定した日時より古いデータのみを収集
-                if (data.createdAt < beforeTimestamp) {
-                    chunks.push({
-                        sessionId,
-                        chunkIndex,
-                        blob: data.blob,
-                        imgUrl: data.imgUrl || null,
-                        createdAt: data.createdAt,
-                        userName: data.userName || null,
-                        title: data.title || null,
-                    })
-                }
-
-                cursor.continue()
-            } else {
-                // createdAtでソートして最新のlimit件を取得（古い順）
-                chunks.sort((a, b) => b.createdAt - a.createdAt)
-                resolve(chunks.slice(0, limit))
-            }
-        }
-
-        request.onerror = () => reject(request.error)
-    })
-}
+// 指定した日時より古い録画データを取得する関数（新しい順に limit 件）
+const getOlderChunks = async (storeName: string, beforeTimestamp: number, limit: number = 20): Promise<ChunkRecord[]> =>
+    (await readAllChunks(storeName))
+        .filter(chunk => chunk.createdAt < beforeTimestamp)
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit)
 
 // 録画データの総数を取得する関数
 const getChunksCount = async (storeName: string): Promise<number> => {
@@ -409,23 +291,19 @@ const cleanUpOldChunks = async (storeName: string, maxStorageSize: number): Prom
     }
 }
 
+// ストアのデータをすべて削除する（削除が確定してから返し、失敗した場合は例外にする）
 const cleanUpAllChunks = async (storeName: string): Promise<void> => {
     const db = await openDB()
-    const chunks = await getAllChunks(storeName)
     const tx = db.transaction(storeName, "readwrite")
-    const store = tx.objectStore(storeName)
+    tx.objectStore(storeName).clear()
 
-    for (const chunk of chunks) {
-        const deleteRequest = store.delete([chunk.sessionId, chunk.chunkIndex])
-
-        deleteRequest.onsuccess = () => {
-            // console.log(`Deleted chunk: ${[chunk.sessionId, chunk.chunkIndex]}`)
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve()
+        tx.onabort = () => {
+            console.error(`Failed to delete chunks in ${storeName}:`, tx.error)
+            reject(tx.error ?? new Error("Transaction aborted"))
         }
-
-        deleteRequest.onerror = () => {
-            console.error(`Failed to delete chunk: ${deleteRequest.error}`)
-        }
-    }
+    })
 }
 
 const deleteAllChunks = async (): Promise<void> => {
@@ -441,34 +319,14 @@ const deleteAllChunks = async (): Promise<void> => {
     }
 }
 
-const deleteDB = (dbName: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.deleteDatabase(dbName)
-
-        request.onsuccess = () => {
-            console.log(`Database ${dbName} deleted successfully.`)
-            resolve()
-        }
-
-        request.onerror = () => {
-            console.error(`Failed to delete database ${dbName}:`, request.error)
-            reject(request.error)
-        }
-
-        request.onblocked = () => {
-            console.log(`Database deletion is blocked. Close all connections to the database.`)
-        }
-    })
-}
-
 // IndexedDBの実際の使用量を計算する関数
 const getStorageUsage = async (): Promise<number> => {
     try {
         let totalUsage = 0
-        
-        // 各ストアの使用量を計算
+
+        // 各ストアの使用量を計算（並び順は関係ないので並べ替えない）
         for (const storeName of STORE_NAMES) {
-            const chunks = await getAllChunks(storeName)
+            const chunks = await readAllChunks(storeName)
             
             for (const chunk of chunks) {
                 if (chunk.blob instanceof Blob) {
@@ -499,8 +357,8 @@ export {
     deleteChunkByKeys, 
     deleteOldestChunks,
     cleanUpOldChunks, 
-    cleanUpAllChunks, 
+    cleanUpAllChunks,
     deleteAllChunks,
-    deleteDB, 
-    getStorageUsage 
+    getStorageUsage
 }
+export type { ChunkRecord }

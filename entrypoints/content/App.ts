@@ -1,5 +1,5 @@
 import { cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded,saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks,resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
+import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded, saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks, resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
@@ -301,7 +301,7 @@ export default async () => {
         await mergeStaleChunks(SAVE_CHUNK_INTERVAL_MS)
 
         // 録画リストを更新
-        await loadRecordedMovieList('latest')
+        await loadRecordedMovieList()
     }
 
     const observeVideoResize = () => {
@@ -361,7 +361,7 @@ export default async () => {
     const loadRecordingListIfNeeded = async () => {
         // UIが開いている時のみ読み込む
         if (!isUICollapsed()) {
-            await loadRecordedMovieList('latest')
+            await loadRecordedMovieList()
         }
     }
 
