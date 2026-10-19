@@ -35,6 +35,10 @@ export default defineConfig({
   ],
   manifest: {
     "name": "ニコ生プレイバックレコーダー",
+    // ツールバーの拡張機能のアイコンを押すと、ライブラリ（録画の一覧）を開く
+    "action": {
+      "default_title": "ライブラリを開く"
+    },
     "permissions": [
       "storage",
       // 録画を拡張機能側に保存するため（ブラウザの容量制限を受けないように）

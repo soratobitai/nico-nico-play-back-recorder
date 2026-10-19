@@ -1,4 +1,5 @@
 import { BRIDGE_TOKEN_KEY, BRIDGE_TOKEN_MESSAGE } from '@/utils/library/protocol'
+import { OPEN_LIBRARY_MESSAGE, openLibrary } from '@/utils/library/open-library'
 
 // ニコ生のページに埋め込む bridge を使ってよい相手（content script）だけに渡す合言葉
 // ニコ生のページ側のスクリプトはこの service worker と話せないので、合言葉を知ることができない
@@ -15,10 +16,20 @@ const getBridgeToken = () => tokenPromise ??= (async () => {
 
 export default defineBackground(() => {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (message?.type !== BRIDGE_TOKEN_MESSAGE) return
         // タブの中の content script からの依頼にだけ答える
         if (!sender.tab) return
-        getBridgeToken().then(token => sendResponse({ token }))
-        return true
+        if (message?.type === BRIDGE_TOKEN_MESSAGE) {
+            getBridgeToken().then(token => sendResponse({ token }))
+            return true
+        }
+        if (message?.type === OPEN_LIBRARY_MESSAGE) {
+            const programId = typeof message.programId === 'string' ? message.programId : undefined
+            openLibrary(programId).catch(error => console.error('ライブラリを開けませんでした:', error))
+        }
+    })
+
+    // ツールバーの拡張機能のアイコンからも開ける
+    chrome.action.onClicked.addListener(() => {
+        openLibrary().catch(error => console.error('ライブラリを開けませんでした:', error))
     })
 })

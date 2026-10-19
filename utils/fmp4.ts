@@ -276,7 +276,28 @@ const buildFmp4File = async (segments: Fmp4Segment[]): Promise<Blob> => {
     return new Blob(parts, { type: 'video/mp4' })
 }
 
+// 初期化セグメントの、つなげるかどうかを決める部分（トラックの番号・種類・時間の単位・映像と音声の設定）
+// 同じなら、別々に録った区間でも1本のファイルにつなげる（解像度などが違うと、つないだ所から再生できない）。
+// 作った日時などは録画ごとに違うので含めない
+const initSignature = (init: Uint8Array): string => {
+    const view = new DataView(init.buffer, init.byteOffset, init.byteLength)
+    const moov = readBoxes(init).find(b => b.type === 'moov')
+    if (!moov) throw new Error('MP4 の初期化セグメントに moov がありません')
+    return children(moov, 'trak').map((trak) => {
+        const tkhd = child(trak, 'tkhd')
+        const mdia = child(trak, 'mdia')
+        const mdhd = child(mdia, 'mdhd')
+        const hdlr = child(mdia, 'hdlr')
+        const stsd = child(child(child(mdia, 'minf'), 'stbl'), 'stsd')
+        const trackId = tkhd ? view.getUint32(tkhd.bodyStart + (init[tkhd.bodyStart] === 1 ? 20 : 12)) : 0
+        const timescale = mdhd ? view.getUint32(mdhd.bodyStart + (init[mdhd.bodyStart] === 1 ? 20 : 12)) : 0
+        const handler = hdlr ? readBoxType(init, hdlr.bodyStart + 4) : ''
+        const description = stsd ? Array.from(init.subarray(stsd.start, stsd.end)).join(',') : ''
+        return `${trackId}/${handler}/${timescale}/${description}`
+    }).join('|')
+}
+
 const isMp4MimeType = (mimeType: string) => mimeType.toLowerCase().startsWith('video/mp4')
 
-export { createFmp4Splitter, splitFmp4Blob, buildFmp4File, parseInit, parseMoof, isMp4MimeType }
+export { createFmp4Splitter, splitFmp4Blob, buildFmp4File, parseInit, parseMoof, initSignature, isMp4MimeType }
 export type { Fragment, FragmentBlob, Fmp4Segment }

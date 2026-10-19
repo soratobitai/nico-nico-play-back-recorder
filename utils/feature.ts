@@ -130,6 +130,7 @@ export {
     captureThumbnail,
     getVideoExtension,
     downloadSegment,
+    downloadBlob,
     getScreenShotAndDownload,
     formatDateForFileName,
     formatDate

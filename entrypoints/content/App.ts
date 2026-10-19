@@ -8,6 +8,7 @@ import { createKindRecorder, type KindRecorder } from '../../utils/kind-recorder
 import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen-capture'
 import { checkLiveStatus } from '../../services/api'
 import { isReviewSupported, isReviewOpen, toggleReviewWindow } from '../../utils/review/window'
+import { requestOpenLibrary } from '../../utils/library/open-library'
 import type { RecordingKind } from '../../utils/library/db'
 import SettingsModal from './settings-modal'
 import './settings-modal.css'
@@ -440,6 +441,10 @@ export default async () => {
         isScreenCaptureSupported() ? toggleScreenCapture : null,
         // 見直しは mp4 の録画だけ（webm でしか録画できない環境では使えない）
         isReviewSupported() && segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? toggleReview : null,
+        // ライブラリのページを、この番組を選んだ状態で開く
+        () => {
+            requestOpenLibrary(programId).catch((error) => console.log("ライブラリを開けませんでした:", error))
+        },
     )
     createModal()
 

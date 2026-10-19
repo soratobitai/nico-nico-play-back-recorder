@@ -37,6 +37,7 @@ const insertRecordedMovieAria = async (
     showSettings: () => void,
     toggleScreenCapture: (() => void) | null, // 画面ごと録画を使えない環境では null（ボタンを表示しない）
     toggleReview: (() => void) | null, // 見直しのウィンドウを使えない環境では null（ボタンを表示しない）
+    openLibrary?: () => void, // ライブラリのページを開く
 ) => {
     const controlArea = document.querySelector('[class*="_control-area_"]')
     if (!controlArea) return
@@ -69,6 +70,7 @@ const insertRecordedMovieAria = async (
                 </div>
               </div>
               <div class="control-buttons-right">
+                <button type="button" id="libraryButton" hidden title="録画の一覧（ライブラリ）を開きます。番組ごとの再生・まとめて保存・削除ができます。">ライブラリ</button>
                 <button type="button" id="reviewButton" hidden>見直す</button>
                 <button type="button" id="screenCaptureButton" hidden>画面録画</button>
                 <div class="settings-button" id="settingsButton" title="設定">
@@ -111,6 +113,13 @@ const insertRecordedMovieAria = async (
         screenCaptureButton.hidden = false
         screenCaptureButton.addEventListener("click", toggleScreenCapture)
         setScreenCaptureButton(false)
+    }
+
+    // ライブラリボタン
+    const libraryButton = document.getElementById("libraryButton") as HTMLButtonElement
+    if (openLibrary) {
+        libraryButton.hidden = false
+        libraryButton.addEventListener("click", openLibrary)
     }
 
     // 見直しボタン

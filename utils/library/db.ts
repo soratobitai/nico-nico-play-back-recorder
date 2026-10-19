@@ -5,7 +5,7 @@
 // 録画は「区間（segment）」ごとに保存する。区間は1回の録画処理（MediaRecorder）で録った範囲で、
 // fmp4 の区間は「初期化セグメント」と数秒ごとの「断片（fragment）」に分けて持つ。
 // 断片のまま持つので、録画中でも再生でき、容量の上限を超えたら古い断片から消していける。
-import { buildFmp4File } from '../fmp4'
+import { buildFmp4File, initSignature } from '../fmp4'
 
 const DB_NAME = 'PlaybackLibrary'
 const DB_VERSION = 1
@@ -224,6 +224,63 @@ const getSegmentFile = async (segmentId: string): Promise<{ blob: Blob, segment:
     return { blob, segment: toSummary(segment) }
 }
 
+// すべての区間（ライブラリのページで番組ごとにまとめる）。新しい順
+const listAllSegments = () => withTransaction([SEGMENTS], 'readonly', async (tx) => {
+    const segments = await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).getAll())
+    return segments.map(toSummary).sort((a, b) => b.startedAt - a.startedAt)
+})
+
+type DownloadFile = {
+    blob: Blob
+    kind: RecordingKind
+    mimeType: string
+    startedAt: number
+    endedAt: number | null
+    segmentIds: string[]
+}
+
+// 区間をつないで、保存するファイルにする（再エンコードしない）
+// 続けて並んだ同じ種類の mp4 の区間のうち、映像・音声の設定が同じものは1本につなぐ。
+// 設定が変わった所（解像度が変わった など）と、webm などの区間は別のファイルにする
+const buildDownloadFiles = async (segmentIds: string[]): Promise<DownloadFile[]> => {
+    const items = await withTransaction([SEGMENTS, FRAGMENTS], 'readonly', async (tx) => {
+        const store = tx.objectStore(SEGMENTS)
+        const loaded = await Promise.all(segmentIds.map(async (id) => {
+            const segment = await promisify<SegmentRecord | undefined>(store.get(id))
+            return segment && { segment, fragments: await getSegmentFragments(tx.objectStore(FRAGMENTS), id) }
+        }))
+        return loaded.filter((item): item is { segment: SegmentRecord, fragments: FragmentRecord[] } => !!item && item.fragments.length > 0)
+    })
+    items.sort((a, b) => a.segment.startedAt - b.segment.startedAt)
+
+    type Group = { kind: RecordingKind, signature: string | null, items: typeof items }
+    const groups: Group[] = []
+    for (const item of items) {
+        const { segment } = item
+        const signature = segment.format === 'fmp4' && segment.init
+            ? initSignature(new Uint8Array(await segment.init.arrayBuffer()))
+            : null
+        const last = groups[groups.length - 1]
+        if (signature !== null && last && last.kind === segment.kind && last.signature === signature) {
+            last.items.push(item)
+        } else {
+            groups.push({ kind: segment.kind, signature, items: [item] })
+        }
+    }
+
+    return Promise.all(groups.map(async ({ kind, signature, items: group }): Promise<DownloadFile> => {
+        const first = group[0].segment
+        const last = group[group.length - 1].segment
+        const blob = signature !== null
+            ? await buildFmp4File(group.map(({ segment, fragments }) => ({ init: segment.init!, fragments })))
+            : new Blob(group[0].fragments.map(f => f.blob), { type: first.mimeType })
+        return {
+            blob, kind, mimeType: first.mimeType, startedAt: first.startedAt, endedAt: last.endedAt,
+            segmentIds: group.map(({ segment }) => segment.segmentId),
+        }
+    }))
+}
+
 const deleteSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
     for (const segmentId of segmentIds) {
         await promisify(tx.objectStore(FRAGMENTS).delete(fragmentRange(segmentId)))
@@ -248,6 +305,17 @@ type TimelineSegment = Pick<SegmentRecord, 'segmentId' | 'kind' | 'mimeType' | '
 // 途中から再生できる mp4 の区間で、初期化セグメントが届いているものだけ
 const getTimeline = (programId: string) => withTransaction([SEGMENTS, FRAGMENTS], 'readonly', async (tx) => {
     const segments = await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).index('programId').getAll(programId))
+    return toTimeline(tx, segments)
+})
+
+// 指定した区間について、getTimeline と同じものを返す（ライブラリのページで、番組の区間を指定して使う）
+const getTimelineForSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readonly', async (tx) => {
+    const store = tx.objectStore(SEGMENTS)
+    const segments = await Promise.all(segmentIds.map(id => promisify<SegmentRecord | undefined>(store.get(id))))
+    return toTimeline(tx, segments.filter((s): s is SegmentRecord => !!s))
+})
+
+const toTimeline = async (tx: IDBTransaction, segments: SegmentRecord[]) => {
     const timeline: TimelineSegment[] = []
     for (const segment of segments.sort((a, b) => a.startedAt - b.startedAt)) {
         if (segment.format !== 'fmp4' || !segment.init) continue
@@ -259,7 +327,7 @@ const getTimeline = (programId: string) => withTransaction([SEGMENTS, FRAGMENTS]
         })
     }
     return timeline
-})
+}
 
 // 断片のデータを読む。消された断片は null
 const getFragmentBlobs = (segmentId: string, indexes: number[]) => withTransaction([FRAGMENTS], 'readonly', (tx) => {
@@ -377,7 +445,10 @@ export {
     getSegmentFile,
     deleteSegments,
     getTimeline,
+    getTimelineForSegments,
     getFragmentBlobs,
+    listAllSegments,
+    buildDownloadFiles,
     clearAll,
     getUsage,
     closeStaleSegments,
@@ -385,4 +456,4 @@ export {
     enforceLimit,
     SegmentNotFoundError,
 }
-export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment, TimelineFragment }
+export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment, TimelineFragment, DownloadFile }
