@@ -3,9 +3,8 @@ import { getRecordingMimeType, segmentFormatOf } from '@/utils/recording'
 import { getVideoExtension } from '@/utils/feature'
 
 vi.mock('@/utils/ui', () => ({
-    removeSegmentItems: vi.fn(),
-    setRecordingStatus: vi.fn(),
-    getTimeString: () => '00:00',
+    setRecorderState: vi.fn(),
+    getTimeString: () => '0:00',
 }))
 vi.mock('@/services/api', () => ({ checkLiveStatus: vi.fn(async () => 'ON_AIR') }))
 

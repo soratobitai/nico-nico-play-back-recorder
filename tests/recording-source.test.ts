@@ -81,7 +81,7 @@ describe('種類ごとの映像', () => {
     it('動画のみ: 描き直せない環境では、一定の解像度の設定でもそのまま録る', () => {
         const capture = createVideoCapture(video)
 
-        const source = createVideoSource(capture, 720)
+        const source = createVideoSource(capture, video, 720)
 
         expect(source.fixedSize).toBe(false)
         source.stop()

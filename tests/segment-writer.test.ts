@@ -3,15 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createSegmentWriter } from '@/utils/recording'
-import { removeSegmentItems } from '@/utils/ui'
 import * as library from '@/utils/library/api'
 import type { NewFragment, NewSegment } from '@/utils/library/db'
 import { subscribeLiveFeed, type LiveFeedEvent } from '@/utils/review/live-feed'
 
 vi.mock('@/utils/ui', () => ({
-    removeSegmentItems: vi.fn(),
-    setRecordingStatus: vi.fn(),
-    getTimeString: () => '00:00',
+    setRecorderState: vi.fn(),
+    getTimeString: () => '0:00',
 }))
 vi.mock('@/services/api', () => ({ checkLiveStatus: vi.fn(async () => 'ON_AIR') }))
 vi.mock('@/utils/library/api', () => ({
@@ -58,7 +56,7 @@ describe('mp4 の書き込み', () => {
         expect(init.size + fragments.reduce((sum, f) => sum + f.blob.size, 0)).toBe(fixture.length)
     })
 
-    it('保存したら、見直しのウィンドウへ初期化セグメントと断片を知らせる', async () => {
+    it('保存したら、プレイバックのウィンドウへ初期化セグメントと断片を知らせる', async () => {
         const events: LiveFeedEvent[] = []
         const unsubscribe = subscribeLiveFeed(event => events.push(event))
         const writer = createSegmentWriter(segment('fmp4', 'video/mp4'))
@@ -86,7 +84,7 @@ describe('mp4 の書き込み', () => {
         expect(events.filter(e => e.type === 'fragments')).toHaveLength(0)
     })
 
-    it('容量不足なら古い録画を消し、一覧からも外してから同じ断片をもう一度保存する', async () => {
+    it('容量不足なら古い録画を消してから、同じ断片をもう一度保存する', async () => {
         vi.mocked(library.appendFragments).mockRejectedValueOnce(quotaExceeded())
         vi.mocked(library.freeSpace).mockResolvedValueOnce({ freed: 500, deletedSegmentIds: ['old'] })
         const writer = createSegmentWriter(segment('fmp4', 'video/mp4'))
@@ -95,7 +93,6 @@ describe('mp4 の書き込み', () => {
 
         const calls = vi.mocked(library.appendFragments).mock.calls
         expect(calls[1]).toEqual(calls[0])
-        expect(removeSegmentItems).toHaveBeenCalledWith(['old'])
     })
 
     it('容量不足で消せる録画もなければ、エラーにする', async () => {

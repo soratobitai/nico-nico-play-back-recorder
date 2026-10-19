@@ -1,4 +1,4 @@
-// ライブラリのページで、録画（区間）を番組ごとにまとめる
+// 録画一覧のページで、録画（区間）を番組ごとにまとめる
 import type { RecordingKind, SegmentSummary } from './db'
 
 type ProgramSummary = {

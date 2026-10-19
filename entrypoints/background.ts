@@ -24,12 +24,12 @@ export default defineBackground(() => {
         }
         if (message?.type === OPEN_LIBRARY_MESSAGE) {
             const programId = typeof message.programId === 'string' ? message.programId : undefined
-            openLibrary(programId).catch(error => console.error('ライブラリを開けませんでした:', error))
+            openLibrary(programId).catch(error => console.error('録画一覧を開けませんでした:', error))
         }
     })
 
     // ツールバーの拡張機能のアイコンからも開ける
     chrome.action.onClicked.addListener(() => {
-        openLibrary().catch(error => console.error('ライブラリを開けませんでした:', error))
+        openLibrary().catch(error => console.error('録画一覧を開けませんでした:', error))
     })
 })

@@ -1,13 +1,13 @@
 import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments } from "../../utils/library/api"
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
-import { insertRecordedMovieAria, insertRecordedMovie, createModal, loadRecordedMovieList, removeSegmentItems, updateRecordingCount, insertToggleButton, updateToggleButton, isUICollapsed, setScreenCaptureButton, setReviewButton, setRecordingKinds } from "../../utils/ui"
+import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setKindChips, showBarHint } from "../../utils/ui"
 import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, type ResolutionMode } from '../../utils/storage'
 import { createVideoCapture, createVideoSource, createCommentSource, type RecordingSource } from '../../utils/recording-source'
 import { createKindRecorder, type KindRecorder } from '../../utils/kind-recorder'
 import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen-capture'
 import { checkLiveStatus } from '../../services/api'
-import { isReviewSupported, isReviewOpen, toggleReviewWindow } from '../../utils/review/window'
+import { isPlaybackSupported, isPlaybackOpen, togglePlaybackWindow } from '../../utils/review/window'
 import { requestOpenLibrary } from '../../utils/library/open-library'
 import type { RecordingKind } from '../../utils/library/db'
 import SettingsModal from './settings-modal'
@@ -17,7 +17,7 @@ import './settings-modal.css'
 
 const stateManager = new RecordingStateManager()
 
-// 録画を区切る間隔（内部の区切り。見直しではつながって再生される）
+// 録画を区切る間隔（内部の区切り。プレイバックと録画一覧ではつながって再生される）
 const SEGMENT_INTERVAL_MS = 5 * 60 * 1000
 // データを受け取って保存する間隔
 const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
@@ -83,13 +83,11 @@ export default async () => {
     }
 
     const createSourceFor = (kind: VideoKind): RecordingSource => {
-        if (kind === 'video') return createVideoSource(videoCapture, fixedHeight())
+        if (kind === 'video') return createVideoSource(videoCapture, video, fixedHeight())
         const source = createCommentSource(videoCapture, video, fixedHeight())
         if (!source) throw new Error('この環境ではコメント付きで録画できません')
         return source
     }
-
-    const updateKindsDisplay = () => setRecordingKinds(WATCH_ORDER.filter(kind => recorders.has(kind)))
 
     const startKind = (kind: RecordingKind, createSource: () => RecordingSource): boolean => {
         if (recorders.has(kind)) return true
@@ -109,10 +107,6 @@ export default async () => {
                 if (watched !== recorder) return
                 resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, 0, () => stopSession('stopped'))
             },
-            onSegmentFinished: (segment) => {
-                insertRecordedMovie(segment, 'end')
-                updateRecordingCount()
-            },
             // 古い録画を消しても容量が足りない場合は、録画を続けても保存されないので止める
             onSaveFailed: () => stopSession('error'),
             onEnded: () => {
@@ -128,7 +122,6 @@ export default async () => {
             return false
         }
         recorders.set(kind, recorder)
-        updateKindsDisplay()
         return true
     }
 
@@ -143,7 +136,6 @@ export default async () => {
     // 種類の録画が止まった後。録画している種類がなくなったら停止する
     const afterKindStopped = (kind: RecordingKind) => {
         if (kind === 'screen') setScreenCaptureButton(false)
-        updateKindsDisplay()
         if (sessionActive && recorders.size === 0 && restartPending.size === 0) stopSession('stopped')
     }
 
@@ -157,7 +149,6 @@ export default async () => {
             const { freed, deletedSegmentIds } = await enforceLimit(maxStorageSize)
             if (freed === 0) return
             console.log(`容量超過分を削除しました: ${freed} バイト（区間ごと消えたもの ${deletedSegmentIds.length}件）`)
-            removeSegmentItems(deletedSegmentIds)
         } catch (error) {
             console.log("容量超過分を削除できませんでした:", error)
         }
@@ -234,12 +225,27 @@ export default async () => {
     // 録画中に種類を変えた場合は、その場で始める・止める
     RECORD_VIDEO.watch((newValue) => {
         recordVideo = newValue
+        setKindChips({ video: recordVideo, comments: recordWithComments })
         applyKinds()
     })
     RECORD_WITH_COMMENTS.watch((newValue) => {
         recordWithComments = newValue
+        setKindChips({ video: recordVideo, comments: recordWithComments })
         applyKinds()
     })
+
+    // 録画バーのチップで、録る種類を切り替える（少なくとも1つは録る）
+    const toggleKind = (kind: VideoKind) => {
+        const next = { video: recordVideo, comments: recordWithComments }
+        next[kind] = !next[kind]
+        if (!next.video && !next.comments) {
+            showBarHint('少なくとも1つは録画します')
+            return
+        }
+        setKindChips(next)
+        if (kind === 'video') void RECORD_VIDEO.setValue(next.video)
+        else void RECORD_WITH_COMMENTS.setValue(next.comments)
+    }
     // 録画中に解像度の設定を変えた場合は、録り直して反映する
     RESOLUTION_MODE.watch((newValue) => {
         resolutionMode = newValue
@@ -391,14 +397,6 @@ export default async () => {
         if (!sessionActive) return
         stopSession('stopped')
     }
-    const reload = async () => {
-        // 一時保存した録画があれば、拡張機能側へ移す
-        await flushPending().catch((error) => console.log("一時保存した録画を移せませんでした:", error))
-
-        // 録画リストを更新
-        await loadRecordedMovieList()
-    }
-
     // 動画の解像度が変わったら、元の解像度のまま録る種類は録画を分けて録り直す
     // （一定の解像度で録る種類と画面ごとの録画は、そのまま録り続ける）
     const observeVideoResize = () => {
@@ -422,51 +420,40 @@ export default async () => {
         }
     }
 
-    // 見直しのウィンドウを開く・閉じる（録画は止めない）
-    const toggleReview = () => {
-        toggleReviewWindow({ programId, title, onClose: () => setReviewButton(false) })
-            .then(() => setReviewButton(isReviewOpen()))
-            .catch((error) => console.log("見直しのウィンドウを開けませんでした:", error))
+    // プレイバックのウィンドウを開く・閉じる（録画は止めない）
+    const togglePlayback = () => {
+        togglePlaybackWindow({ programId, title, onClose: () => setPlaybackButton(false) })
+            .then(() => setPlaybackButton(isPlaybackOpen()))
+            .catch((error) => console.log("プレイバックのウィンドウを開けませんでした:", error))
     }
 
     // 設定モーダルを初期化
     const settingsModal = new SettingsModal()
 
-    // UI類を作成
-    insertRecordedMovieAria(
+    // 録画バーを作る
+    insertRecorderBar({
         start,
         stop,
-        reload,
-        () => settingsModal.show(),
-        isScreenCaptureSupported() ? toggleScreenCapture : null,
-        // 見直しは mp4 の録画だけ（webm でしか録画できない環境では使えない）
-        isReviewSupported() && segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? toggleReview : null,
-        // ライブラリのページを、この番組を選んだ状態で開く
-        () => {
-            requestOpenLibrary(programId).catch((error) => console.log("ライブラリを開けませんでした:", error))
+        showSettings: () => settingsModal.show(),
+        toggleKind,
+        toggleScreenCapture: isScreenCaptureSupported() ? toggleScreenCapture : null,
+        // プレイバックは mp4 の録画だけ（webm でしか録画できない環境では使えない）
+        togglePlayback: isPlaybackSupported() && segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? togglePlayback : null,
+        // 録画一覧のページを、この番組を選んだ状態で開く
+        openRecordings: () => {
+            requestOpenLibrary(programId).catch((error) => console.log("録画一覧を開けませんでした:", error))
         },
-    )
-    createModal()
+    })
+    setKindChips({ video: recordVideo, comments: recordWithComments })
 
     // 録画状態の変更を監視してボタンを更新
     stateManager.onChange((state) => {
         updateToggleButton(state === 'recording')
     })
 
-    // 録画リストを読み込む関数
-    const loadRecordingListIfNeeded = async () => {
-        // UIが開いている時のみ読み込む
-        if (!isUICollapsed()) {
-            await loadRecordedMovieList()
-        }
-    }
-
     // 折りたたみボタンを追加（DOM準備後に実行）
     executeWhenIdle(async () => {
-        // UIを開いた時に録画リストを読み込むコールバックを設定
-        await insertToggleButton(async () => {
-            await loadRecordingListIfNeeded()
-        })
+        await insertToggleButton()
         // 初期状態を反映
         updateToggleButton(stateManager.getState() === 'recording')
 
@@ -480,33 +467,24 @@ export default async () => {
             await new Promise(resolve => setTimeout(resolve, 1000))
 
             executeWhenIdle(async () => {
-                // UIが開いている時のみ録画リストを読み込む
-                await loadRecordingListIfNeeded()
+                if (autoStart) {
+                    initStream() // 録画を開始
+                } else {
+                    // 動画の準備は録画開始ボタンを押した時に待つので、ここでは待たずに開始できる状態にする
+                    // （動画が一時停止中だと準備完了を検知できず、準備中のまま固まっていた）
+                    stateManager.setState('stopped')
+                }
 
                 await new Promise(resolve => setTimeout(resolve, 1000))
 
                 executeWhenIdle(async () => {
-                    if (autoStart) {
-                        initStream() // 録画を開始
-                    } else {
-                        // 動画の準備は録画開始ボタンを押した時に待つので、ここでは待たずに開始できる状態にする
-                        // （動画が一時停止中だと準備完了を検知できず、準備中のまま固まっていた）
-                        stateManager.setState('stopped')
-                    }
+                    observeVideoResize() // video の track 変更を監視
 
-                    await new Promise(resolve => setTimeout(resolve, 1000))
-
-                    executeWhenIdle(async () => {
-                        observeVideoResize() // video の track 変更を監視
-
-                        // 以前のバージョンの録画を拡張機能側へ移す（時間がかかることがあるので、録画を始めてから）
-                        migrateLegacy()
-                            .then((count) => { if (count > 0) return loadRecordingListIfNeeded() })
-                            .catch((error) => console.log("以前の録画を移せませんでした:", error))
-                    })
+                    // 以前のバージョンの録画を拡張機能側へ移す（時間がかかることがあるので、録画を始めてから）
+                    migrateLegacy()
+                        .catch((error) => console.log("以前の録画を移せませんでした:", error))
                 })
             })
         })
     })
-    // fixAudioTrack(video) // ミュート対策（utils/recording.ts）
 }

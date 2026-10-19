@@ -35,9 +35,9 @@ export default defineConfig({
   ],
   manifest: {
     "name": "ニコ生プレイバックレコーダー",
-    // ツールバーの拡張機能のアイコンを押すと、ライブラリ（録画の一覧）を開く
+    // ツールバーの拡張機能のアイコンを押すと、録画一覧を開く
     "action": {
-      "default_title": "ライブラリを開く"
+      "default_title": "録画一覧を開く"
     },
     "permissions": [
       "storage",
@@ -47,11 +47,10 @@ export default defineConfig({
     "web_accessible_resources": [
       {
         "resources": [
-          "assets/images/*",
           // ニコ生のページに埋め込み、録画を拡張機能側に保存するためのページ
           "bridge.html"
         ],
-        // 使うのはニコ生の視聴ページに埋め込む UI と bridge だけなので、他のサイトからは読めないようにする
+        // 使うのはニコ生の視聴ページに埋め込む bridge だけなので、他のサイトからは読めないようにする
         "matches": [
           "*://live.nicovideo.jp/*"
         ]

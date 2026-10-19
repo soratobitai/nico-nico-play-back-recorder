@@ -55,16 +55,23 @@ const createVideoCapture = (video: HTMLVideoElement) => {
 type VideoCapture = ReturnType<typeof createVideoCapture>
 
 // 動画のみ。fixedHeight を指定すると、その高さ（16:9）に描き直して一定の解像度で録る
-// （描き直せない環境では、そのまま録る）
-const createVideoSource = (capture: VideoCapture, fixedHeight: number | null): RecordingSource => {
+// 指定しなければ、録り始めた時の動画の大きさのまま録る（動画の大きさが変わったら、呼び出し側で録り直す）。
+// どちらの場合も、録画の途中で大きさを変えないように描き直す
+// （MediaRecorder の mp4 は、録画の途中で映像の大きさが変わると、そこから先が再生できなくなる。
+//   ニコ生の画質が変わってから録り直すまでの間のコマも、録り始めた時の大きさにそろえる）。
+// 描き直せない環境では、そのまま録る
+const createVideoSource = (capture: VideoCapture, video: HTMLVideoElement, fixedHeight: number | null): RecordingSource => {
     const { stream, release } = capture.acquire()
     const [track] = stream.getVideoTracks()
-    if (fixedHeight && track && isFramePipelineSupported()) {
-        const { width, height } = getOutputSize(fixedHeight, null)
+    if (track && isFramePipelineSupported()) {
+        const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+        const { width, height } = fixedHeight || !video.videoWidth || !video.videoHeight
+            ? getOutputSize(fixedHeight ?? 720, null)
+            : { width: even(video.videoWidth), height: even(video.videoHeight) }
         const pipeline = createFramePipeline(track, width, height, (ctx, frame) => drawContain(ctx, frame, width, height))
         return {
             stream: new MediaStream([pipeline.track, ...stream.getAudioTracks()]),
-            fixedSize: true,
+            fixedSize: fixedHeight !== null,
             stop: () => {
                 pipeline.stop()
                 release()

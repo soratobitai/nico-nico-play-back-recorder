@@ -1,7 +1,7 @@
 // 以前のバージョンの録画の保存先（拡張機能側へ移すために読み出す・消す）
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveChunk, getAllChunks, deleteChunkByKeys, hasLegacyDatabase, deleteLegacyDatabase } from '@/hooks/indexedDB/recordingDB'
-import { formatDate, formatDateForFileName } from '@/utils/feature'
+import { formatDateForFileName } from '@/utils/feature'
 
 const putTemp = (sessionId: string, chunkIndex: number) =>
     saveChunk('Temps', sessionId, chunkIndex, new Blob(['x'], { type: 'video/mp4' }), null, Date.now(), 'user', 'title')
@@ -42,10 +42,6 @@ describe('以前の録画の読み出しと削除', () => {
 
 describe('日時の整形', () => {
     const date = new Date(2025, 0, 2, 3, 4, 5).getTime()
-
-    it('表示用は時刻を「:」で区切る', () => {
-        expect(formatDate(date)).toBe('2025-01-02 03:04:05')
-    })
 
     it('ファイル名用は「:」を使わない', () => {
         expect(formatDateForFileName(date)).toBe('2025-01-02 030405')

@@ -1,10 +1,10 @@
-// ライブラリのページを開く
+// 録画一覧のページを開く
 // ニコ生のページのボタンや、ツールバーの拡張機能のアイコンから開く。
 // 既に開いていれば、そのページに番組を表示して前に出す（同じページを何枚も開かない）。
 
-// content script → background: ライブラリを開いてほしい（programId の番組を表示する）
+// content script → background: 録画一覧を開いてほしい（programId の番組を表示する）
 const OPEN_LIBRARY_MESSAGE = 'playback-library:open'
-// background → ライブラリのページ: 開いていれば、programId の番組を表示して前に出てほしい
+// background → 録画一覧のページ: 開いていれば、programId の番組を表示して前に出てほしい
 const SHOW_PROGRAM_MESSAGE = 'playback-library:show'
 
 type OpenLibraryMessage = { type: typeof OPEN_LIBRARY_MESSAGE, programId?: string }
@@ -19,7 +19,7 @@ const openLibrary = async (programId?: string) => {
         const shown = await chrome.runtime.sendMessage({ type: SHOW_PROGRAM_MESSAGE, programId } satisfies ShowProgramMessage)
         if (shown) return
     } catch {
-        // ライブラリのページが開いていない
+        // 録画一覧のページが開いていない
     }
     await chrome.tabs.create({ url: libraryUrl(programId) })
 }

@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeBrowser } from 'wxt/testing'
 import SettingsModal from '@/entrypoints/content/settings-modal'
-import { getUsage } from '@/utils/library/api'
-import { MAX_STORAGE_SIZE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT } from '@/utils/storage'
+import { getUsage, clearAll } from '@/utils/library/api'
+import { MAX_STORAGE_SIZE, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT } from '@/utils/storage'
 
 vi.mock('@/utils/library/api', () => ({
     getUsage: vi.fn(async () => ({ bytes: 2 * GB, segments: 1, bytesByKind: { video: 2 * GB, comments: 0, screen: 0 } })),
@@ -24,7 +24,8 @@ let modal: SettingsModal
 beforeEach(async () => {
     fakeBrowser.reset()
     vi.mocked(getUsage).mockClear()
-    document.body.innerHTML = '<div id="recordedMovieAria"></div>'
+    vi.mocked(clearAll).mockClear()
+    document.body.innerHTML = '<div id="playbackRecorderBar"></div><button id="settingsButton"></button>'
     modal = new SettingsModal()
     await flush() // 設定の読み込みを待つ
 })
@@ -72,41 +73,46 @@ describe('設定画面', () => {
         expect(document.getElementById('intervalRange')).toBeNull()
     })
 
-    describe('録画する種類', () => {
-        const checkbox = (id: string) => document.getElementById(id) as HTMLInputElement
-        const toggle = async (id: string) => {
-            checkbox(id).checked = !checkbox(id).checked
-            checkbox(id).dispatchEvent(new Event('change'))
-            await flush()
-        }
+    it('録画バーの上に開き、もう一度押す・閉じるボタン・Esc で閉じる', () => {
+        modal.show()
+        expect(document.querySelector('#playbackRecorderBar #settingsModal')).not.toBeNull()
+        expect(document.getElementById('settingsButton')?.getAttribute('aria-expanded')).toBe('true')
 
-        it('初期値は「動画のみ」だけで、「コメント付き」を足すと両方が保存される', async () => {
-            modal.show()
-            expect(checkbox('recordVideoCheckbox').checked).toBe(true)
-            expect(checkbox('recordWithCommentsCheckbox').checked).toBe(false)
+        modal.show()
+        expect(document.getElementById('settingsModal')).toBeNull()
+        expect(document.getElementById('settingsButton')?.getAttribute('aria-expanded')).toBe('false')
 
-            await toggle('recordWithCommentsCheckbox')
+        modal.show()
+        ;(document.querySelector('.npr-settings-close') as HTMLButtonElement).click()
+        expect(document.getElementById('settingsModal')).toBeNull()
 
-            expect(await RECORD_VIDEO.getValue()).toBe(true)
-            expect(await RECORD_WITH_COMMENTS.getValue()).toBe(true)
-        })
+        modal.show()
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+        expect(document.getElementById('settingsModal')).toBeNull()
+    })
 
-        it('最後の1つは外せない（何も録画しない設定にはできない）', async () => {
-            modal.show()
+    it('録る種類は設定画面ではなく録画バーのチップで選ぶ', () => {
+        modal.show()
 
-            await toggle('recordVideoCheckbox')
+        expect(document.getElementById('recordVideoCheckbox')).toBeNull()
+        expect(document.getElementById('recordWithCommentsCheckbox')).toBeNull()
+    })
 
-            expect(checkbox('recordVideoCheckbox').checked).toBe(true)
-            expect(await RECORD_VIDEO.getValue()).toBe(true)
-            expect(document.querySelector('.kinds-message')?.textContent).toContain('少なくとも1つ')
+    it('すべての録画を削除する前に確かめる（やめたら削除しない）', async () => {
+        const confirm = vi.spyOn(window, 'confirm')
+        modal.show()
+        const button = document.getElementById('clearButton') as HTMLButtonElement
 
-            // 「コメント付き」を選んでからなら、「動画のみ」を外せる
-            await toggle('recordWithCommentsCheckbox')
-            await toggle('recordVideoCheckbox')
-            expect(await RECORD_VIDEO.getValue()).toBe(false)
-            expect(await RECORD_WITH_COMMENTS.getValue()).toBe(true)
-            expect(document.querySelector('.kinds-message')?.textContent).toBe('')
-        })
+        confirm.mockReturnValueOnce(false)
+        button.click()
+        await flush()
+        expect(clearAll).not.toHaveBeenCalled()
+
+        confirm.mockReturnValueOnce(true)
+        button.click()
+        await flush()
+        expect(clearAll).toHaveBeenCalledTimes(1)
+        confirm.mockRestore()
     })
 
     describe('解像度が変わった時', () => {

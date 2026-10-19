@@ -1,5 +1,5 @@
 // 録画の保存先（拡張機能側の IndexedDB）
-// 拡張機能のページ（ニコ生のページに埋め込む bridge と、ライブラリのページ）から使う。
+// 拡張機能のページ（ニコ生のページに埋め込む bridge と、録画一覧のページ）から使う。
 // ニコ生のページ（content script）からは bridge を通して使う（utils/library/api.ts）。
 //
 // 録画は「区間（segment）」ごとに保存する。区間は1回の録画処理（MediaRecorder）で録った範囲で、
@@ -183,48 +183,12 @@ const finishSegment = (segmentId: string, endedAt: number, mimeType?: string) =>
     return toSummary(segment)
 })
 
-// ---- 一覧・再生・削除 ----
-
-// 新しい順に区間を返す（before を指定すると、それより前に始まった区間だけ）
-const listSegments = (limit: number, before?: number) => withTransaction([SEGMENTS], 'readonly', async (tx) => {
-    const range = before === undefined ? null : IDBKeyRange.upperBound(before, true)
-    const request = tx.objectStore(SEGMENTS).index('startedAt').openCursor(range, 'prev')
-    const out: SegmentSummary[] = []
-    await new Promise<void>((resolve, reject) => {
-        request.onsuccess = () => {
-            const cursor = request.result
-            if (!cursor || out.length >= limit) return resolve()
-            out.push(toSummary(cursor.value))
-            cursor.continue()
-        }
-        request.onerror = () => reject(request.error)
-    })
-    return out
-})
-
-const countSegments = () => withTransaction([SEGMENTS], 'readonly', (tx) => promisify(tx.objectStore(SEGMENTS).count()))
+// ---- 一覧・保存・削除 ----
 
 const getSegmentFragments = (store: IDBObjectStore, segmentId: string) =>
     promisify<FragmentRecord[]>(store.getAll(fragmentRange(segmentId)))
 
-// 区間を1本のファイルにする（fmp4 は 0 秒から始まるように時刻をそろえる）
-const getSegmentFile = async (segmentId: string): Promise<{ blob: Blob, segment: SegmentSummary }> => {
-    const { segment, fragments } = await withTransaction([SEGMENTS, FRAGMENTS], 'readonly', async (tx) => ({
-        segment: await getSegmentRecord(tx.objectStore(SEGMENTS), segmentId),
-        fragments: await getSegmentFragments(tx.objectStore(FRAGMENTS), segmentId),
-    }))
-    // 録画を始めた直後は、初期化セグメントや断片がまだ届いていない
-    if (fragments.length === 0 || (segment.format === 'fmp4' && !segment.init)) {
-        throw new Error('この録画にはまだ再生できる部分がありません')
-    }
-
-    const blob = segment.format === 'fmp4' && segment.init
-        ? await buildFmp4File([{ init: segment.init, fragments }])
-        : new Blob(fragments.map(f => f.blob), { type: segment.mimeType })
-    return { blob, segment: toSummary(segment) }
-}
-
-// すべての区間（ライブラリのページで番組ごとにまとめる）。新しい順
+// すべての区間（録画一覧のページで番組ごとにまとめる）。新しい順
 const listAllSegments = () => withTransaction([SEGMENTS], 'readonly', async (tx) => {
     const segments = await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).getAll())
     return segments.map(toSummary).sort((a, b) => b.startedAt - a.startedAt)
@@ -293,7 +257,7 @@ const clearAll = () => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async
     await promisify(tx.objectStore(SEGMENTS).clear())
 })
 
-// ---- 見直し（録画中の番組を、ページ内で少し前から見る） ----
+// ---- プレイバック・録画一覧（区切りをつないで見る） ----
 
 type TimelineFragment = { index: number, startTime: number, duration: number, keyframe: boolean }
 type TimelineSegment = Pick<SegmentRecord, 'segmentId' | 'kind' | 'mimeType' | 'startedAt' | 'endedAt'> & {
@@ -308,7 +272,7 @@ const getTimeline = (programId: string) => withTransaction([SEGMENTS, FRAGMENTS]
     return toTimeline(tx, segments)
 })
 
-// 指定した区間について、getTimeline と同じものを返す（ライブラリのページで、番組の区間を指定して使う）
+// 指定した区間について、getTimeline と同じものを返す（録画一覧のページで、番組の区間を指定して使う）
 const getTimelineForSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readonly', async (tx) => {
     const store = tx.objectStore(SEGMENTS)
     const segments = await Promise.all(segmentIds.map(id => promisify<SegmentRecord | undefined>(store.get(id))))
@@ -440,9 +404,6 @@ export {
     setSegmentInit,
     appendFragments,
     finishSegment,
-    listSegments,
-    countSegments,
-    getSegmentFile,
     deleteSegments,
     getTimeline,
     getTimelineForSegments,

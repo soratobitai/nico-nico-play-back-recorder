@@ -6,10 +6,6 @@ type BridgeRequest =
     | { type: 'setSegmentInit', segmentId: string, init: Blob }
     | { type: 'appendFragments', segmentId: string, fragments: NewFragment[] }
     | { type: 'finishSegment', segmentId: string, endedAt: number, mimeType?: string }
-    | { type: 'listSegments', limit: number, before?: number }
-    | { type: 'countSegments' }
-    | { type: 'getSegmentFile', segmentId: string }
-    | { type: 'deleteSegments', segmentIds: string[] }
     | { type: 'getTimeline', programId: string }
     | { type: 'getFragmentBlobs', segmentId: string, indexes: number[] }
     | { type: 'getUsage' }
@@ -26,10 +22,6 @@ type BridgeResults = {
     setSegmentInit: void
     appendFragments: void
     finishSegment: SegmentSummary | null
-    listSegments: SegmentSummary[]
-    countSegments: number
-    getSegmentFile: { blob: Blob, segment: SegmentSummary }
-    deleteSegments: void
     getTimeline: TimelineSegment[]
     getFragmentBlobs: (Blob | null)[]
     getUsage: Usage

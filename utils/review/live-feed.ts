@@ -1,5 +1,5 @@
-// 録画中の区間に書き込んだデータを、同じページの見直しのウィンドウへ知らせる
-// （録画中の最新の部分を、保存先から読み直さずにすぐ見直せるように）
+// 録画中の区間に書き込んだデータを、同じページのプレイバックのウィンドウへ知らせる
+// （録画中の最新の部分を、保存先から読み直さずにすぐ見られるように）
 import type { NewSegment, NewFragment } from '../library/db'
 
 type LiveFeedEvent =
@@ -16,7 +16,7 @@ const publishLiveFeed = (event: LiveFeedEvent) => {
         try {
             listener(event)
         } catch (error) {
-            console.error('見直しのウィンドウへの通知に失敗しました:', error)
+            console.error('プレイバックのウィンドウへの通知に失敗しました:', error)
         }
     }
 }

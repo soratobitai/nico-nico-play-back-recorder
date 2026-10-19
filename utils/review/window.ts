@@ -1,7 +1,7 @@
-// 見直しのウィンドウ
-// ニコ生のページで生放送を見ながら、少し前の録画を別のウィンドウ（Document Picture-in-Picture）で見直す。
+// プレイバックのウィンドウ
+// ニコ生のページで生放送を見ながら、少し前の録画を別のウィンドウ（Document Picture-in-Picture）で見る。
 // ウィンドウは大きさを変えられ、他のウィンドウの上に重なって表示される。
-// 録画は止めずに続け、録画中の最新の部分も届くたびに見直せるようになる（画面は view.ts）。
+// 録画は止めずに続け、録画中の最新の部分も届くたびに見られるようになる（画面は view.ts）。
 import { getTimeline, getFragmentBlobs } from '../library/api'
 import { subscribeLiveFeed } from './live-feed'
 import { mountReviewView } from './view'
@@ -17,7 +17,7 @@ const documentPictureInPicture = () =>
 
 const WINDOW_SIZE = { width: 640, height: 420 }
 
-type ReviewWindowOptions = {
+type PlaybackWindowOptions = {
     programId: string
     title: string
     onClose?: () => void
@@ -26,12 +26,12 @@ type ReviewWindowOptions = {
 let current: { close: () => void } | null = null
 let opening = false
 
-const isReviewSupported = () => !!documentPictureInPicture() && typeof MediaSource !== 'undefined'
-const isReviewOpen = () => current !== null
+const isPlaybackSupported = () => !!documentPictureInPicture() && typeof MediaSource !== 'undefined'
+const isPlaybackOpen = () => current !== null
 
-// 見直しのウィンドウを開く（開いていれば閉じる）
+// プレイバックのウィンドウを開く（開いていれば閉じる）
 // ボタンを押した時に呼ぶこと（ウィンドウは、ユーザーの操作からしか開けない）
-const toggleReviewWindow = async (options: ReviewWindowOptions) => {
+const togglePlaybackWindow = async (options: PlaybackWindowOptions) => {
     if (current) {
         current.close()
         return
@@ -40,15 +40,15 @@ const toggleReviewWindow = async (options: ReviewWindowOptions) => {
     opening = true
     try {
         const pip = await documentPictureInPicture()!.requestWindow(WINDOW_SIZE)
-        current = mountReviewWindow(pip, options)
+        current = mountPlaybackWindow(pip, options)
     } finally {
         opening = false
     }
 }
 
-const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWindowOptions) => {
+const mountPlaybackWindow = (pip: Window, { programId, title, onClose }: PlaybackWindowOptions) => {
     const doc = pip.document
-    doc.title = `見直し - ${title}`
+    doc.title = `プレイバック - ${title}`
     const style = doc.createElement('style')
     style.textContent = REVIEW_WINDOW_STYLE + REVIEW_STYLE
     doc.head.append(style)
@@ -71,4 +71,4 @@ const mountReviewWindow = (pip: Window, { programId, title, onClose }: ReviewWin
     return { close: () => pip.close() }
 }
 
-export { isReviewSupported, isReviewOpen, toggleReviewWindow }
+export { isPlaybackSupported, isPlaybackOpen, togglePlaybackWindow }

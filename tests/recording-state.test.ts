@@ -1,29 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { RecordingStateManager } from '@/utils/recording'
-import { setRecordingStatus } from '@/utils/ui'
+import { setRecorderState } from '@/utils/ui'
 
 vi.mock('@/utils/ui', () => ({
-    setRecordingStatus: vi.fn(),
-    insertRecordedMovie: vi.fn(),
-    removeSegmentItems: vi.fn(),
-    getTimeString: () => '00:00',
+    setRecorderState: vi.fn(),
+    getTimeString: () => '0:00',
 }))
 
 beforeEach(() => {
-    vi.mocked(setRecordingStatus).mockClear()
+    vi.mocked(setRecorderState).mockClear()
 })
 
 describe('RecordingStateManager', () => {
-    it('初期状態は画面の初期表示と同じ「準備中」', () => {
+    it('初期状態は録画バーの初期表示と同じ「準備中」', () => {
         expect(new RecordingStateManager().getState()).toBe('preparing')
     })
 
-    it('初期状態から停止中にすると、録画開始ボタンが押せる表示に更新される（オートスタート OFF の起動時）', () => {
+    it('状態を変えると録画バーの表示を更新する（オートスタート OFF の起動時は停止中）', () => {
         const stateManager = new RecordingStateManager()
 
         stateManager.setState('stopped')
 
-        expect(setRecordingStatus).toHaveBeenLastCalledWith(true, false, '停止中')
+        expect(setRecorderState).toHaveBeenLastCalledWith('stopped')
     })
 
     it('状態が変わった時だけ表示を更新し、リスナーに通知する', () => {
@@ -34,8 +32,8 @@ describe('RecordingStateManager', () => {
         stateManager.setState('recording')
         stateManager.setState('recording')
 
-        expect(setRecordingStatus).toHaveBeenCalledTimes(1)
-        expect(setRecordingStatus).toHaveBeenLastCalledWith(false, true, '🔴録画中')
+        expect(setRecorderState).toHaveBeenCalledTimes(1)
+        expect(setRecorderState).toHaveBeenLastCalledWith('recording')
         expect(listener).toHaveBeenCalledTimes(1)
         expect(listener).toHaveBeenCalledWith('recording')
     })

@@ -1,6 +1,6 @@
-// 見直しの画面の見た目
+// 録画を見る画面（プレイバック・録画一覧）の見た目
 // Document Picture-in-Picture のウィンドウにはページの CSS が届かないので、文字列で持って埋め込む。
-// ライブラリのページでも同じ画面を使うので、.review の中だけに効くようにする
+// 録画一覧のページでも同じ画面を使うので、.review の中だけに効くようにする
 const REVIEW_STYLE = `
 .review {
   --ground: #0d0d0f;
@@ -72,7 +72,7 @@ const REVIEW_STYLE = `
 }
 `
 
-// 見直しのウィンドウ（Document Picture-in-Picture）のページ全体
+// プレイバックのウィンドウ（Document Picture-in-Picture）のページ全体
 const REVIEW_WINDOW_STYLE = `
 html, body { height: 100%; margin: 0; background: #0d0d0f; overflow: hidden; }
 `

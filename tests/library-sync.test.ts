@@ -5,7 +5,7 @@ import path from 'node:path'
 import { savePendingRequest, flushPendingRequests } from '@/utils/library/pending'
 import { migrateLegacyRecordings } from '@/utils/library/migrate'
 import { handleBridgeRequest } from '@/utils/library/handler'
-import { clearAll, listSegments, getSegmentFile } from '@/utils/library/db'
+import { clearAll, listAllSegments, buildDownloadFiles } from '@/utils/library/db'
 import { saveChunk, getAllChunks, hasLegacyDatabase, deleteLegacyDatabase } from '@/hooks/indexedDB/recordingDB'
 import { splitFmp4Blob } from '@/utils/fmp4'
 import type { BridgeRequest } from '@/utils/library/protocol'
@@ -96,15 +96,15 @@ describe('以前のバージョンの録画を移す', () => {
 
         expect(await migrateLegacyRecordings(call)).toBe(2)
 
-        const segments = await listSegments(10)
+        const segments = await listAllSegments()
         expect(segments.map(s => [s.title, s.userName, s.format])).toEqual(expect.arrayContaining([
             ['title', 'user', 'fmp4'], ['title2', 'user2', 'fmp4'],
         ]))
         const expected = (await splitFmp4Blob(fixtureBlob)).fragments.length
         for (const segment of segments) {
             expect(segment.fragmentCount).toBe(expected)
-            const { blob } = await getSegmentFile(segment.segmentId)
-            expect((await splitFmp4Blob(blob)).fragments).toHaveLength(expected)
+            const [file] = await buildDownloadFiles([segment.segmentId])
+            expect((await splitFmp4Blob(file.blob)).fragments).toHaveLength(expected)
         }
         const fromChunks = segments.find(s => s.title === 'title')!
         expect(fromChunks.endedAt).toBe(5000)
@@ -118,10 +118,10 @@ describe('以前のバージョンの録画を移す', () => {
 
         await migrateLegacyRecordings(call)
 
-        const [segment] = await listSegments(10)
+        const [segment] = await listAllSegments()
         expect(segment.format).toBe('opaque')
-        const { blob } = await getSegmentFile(segment.segmentId)
-        expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array(await webm.arrayBuffer()))
+        const [file] = await buildDownloadFiles([segment.segmentId])
+        expect(new Uint8Array(await file.blob.arrayBuffer())).toEqual(new Uint8Array(await webm.arrayBuffer()))
     })
 
     it('古いバージョンがまだ録画中かもしれない一時データには触らず、以前の保存先も残す', async () => {
@@ -129,7 +129,7 @@ describe('以前のバージョンの録画を移す', () => {
 
         expect(await migrateLegacyRecordings(call)).toBe(0)
 
-        expect(await listSegments(10)).toEqual([])
+        expect(await listAllSegments()).toEqual([])
         expect(await getAllChunks('Temps')).toHaveLength(1)
         expect(await hasLegacyDatabase()).toBe(true)
     })
@@ -140,7 +140,7 @@ describe('以前のバージョンの録画を移す', () => {
         const counts = await Promise.all([migrateLegacyRecordings(call), migrateLegacyRecordings(call)])
 
         expect(counts.sort()).toEqual([0, 1])
-        expect(await listSegments(10)).toHaveLength(1)
+        expect(await listAllSegments()).toHaveLength(1)
     })
 
     it('以前の保存先がなければ何もせず、作りもしない', async () => {

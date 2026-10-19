@@ -1,4 +1,4 @@
-// 見直しの再生（MediaSource）
+// 録画の再生（MediaSource）。プレイバックと録画一覧で使う
 // 時間軸（Timeline）の再生位置のまわりの断片だけを読み込み、離れた部分は捨てる（長い録画でもメモリを使いすぎない）。
 // 区間が変わる所では、その区間の初期化セグメントを読み込んでから、時間軸の位置（timestampOffset）に合わせて断片を足す。
 import { planBuffer, fragmentKey, type Timeline, type PlacedFragment, type PlacedSegment } from './timeline'
@@ -52,7 +52,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, onError }: ReviewP
     const operate = (operation: (buffer: SourceBuffer) => void) => new Promise<void>((resolve, reject) => {
         const buffer = sourceBuffer!
         const done = () => { cleanup(); resolve() }
-        const failed = () => { cleanup(); reject(new Error('見直しの動画を読み込めませんでした')) }
+        const failed = () => { cleanup(); reject(new Error('録画を読み込めませんでした')) }
         const cleanup = () => {
             buffer.removeEventListener('updateend', done)
             buffer.removeEventListener('error', failed)

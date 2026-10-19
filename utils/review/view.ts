@@ -1,6 +1,6 @@
-// 録画を見直す画面（再生・シークバー・10秒戻る/進む・種類の切り替え）
-// 見直しのウィンドウ（ニコ生のページから開く。mode: 'live'）と、ライブラリのページ（mode: 'library'）で使う。
-// - live: 録画中の番組を、ライブの少し前から見直す。音は初めは消しておく（ライブの音はそのまま）。
+// 録画を見る画面（再生・シークバー・10秒戻る/進む・種類の切り替え）
+// プレイバックのウィンドウ（ニコ生のページから開く。mode: 'live'）と、録画一覧のページ（mode: 'library'）で使う。
+// - live: 録画中の番組を、ライブの少し前から見る。音は初めは消しておく（ライブの音はそのまま）。
 //         「ライブに戻る」で最新の録画へ移り、録画中に届く断片を追いかける。
 // - library: 録画した番組を見る。音は出す。録った時刻を指定して見られる。
 // 種類（動画のみ・コメント付き・画面）を同時に録っている場合は、同じ場面のまま切り替えて見られる。
@@ -18,14 +18,16 @@ const LIVE_THRESHOLD_SECONDS = 15
 const SKIP_SECONDS = 10
 // 保存先から番組の録画を読み直す間隔（録画中に増えた分や、容量の上限を超えて消された部分を反映する）
 const SYNC_INTERVAL_MS = 30 * 1000
+// 再生できない所を飛ばすのは、1分にこの回数まで（それより多ければ、飛ばし続けずにお知らせする）
+const MAX_RECOVERIES_PER_MINUTE = 5
 // 種類の名前と、初めに見る種類の優先順
 const KIND_LABELS: Record<RecordingKind, string> = { video: '動画のみ', comments: 'コメント付き', screen: '画面' }
 const KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
 
 const MESSAGES = {
     live: {
-        empty: 'まだ見直せる録画がありません。\n録画が始まると、ここで少し前から見直せます。',
-        unavailable: '拡張機能が更新されたため見直せません。\nページを開き直してください。',
+        empty: 'まだプレイバックできる録画がありません。\n録画が始まると、ここで少し前から見られます。',
+        unavailable: '拡張機能が更新されたため、プレイバックできません。\nページを開き直してください。',
         loadError: '録画を読み込めませんでした。',
         playError: '録画を再生できませんでした。\nウィンドウを開き直してください。',
     },
@@ -134,7 +136,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const behind = $<HTMLSpanElement>('.behind')
     const kindsGroup = $<HTMLDivElement>('.kinds')
     const kindButtons = [...container.querySelectorAll<HTMLButtonElement>('.kind')]
-    // live は見直しの音を消しておく（ライブの音と重ならないように）
+    // live はプレイバックの音を消しておく（ライブの音と重ならないように）
     video.muted = mode === 'live'
     liveButton.hidden = mode !== 'live'
 
@@ -166,11 +168,63 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         timeline: target,
         readFragments,
         onError: (error) => {
-            console.error('見直しの再生に失敗しました:', error)
-            showMessage(messages.playError)
+            console.error('録画の再生に失敗しました:', error)
+            recover()
         },
     })
     let player = createPlayer(timeline)
+    let wantsPlaying = false // 再生しようとしているか（再生できない所を飛ばした後に、続けて再生する）
+    const playVideo = () => {
+        wantsPlaying = true
+        video.play().catch(() => {})
+    }
+
+    // ---- 再生できない所を飛ばす ----
+    // 録画が壊れている所（以前のバージョンで、録画の途中で映像の大きさが変わった所など）に当たると、
+    // 動画が止まって先へ進めなくなる。その区間の壊れた所から後を外し、再生し直して続きから見る
+    const brokenFrom = new Map<string, number>() // 区間 → この時刻（区間の中の秒）から後は再生できない
+    const recoveredAt: number[] = []
+    let recovering = false
+
+    const removeBroken = () => {
+        if (brokenFrom.size === 0) return
+        for (const t of timelines.values()) {
+            for (const f of t.fragments.filter(f => f.startTime >= (brokenFrom.get(f.segmentId) ?? Infinity))) {
+                t.removeFragment(f.segmentId, f.index)
+            }
+        }
+    }
+
+    const recover = () => {
+        if (recovering) return
+        // 何度も続く場合は、飛ばし続けずにお知らせする
+        const now = Date.now()
+        while (recoveredAt.length > 0 && now - recoveredAt[0] > 60 * 1000) recoveredAt.shift()
+        const broken = timeline.fragments[timeline.indexAt(player.position)]
+        if (!broken || recoveredAt.length >= MAX_RECOVERIES_PER_MINUTE) {
+            showMessage(messages.playError)
+            return
+        }
+        recoveredAt.push(now)
+        console.log('再生できない所を飛ばします:', broken.segmentId, broken.startTime)
+        brokenFrom.set(broken.segmentId, Math.min(brokenFrom.get(broken.segmentId) ?? Infinity, broken.startTime))
+        removeBroken()
+
+        recovering = true
+        player.destroy()
+        player = createPlayer(timeline)
+        recovering = false
+        if (timeline.isEmpty) return
+        // 外した所は録っていない間と同じ扱いになり、次の再生できる所へ進む
+        player.seek(broken.start)
+        if (wantsPlaying) playVideo()
+        render()
+    }
+
+    video.addEventListener('error', () => {
+        // MEDIA_ERR_DECODE（別のウィンドウの video でも同じ番号）
+        if (!recovering && video.error?.code === 3) recover()
+    })
 
     // 録画があれば、見始める位置を決める（live: 最新の少し前から再生、library: 最初から）
     const initialPosition = () => mode === 'live'
@@ -188,7 +242,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         if (timeline.isEmpty) return
         const target = wallClock === null ? null : timeline.timeAtWallClock(wallClock)
         player.seek(target ?? initialPosition())
-        if (play) video.play().catch(() => {})
+        if (play) playVideo()
         started = true
         showMessage(null)
         render()
@@ -261,7 +315,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         if (muteButton.dataset.state !== muteState) {
             muteButton.dataset.state = muteState
             muteButton.innerHTML = `${video.muted ? ICONS.muted : ICONS.sound}<span class="label">${video.muted ? '音を出す' : '音を消す'}</span>`
-            const target = mode === 'live' ? '見直しの音' : '音'
+            const target = mode === 'live' ? 'プレイバックの音' : '音'
             muteButton.setAttribute('aria-label', video.muted ? `${target}を出す` : `${target}を消す`)
         }
 
@@ -269,12 +323,19 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
 
     const skip = (seconds: number) => player.seek(player.position + seconds)
-    const togglePlay = () => { if (video.paused) video.play().catch(() => {}); else video.pause() }
+    const togglePlay = () => {
+        if (video.paused) {
+            playVideo()
+        } else {
+            wantsPlaying = false
+            video.pause()
+        }
+    }
     const toggleMute = () => { video.muted = !video.muted }
     const goLive = () => {
         if (mode !== 'live') return
         player.seek(timeline.end - LIVE_EDGE_SECONDS)
-        video.play().catch(() => {})
+        playVideo()
     }
 
     seek.addEventListener('input', () => { dragging = true; render() })
@@ -334,6 +395,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
                 owner.addFragments(event.segmentId, event.fragments.map(f => ({
                     index: f.index, startTime: f.startTime, duration: f.duration, keyframe: f.keyframe ?? true,
                 })))
+                removeBroken()
                 break
             }
             case 'finish':
@@ -367,13 +429,14 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             for (const [kind, list] of byKind) {
                 if (list.length > 0 || timelines.has(kind)) timelineOf(kind).sync(list)
             }
+            removeBroken()
             applyQueued()
             if (availableKinds().length === 0) showMessage(messages.empty)
             startIfReady()
             player.update()
         } catch (error) {
-            console.error('見直しの録画を読み込めませんでした:', error)
-            applyQueued() // 録画中に届く分だけでも見直せるように
+            console.error('録画を読み込めませんでした:', error)
+            applyQueued() // 録画中に届く分だけでも見られるように
             if (availableKinds().length === 0) {
                 showMessage(error instanceof Error && error.name === 'BridgeUnavailableError' ? messages.unavailable : messages.loadError)
             }

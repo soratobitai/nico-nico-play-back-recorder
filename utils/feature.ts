@@ -1,4 +1,3 @@
-import { getSegmentFile } from "./library/api"
 
 const getProgramData = () => {
     // ユーザー名を取得（ページの構造が変わって取れなくても、録画は続けられるように空にする）
@@ -56,22 +55,6 @@ const downloadBlob = (blob: Blob, filename: string) => {
 // 動画の形式からダウンロード時の拡張子を決める（webm で録画した環境以外は mp4）
 const getVideoExtension = (type: string) => type.startsWith('video/webm') ? 'webm' : 'mp4'
 
-// 録画（区間）を1本のファイルにしてダウンロードする
-const downloadSegment = async (segmentId: string) => {
-    try {
-        const { blob, segment } = await getSegmentFile(segmentId)
-
-        // ダウンロードファイル名を生成（日時は録画を始めた時刻）
-        const formattedDate = formatDateForFileName(segment.startedAt)
-        const filename = `${segment.userName}_${segment.title}_${formattedDate}.${getVideoExtension(segment.mimeType)}`
-
-        downloadBlob(blob, filename)
-    } catch (error) {
-        console.error('ダウンロード中にエラーが発生しました:', error)
-        alert('ダウンロードに失敗しました')
-    }
-}
-
 // 動画のスクリーンショットを取得してダウンロードする関数
 const getScreenShotAndDownload = async () => {
     const video = document.querySelector("video") as HTMLVideoElement
@@ -120,7 +103,6 @@ const formatDateTime = (input: string | number, timeSeparator: string) => {
 const formatDateForFileName = (input: string | number) => formatDateTime(input, '')
 
 // 表示用: 2025-01-02 03:04:05
-const formatDate = (input: string | number) => formatDateTime(input, ':')
 
 
 
@@ -129,9 +111,7 @@ export {
     getProgramData,
     captureThumbnail,
     getVideoExtension,
-    downloadSegment,
     downloadBlob,
     getScreenShotAndDownload,
     formatDateForFileName,
-    formatDate
 }

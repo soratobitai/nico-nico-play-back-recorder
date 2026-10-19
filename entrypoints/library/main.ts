@@ -1,4 +1,4 @@
-// ライブラリのページ（拡張機能のページ）
+// 録画一覧のページ（拡張機能のページ）
 // 録画を番組ごとに一覧し、再生・まとめて保存・削除する。保存先（IndexedDB）を直接読み書きする。
 import * as db from '@/utils/library/db'
 import type { RecordingKind, SegmentSummary } from '@/utils/library/db'
@@ -31,7 +31,7 @@ const segmentsTitle = $<HTMLHeadingElement>('segmentsTitle')
 const toast = $<HTMLDivElement>('toast')
 const filterButtons = [...document.querySelectorAll<HTMLButtonElement>('.filter')]
 
-// 見直しの画面の見た目
+// 録画を見る画面の見た目
 const reviewStyle = document.createElement('style')
 reviewStyle.textContent = REVIEW_STYLE
 document.head.append(reviewStyle)

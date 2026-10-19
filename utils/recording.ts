@@ -1,5 +1,5 @@
 import { checkLiveStatus } from '../services/api'
-import { setRecordingStatus, removeSegmentItems } from './ui'
+import { setRecorderState, getTimeString } from './ui'
 import { createFmp4Splitter, isMp4MimeType } from './fmp4'
 import * as library from './library/api'
 import { publishLiveFeed } from './review/live-feed'
@@ -29,23 +29,9 @@ export class RecordingStateManager {
     this.listeners.push(fn)
   }
 
+  // 録画バーの表示を更新する（error は、容量不足で保存できない場合）
   private updateUI() {
-    // setRecordingStatusはApp.tsからimportして使う想定
-    switch (this.state) {
-      case 'preparing':
-        setRecordingStatus(false, false, '準備中')
-        break
-      case 'recording':
-        setRecordingStatus(false, true, '🔴録画中')
-        break
-      case 'stopped':
-        setRecordingStatus(true, false, '停止中')
-        break
-      case 'error':
-        // 現在は容量不足で保存できない場合のみ
-        setRecordingStatus(true, false, '保存エラー')
-        break
-    }
+    setRecorderState(this.state)
   }
 }
 
@@ -77,7 +63,7 @@ const stopTimer = () => {
     startTime = null
 
     const recordTimeElem = document.getElementById('recordTime')
-    if (recordTimeElem) recordTimeElem.textContent = '00:00'
+    if (recordTimeElem) recordTimeElem.textContent = '0:00'
 }
 
 // 録画形式の候補（上から順に、対応している最初の形式を使う）
@@ -102,10 +88,9 @@ const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<
     } catch (error) {
         if (!isQuotaExceeded(error)) throw error
 
-        const { freed, deletedSegmentIds } = await library.freeSpace(bytesNeeded)
+        const { freed } = await library.freeSpace(bytesNeeded)
         if (freed === 0) throw error // 削除できる録画がない
         console.log(`容量不足のため古い録画を削除しました: ${freed} バイト`)
-        removeSegmentItems(deletedSegmentIds)
 
         return await save()
     }
@@ -113,7 +98,7 @@ const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<
 
 // 1回の録画処理（区間）で録ったデータを、保存先へ書き込む
 // mp4 は初期化セグメントと数秒ごとの断片に分けて書き込む（録画中でも再生でき、古い断片から消していける）。
-// 書き込んだら、同じページの見直しのウィンドウへ知らせる。
+// 書き込んだら、同じページのプレイバックのウィンドウへ知らせる。
 // webm などは、届いたデータをそのまま断片として書き込む。
 // write は届いた順に1つずつ呼ぶこと（前の write が終わってから次を呼ぶ）
 const createSegmentWriter = (segment: NewSegment) => {
@@ -221,69 +206,6 @@ const resetTimeoutCheck = (
     }, delay)
 }
 
-// ミュート対策
-const fixAudioTrack = (video: HTMLVideoElement) => {
-    // video要素の存在チェック
-    if (!video || !(video instanceof HTMLVideoElement)) {
-        console.error('fixAudioTrack: 無効なvideo要素です')
-        return
-    }
-
-    let previousVolume = '0'
-    let isMuted = 'false'
-    const controlMute = () => {
-        try {
-            // localStorageアクセスのエラーハンドリング
-            isMuted = localStorage.getItem('LeoPlayer_MuteSettingsStore_isMute') || 'false'
-            previousVolume = localStorage.getItem('LeoPlayer_VolumeSettingsStore_volume') || '0'
-
-            // 数値変換のエラーハンドリング
-            const volumeValue = Number(previousVolume)
-            if (isNaN(volumeValue)) {
-                console.warn('fixAudioTrack: 無効な音量値です:', previousVolume)
-                return
-            }
-
-            if (isMuted === 'true' || volumeValue === 0) {
-                console.log("🔴 ミュート検出", video.volume)
-
-                video.muted = false
-                video.volume = 0.001
-            } else {
-                console.log("🔊 ミュート解除検出")
-                video.volume = volumeValue / 100
-            }
-        } catch (error) {
-            console.error('fixAudioTrack: controlMuteでエラーが発生しました:', error)
-        }
-    }
-
-    controlMute()
-
-    // ミュートボタン押下時
-    try {
-        const muteButtons = document.querySelectorAll('[class*="_mute-button_"]')
-        muteButtons.forEach(button => {
-            if (button instanceof HTMLElement) {
-                button.addEventListener("click", () => {
-                    controlMute()
-                })
-            }
-        })
-    } catch (error) {
-        console.error('fixAudioTrack: ミュートボタンのイベントリスナー設定でエラーが発生しました:', error)
-    }
-
-    // 音量変化時
-    try {
-        video.addEventListener("volumechange", async () => {
-            controlMute()
-        })
-    } catch (error) {
-        console.error('fixAudioTrack: volumechangeイベントリスナーの設定でエラーが発生しました:', error)
-    }
-}
-
 export {
     startTimer,
     stopTimer,
@@ -293,5 +215,4 @@ export {
     createSegmentWriter,
     segmentFormatOf,
     resetTimeoutCheck,
-    fixAudioTrack,
 }

@@ -1,105 +1,166 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createModal, openModalWithVideo, insertRecordedMovie } from '@/utils/ui'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { insertRecorderBar, setRecorderState, setKindChips, showBarHint, setScreenCaptureButton, setPlaybackButton, getTimeString } from '@/utils/ui'
+import { isPlaybackSupported } from '@/utils/review/window'
 import { getProgramData } from '@/utils/feature'
-import { getSegmentFile } from '@/utils/library/api'
-import type { SegmentSummary } from '@/utils/library/db'
 
-// 保存先（拡張機能側）の代わり
-vi.mock('@/utils/library/api', () => ({
-    getSegmentFile: vi.fn(),
-    listSegments: vi.fn(async () => []),
-    countSegments: vi.fn(async () => 0),
-    deleteSegments: vi.fn(),
-}))
+const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
 
-const summary = (segmentId: string, startedAt: number, userName = 'user', title = 'title'): SegmentSummary => ({
-    segmentId, programId: 'lv1', kind: 'video', format: 'fmp4', mimeType: 'video/mp4', title, userName,
-    startedAt, endedAt: startedAt + 1000, thumbnail: 'data:image/jpeg;base64,THUMB', bytes: 1, fragmentCount: 1, duration: 1,
+const options = (overrides: Partial<Parameters<typeof insertRecorderBar>[0]> = {}) => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    showSettings: vi.fn(),
+    toggleKind: vi.fn(),
+    toggleScreenCapture: null,
+    togglePlayback: null,
+    openRecordings: vi.fn(),
+    ...overrides,
 })
 
-const saved = new Map<string, SegmentSummary>()
-const putRecording = (segmentId: string, startedAt: number, userName: string, title: string) => {
-    saved.set(segmentId, summary(segmentId, startedAt, userName, title))
-}
-
-const byId = (id: string) => document.getElementById(id)!
-
-beforeEach(async () => {
-    saved.clear()
-    vi.mocked(getSegmentFile).mockImplementation(async (segmentId: string) => ({ blob: new Blob([segmentId]), segment: saved.get(segmentId)! }))
+beforeEach(() => {
     document.head.innerHTML = ''
-    document.body.innerHTML = '<div id="recordedMovieAria"><div class="recordedMovieBox"></div></div>'
+    document.body.innerHTML = '<div class="___control-area___x"></div>'
 })
 
-afterEach(() => {
-    vi.restoreAllMocks()
+describe('録画バー', () => {
+    it('プレイヤーの操作部分の下に作り、初めは「準備中」で録画開始を押せない', () => {
+        insertRecorderBar(options())
+
+        const bar = $('#playbackRecorderBar')
+        expect(bar.previousElementSibling?.className).toContain('control-area')
+        expect(bar.dataset.state).toBe('preparing')
+        expect($('#recordStatus').textContent).toBe('準備中')
+        expect($<HTMLButtonElement>('#recordButton').disabled).toBe(true)
+    })
+
+    it('最近の録画の列は置かない（録画は録画一覧のページで見る）', () => {
+        insertRecorderBar(options())
+
+        expect(document.querySelector('.recordedMovieBox, .recordedMovie, #video-modal')).toBeNull()
+    })
+
+    it('録画開始と停止は1つのボタンで切り替わる', () => {
+        const start = vi.fn()
+        const stop = vi.fn()
+        insertRecorderBar(options({ start, stop }))
+        const button = $<HTMLButtonElement>('#recordButton')
+
+        setRecorderState('stopped')
+        expect(button.textContent?.trim()).toBe('録画開始')
+        button.click()
+        expect(start).toHaveBeenCalledTimes(1)
+
+        setRecorderState('recording')
+        expect($('#recordStatus').textContent).toBe('録画中')
+        expect(button.textContent?.trim()).toBe('停止')
+        button.click()
+        expect(stop).toHaveBeenCalledTimes(1)
+    })
+
+    it('保存エラーの時は、バーを赤くして理由を出す（録る種類のチップは隠す）', () => {
+        insertRecorderBar(options())
+
+        setRecorderState('error')
+
+        expect($('#playbackRecorderBar').dataset.state).toBe('error')
+        expect($('#recordStatus').textContent).toBe('保存エラー')
+        expect($('#recorderError').textContent).toContain('空き容量が足りず録画を止めました')
+        expect($<HTMLButtonElement>('#recordButton').disabled).toBe(false) // もう一度録画を始められる
+    })
+
+    it('録る種類のチップは設定の通りに押された表示になり、押すと切り替えの処理を呼ぶ', () => {
+        const toggleKind = vi.fn()
+        insertRecorderBar(options({ toggleKind }))
+
+        setKindChips({ video: true, comments: false })
+        expect($('.npr-chip[data-kind="video"]').getAttribute('aria-pressed')).toBe('true')
+        expect($('.npr-chip[data-kind="comments"]').getAttribute('aria-pressed')).toBe('false')
+
+        $<HTMLButtonElement>('.npr-chip[data-kind="comments"]').click()
+        expect(toggleKind).toHaveBeenCalledWith('comments')
+    })
+
+    it('短いお知らせを出せる', () => {
+        insertRecorderBar(options())
+
+        showBarHint('少なくとも1つは録画します')
+
+        expect($('.npr-hint').textContent).toBe('少なくとも1つは録画します')
+        expect($('.npr-hint').classList.contains('is-visible')).toBe(true)
+    })
+
+    it('録画一覧・設定・スクリーンショットのボタン', () => {
+        const openRecordings = vi.fn()
+        const showSettings = vi.fn()
+        insertRecorderBar(options({ openRecordings, showSettings }))
+
+        $<HTMLButtonElement>('#recordingsButton').click()
+        $<HTMLButtonElement>('#settingsButton').click()
+
+        expect($('#recordingsButton').textContent?.trim()).toBe('録画一覧')
+        expect(openRecordings).toHaveBeenCalledTimes(1)
+        expect(showSettings).toHaveBeenCalledTimes(1)
+        expect($('#capButton').getAttribute('aria-label')).toBe('スクリーンショット')
+    })
+
+    describe('画面ごと録画のチップ', () => {
+        it('使えない環境では出さない', () => {
+            insertRecorderBar(options())
+
+            expect($<HTMLButtonElement>('#screenCaptureButton').hidden).toBe(true)
+        })
+
+        it('使える環境では出し、押すと切り替えの処理を呼ぶ。録画中は押された表示になる', () => {
+            const toggleScreenCapture = vi.fn()
+            insertRecorderBar(options({ toggleScreenCapture }))
+            const chip = $<HTMLButtonElement>('#screenCaptureButton')
+
+            expect(chip.hidden).toBe(false)
+            expect(chip.textContent?.trim()).toBe('画面')
+            chip.click()
+            expect(toggleScreenCapture).toHaveBeenCalledTimes(1)
+
+            setScreenCaptureButton(true)
+            expect(chip.getAttribute('aria-pressed')).toBe('true')
+            setScreenCaptureButton(false)
+            expect(chip.getAttribute('aria-pressed')).toBe('false')
+        })
+    })
+
+    describe('プレイバックのボタン', () => {
+        it('この環境（Document Picture-in-Picture がない）では使えないと判定し、ボタンを出さない', () => {
+            expect(isPlaybackSupported()).toBe(false)
+            insertRecorderBar(options())
+
+            expect($<HTMLButtonElement>('#playbackButton').hidden).toBe(true)
+        })
+
+        it('使える環境では出し、押すとウィンドウを開く処理を呼ぶ。開いている間は押された表示になる', () => {
+            const togglePlayback = vi.fn()
+            insertRecorderBar(options({ togglePlayback }))
+            const button = $<HTMLButtonElement>('#playbackButton')
+
+            expect(button.hidden).toBe(false)
+            expect(button.textContent?.trim()).toBe('プレイバック')
+            button.click()
+            expect(togglePlayback).toHaveBeenCalledTimes(1)
+
+            setPlaybackButton(true)
+            expect(button.getAttribute('aria-pressed')).toBe('true')
+            setPlaybackButton(false)
+            expect(button.getAttribute('aria-pressed')).toBe('false')
+        })
+    })
 })
 
-describe('再生用のモーダル', () => {
-    beforeEach(() => {
-        createModal()
-        let n = 0
-        vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:video-${++n}`)
-        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
-    })
+describe('getTimeString（録画時間）', () => {
+    it('1時間までは分:秒、それより長ければ時:分:秒', () => {
+        const now = Date.now()
+        vi.spyOn(Date, 'now').mockReturnValue(now)
 
-    it('日付・ユーザー名・タイトルを文字列として表示する（HTML として解釈しない）', async () => {
-        await putRecording('A', new Date(2025, 0, 2, 3, 4, 5).getTime(), '<b>user</b>', 'タイトル')
-
-        await openModalWithVideo('A', document.body)
-
-        expect(byId('modal-user-name').textContent).toBe('2025-01-02 03:04:05 <b>user</b>')
-        expect(byId('modal-user-name').querySelector('b')).toBeNull()
-        expect(byId('modal-title').textContent).toBe('タイトル')
-    })
-
-    it('ユーザー名やタイトルがない動画を開くと、前の動画の表示を残さない', async () => {
-        await putRecording('A', 1000, 'user-A', 'title-A')
-        await putRecording('B', 2000, '', '')
-
-        await openModalWithVideo('A', document.body)
-        await openModalWithVideo('B', document.body)
-
-        expect(byId('modal-user-name').textContent).not.toContain('user-A')
-        expect(byId('modal-title').textContent).toBe('')
-    })
-
-    it('別の動画に切り替えた時と閉じた時に、前の動画の URL を解放する', async () => {
-        await putRecording('A', 1000, 'user', 'title')
-        await putRecording('B', 2000, 'user', 'title')
-        const video = byId('video-player') as HTMLVideoElement
-
-        await openModalWithVideo('A', document.body)
-        expect(video.getAttribute('src')).toBe('blob:video-1')
-
-        await openModalWithVideo('B', document.body)
-        expect(URL.revokeObjectURL).toHaveBeenLastCalledWith('blob:video-1')
-        expect(video.getAttribute('src')).toBe('blob:video-2')
-
-        byId('close-modal').click()
-        expect(URL.revokeObjectURL).toHaveBeenLastCalledWith('blob:video-2')
-        expect(video.hasAttribute('src')).toBe(false)
-    })
-})
-
-describe('録画一覧', () => {
-    const startedAtList = () =>
-        Array.from(document.querySelectorAll<HTMLElement>('.recordedMovie')).map(element => Number(element.dataset.startedAt))
-
-    it('右端に追加する録画は、保存の完了順が前後しても開始時刻の順に並べる', () => {
-        insertRecordedMovie(summary('A', 1000), 'end')
-        insertRecordedMovie(summary('C', 3000), 'end')
-        insertRecordedMovie(summary('B', 2000), 'end') // 先に始めた録画の保存が後で終わった
-
-        expect(startedAtList()).toEqual([1000, 2000, 3000])
-    })
-
-    it('同じ録画をもう一度追加すると、重ねずに置き換える', () => {
-        insertRecordedMovie(summary('A', 1000, 'old'), 'end')
-        insertRecordedMovie(summary('A', 1000, 'new'), 'end')
-
-        expect(startedAtList()).toEqual([1000])
+        expect(getTimeString(now - 65 * 1000)).toBe('1:05')
+        expect(getTimeString(now - (3600 + 125) * 1000)).toBe('1:02:05')
+        vi.restoreAllMocks()
     })
 })
 

@@ -3,10 +3,8 @@ import { resetTimeoutCheck } from '@/utils/recording'
 import { checkLiveStatus } from '@/services/api'
 
 vi.mock('@/utils/ui', () => ({
-    insertRecordedMovie: vi.fn(),
-    removeSegmentItems: vi.fn(),
-    setRecordingStatus: vi.fn(),
-    getTimeString: () => '00:00',
+    setRecorderState: vi.fn(),
+    getTimeString: () => '0:00',
 }))
 vi.mock('@/services/api', () => ({ checkLiveStatus: vi.fn() }))
 

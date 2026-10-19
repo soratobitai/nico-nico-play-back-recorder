@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-    createSegment, setSegmentInit, appendFragments, finishSegment, listSegments, countSegments,
-    getSegmentFile, deleteSegments, clearAll, getUsage, freeSpace, enforceLimit, closeStaleSegments, getTimeline, getFragmentBlobs,
+    createSegment, setSegmentInit, appendFragments, finishSegment, listAllSegments, buildDownloadFiles,
+    deleteSegments, clearAll, getUsage, freeSpace, enforceLimit, closeStaleSegments, getTimeline, getFragmentBlobs,
     type NewSegment, type NewFragment,
 } from '@/utils/library/db'
 import { splitFmp4Blob } from '@/utils/fmp4'
@@ -31,7 +31,7 @@ describe('録画中の保存', () => {
         await appendFragments('A', [fragment(0, 1000), fragment(1, 2000)])
         await appendFragments('A', [fragment(2, 3000)])
 
-        const [summary] = await listSegments(10)
+        const [summary] = await listAllSegments()
         expect(summary).toMatchObject({ segmentId: 'A', bytes: 350, fragmentCount: 3, duration: 3, endedAt: null })
         expect(summary).not.toHaveProperty('init')
     })
@@ -41,7 +41,7 @@ describe('録画中の保存', () => {
         await appendFragments('A', [fragment(0, 1000)])
         await appendFragments('A', [fragment(0, 1000)])
 
-        expect((await listSegments(10))[0]).toMatchObject({ bytes: 100, fragmentCount: 1 })
+        expect((await listAllSegments())[0]).toMatchObject({ bytes: 100, fragmentCount: 1 })
     })
 
     it('存在しない区間に断片を足そうとすると例外になる', async () => {
@@ -55,20 +55,21 @@ describe('録画中の保存', () => {
 
         expect(await finishSegment('A', 5000, 'video/mp4;codecs=avc1')).toMatchObject({ endedAt: 5000, mimeType: 'video/mp4;codecs=avc1' })
         expect(await finishSegment('empty', 5000)).toBeNull()
-        expect(await countSegments()).toBe(1)
+        expect(await listAllSegments()).toHaveLength(1)
     })
 })
 
 describe('一覧', () => {
-    it('新しい順に返し、指定した時刻より前に始まった区間だけを続きとして返せる', async () => {
-        for (const [id, at] of [['A', 1000], ['B', 2000], ['C', 3000]] as const) await createSegment(segment(id, at))
+    it('すべての区間を新しい順に返す（初期化セグメントは含めない）', async () => {
+        for (const [id, at] of [['A', 1000], ['C', 3000], ['B', 2000]] as const) await createSegment(segment(id, at))
 
-        expect((await listSegments(2)).map(s => s.segmentId)).toEqual(['C', 'B'])
-        expect((await listSegments(2, 2000)).map(s => s.segmentId)).toEqual(['A'])
+        const segments = await listAllSegments()
+        expect(segments.map(s => s.segmentId)).toEqual(['C', 'B', 'A'])
+        expect(segments[0]).not.toHaveProperty('init')
     })
 })
 
-describe('再生・ダウンロード用のファイル', () => {
+describe('保存用のファイル', () => {
     it('fmp4 の区間は、初期化セグメントと断片から 0 秒始まりの1本のファイルにする', async () => {
         const { init, fragments } = await splitFmp4Blob(fixture)
         await createSegment(segment('A', 1000))
@@ -76,11 +77,11 @@ describe('再生・ダウンロード用のファイル', () => {
         // 古い断片が消された状態（2つ目から）
         await appendFragments('A', fragments.slice(1).map((f, i) => ({ ...f, index: i + 1, wallClock: 1000 + i })))
 
-        const { blob, segment: summary } = await getSegmentFile('A')
-        const rebuilt = await splitFmp4Blob(blob)
+        const [file] = await buildDownloadFiles(['A'])
+        const rebuilt = await splitFmp4Blob(file.blob)
         expect(rebuilt.fragments).toHaveLength(fragments.length - 1)
         expect(rebuilt.fragments[0].startTime).toBeCloseTo(0, 3)
-        expect(summary.segmentId).toBe('A')
+        expect(file.segmentIds).toEqual(['A'])
     })
 
     it('opaque の区間は、断片を順につなげる', async () => {
@@ -90,9 +91,9 @@ describe('再生・ダウンロード用のファイル', () => {
             { ...fragment(0, 1000), blob: new Blob(['a']) },
         ])
 
-        const { blob } = await getSegmentFile('W')
-        expect(await blob.text()).toBe('ab')
-        expect(blob.type).toBe('video/webm')
+        const [file] = await buildDownloadFiles(['W'])
+        expect(await file.blob.text()).toBe('ab')
+        expect(file.blob.type).toBe('video/webm')
     })
 })
 
@@ -150,7 +151,7 @@ describe('削除と容量', () => {
         const result = await freeSpace(250)
 
         expect(result).toEqual({ freed: 300, deletedSegmentIds: ['A'] })
-        expect((await listSegments(10)).map(s => s.segmentId)).toEqual(['C', 'B'])
+        expect((await listAllSegments()).map(s => s.segmentId)).toEqual(['C', 'B'])
     })
 
     it('途中から再生できない webm の区間は、区間ごと消す', async () => {
@@ -163,7 +164,7 @@ describe('削除と容量', () => {
     it('録画中の区間は、断片を全部消しても区間は残す（続きが届くので）', async () => {
         await freeSpace(10_000)
 
-        const remaining = await listSegments(10)
+        const remaining = await listAllSegments()
         expect(remaining.map(s => s.segmentId)).toEqual(['C'])
         expect(remaining[0]).toMatchObject({ fragmentCount: 0, bytes: 0 })
     })
@@ -174,7 +175,7 @@ describe('削除と容量', () => {
 
         await freeSpace(10_000)
 
-        expect((await listSegments(10)).find(s => s.segmentId === 'D')?.fragmentCount).toBe(1)
+        expect((await listAllSegments()).find(s => s.segmentId === 'D')?.fragmentCount).toBe(1)
     })
 
     it('上限を超えた分だけ消す（超えていなければ何もしない）', async () => {
@@ -182,15 +183,15 @@ describe('削除と容量', () => {
         // 700 → 500 なので、古い断片を 200 バイト分だけ消す（A は断片が1つ残る）
         expect(await enforceLimit(500)).toEqual({ freed: 200, deletedSegmentIds: [] })
         expect((await getUsage()).bytes).toBe(500)
-        expect((await listSegments(10)).find(s => s.segmentId === 'A')?.fragmentCount).toBe(1)
+        expect((await listAllSegments()).find(s => s.segmentId === 'A')?.fragmentCount).toBe(1)
     })
 
     it('区間を指定して消すと、断片も消える', async () => {
         await deleteSegments(['A', 'C'])
 
-        expect((await listSegments(10)).map(s => s.segmentId)).toEqual(['B'])
+        expect((await listAllSegments()).map(s => s.segmentId)).toEqual(['B'])
         expect((await getUsage()).bytes).toBe(200)
-        await expect(getSegmentFile('A')).rejects.toMatchObject({ name: 'SegmentNotFoundError' })
+        expect(await buildDownloadFiles(['A'])).toEqual([])
     })
 })
 
@@ -203,17 +204,17 @@ describe('終えられないまま残った区間', () => {
 
     it('最後の書き込みから idleMs 以上たったら、最後の書き込みの時刻で確定する', async () => {
         await closeStaleSegments(60_000, 10_000 + 59_999)
-        expect((await listSegments(10))[0].endedAt).toBeNull()
+        expect((await listAllSegments())[0].endedAt).toBeNull()
 
         await closeStaleSegments(60_000, 10_000 + 60_000)
-        expect((await listSegments(10))[0].endedAt).toBe(10_000)
+        expect((await listAllSegments())[0].endedAt).toBe(10_000)
     })
 
     it('断片が1つもない区間は消す', async () => {
         await createSegment(segment('E', 20_000))
 
         expect(await closeStaleSegments(1000, 30_000)).toEqual(['E'])
-        expect((await listSegments(10)).map(s => s.segmentId)).toEqual(['C'])
+        expect((await listAllSegments()).map(s => s.segmentId)).toEqual(['C'])
     })
 
     it('確定した後に続きの断片が届いたら（一時保存から移された など）、終わりを延ばす', async () => {
@@ -221,6 +222,6 @@ describe('終えられないまま残った区間', () => {
 
         await appendFragments('C', [fragment(5, 13_000)]) // 5〜6秒の断片
 
-        expect((await listSegments(10))[0].endedAt).toBe(14_000)
+        expect((await listAllSegments())[0].endedAt).toBe(14_000)
     })
 })
