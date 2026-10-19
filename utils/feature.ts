@@ -84,6 +84,9 @@ const extractFirstFrame = async (blob: Blob, timeoutMs: number = 10 * 1000): Pro
     })
 }
 
+// 動画の形式からダウンロード時の拡張子を決める（webm で録画した環境以外は mp4）
+const getVideoExtension = (type: string) => type.startsWith('video/webm') ? 'webm' : 'mp4'
+
 const downloadRecordedMovie = async (key: [string, number]) => {
     try {
         const chunk = await getChunkByKey('Chunks', key)
@@ -96,7 +99,7 @@ const downloadRecordedMovie = async (key: [string, number]) => {
 
         // ダウンロードファイル名を生成
         const formattedDate = formatDateForFileName(chunk.createdAt)
-        const filename = `${chunk.userName}_${chunk.title || ''}_${formattedDate}.mp4`
+        const filename = `${chunk.userName || ''}_${chunk.title || ''}_${formattedDate}.${getVideoExtension(chunk.blob.type)}`
 
         // 一時的にaタグを作成して自動クリック
         const a = document.createElement('a')
@@ -185,6 +188,7 @@ const formatDate = (input: string | number) => {
 export {
     getProgramData,
     extractFirstFrame,
+    getVideoExtension,
     downloadRecordedMovie,
     getScreenShotAndDownload,
     formatDateForFileName,

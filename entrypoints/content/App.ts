@@ -1,5 +1,5 @@
 import { cleanUpOldChunks } from "../../hooks/indexedDB/recordingDB"
-import { startResetRecordInterval, startRecordingActions, isQuotaExceeded, saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks,resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
+import { startResetRecordInterval, startRecordingActions, getRecordingMimeType, isQuotaExceeded,saveTempChunk, holdSegmentLock, mergeChunksBySession, mergeStaleChunks,resetTimeoutCheck, fixAudioTrack, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData } from "../../utils/feature"
 import { insertRecordedMovieAria, createModal, loadRecordedMovieList, deleteMovieIcon, insertToggleButton, updateToggleButton, isUICollapsed } from "../../utils/ui"
 import { RESTART_MEDIARECORDER_INTERVAL_MS, MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE } from '../../utils/storage'
@@ -187,10 +187,9 @@ export default async () => {
     }
 
     const startNewRecorder = () => {
-        const options = {
-            // mimeType: 'video/webm; codecs="vp8, opus"'
-            mimeType: 'video/mp4; codecs="avc1.640028, mp4a.40.2"'
-        }
+        // 対応している形式がなければブラウザの標準の形式で録画する
+        const mimeType = getRecordingMimeType()
+        const options = mimeType ? { mimeType } : {}
 
         let recorder: MediaRecorder
         try {

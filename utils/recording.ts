@@ -112,6 +112,17 @@ const startRecordingActions = async (
     console.log("録画を開始しました。")
 }
 
+// 録画形式の候補（上から順に、対応している最初の形式を使う）
+const RECORDING_MIME_TYPES = [
+    'video/mp4; codecs="avc1.640028, mp4a.40.2"',
+    'video/webm; codecs="vp9, opus"',
+    'video/webm; codecs="vp8, opus"',
+]
+
+// mp4 で録画できない環境（H.264 のエンコーダーがない Chromium など）では webm で録画する
+const getRecordingMimeType = (): string | undefined =>
+    RECORDING_MIME_TYPES.find(type => MediaRecorder.isTypeSupported(type))
+
 type ChunkRecord = Awaited<ReturnType<typeof getAllChunks>>[number]
 
 const isQuotaExceeded = (error: unknown) => error instanceof DOMException && error.name === 'QuotaExceededError'
@@ -176,7 +187,8 @@ const mergeTemps = async (sessionId: string, createdAt: number): Promise<ChunkRe
     console.log(`sessionId: ${sessionId} のチャンク数: ${temps.length}`)
 
     // チャンクを結合
-    const blob = new Blob(temps.map(temp => temp.blob), { type: "video/mp4" })
+    // 形式は録画したチャンクに合わせる（mp4 または webm）
+    const blob = new Blob(temps.map(temp => temp.blob), { type: temps[0].blob.type || "video/mp4" })
     const screenShot = await extractFirstFrame(blob)
     if (screenShot === '') {
         console.log(`sessionId: ${sessionId} は動画として読み込めないため保存をスキップします（チャンクが正しくない）`)
@@ -373,6 +385,7 @@ export {
     startTimer,
     stopTimer,
     startRecordingActions,
+    getRecordingMimeType,
     isQuotaExceeded,
     retryOnQuotaExceeded,
     saveTempChunk,
