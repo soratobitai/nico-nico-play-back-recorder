@@ -36,6 +36,8 @@ const REVIEW_STYLE = `
 .review * { box-sizing: border-box; }
 .review .stage { position: relative; flex: 1; min-height: 0; background: #000; }
 .review .stage video { display: block; width: 100%; height: 100%; object-fit: contain; }
+/* 録画一覧では、動画を押すと再生・一時停止する */
+.review[data-mode="library"] .stage video { cursor: pointer; }
 .review .message {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;

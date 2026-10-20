@@ -119,6 +119,8 @@
 .npr-option-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .npr-option-title { display: inline-flex; align-items: center; gap: 7px; font-size: var(--s-fs-title); font-weight: 600; color: var(--npr-text); }
 .npr-option-desc { margin: 0; font-size: var(--s-fs-desc); line-height: 1.55; color: var(--npr-muted); }
+/* 説明は、文節の切れ目で折り返し、最後の行が1〜2文字だけにならないようにする */
+.npr-option-desc { word-break: auto-phrase; text-wrap: pretty; }
 
 .npr-switch input {
   position: relative;

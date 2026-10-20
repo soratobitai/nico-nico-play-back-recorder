@@ -40,7 +40,7 @@ type SettingsModalOptions = {
   screenCaptureSupported?: boolean
 }
 
-// 一定の解像度で録る時に選べる高さ（幅は 16:9。ニコ生は 720p 以下の番組が多い）
+// 「1本の録画にそろえる」（一定の解像度で録る）時に選べる高さ（幅は 16:9。ニコ生は 720p 以下の番組が多い）
 const FIXED_RESOLUTION_OPTIONS = [
   { height: 360, label: '360p（640×360）' },
   { height: 450, label: '450p（800×450）' },
@@ -247,7 +247,7 @@ class SettingsModal {
         <input id="${id}" type="checkbox" role="switch" ${checked(value)} />
       </label>`
     return `
-      <dialog class="npr-settings" id="settingsModal" aria-labelledby="nprSettingsTitle" tabindex="-1">
+      <dialog class="npr-settings" id="settingsModal" lang="ja" aria-labelledby="nprSettingsTitle" tabindex="-1">
         <div class="npr-settings-panel">
           <header class="npr-settings-head">
             <h2 id="nprSettingsTitle">設定</h2>
@@ -258,12 +258,12 @@ class SettingsModal {
             <section class="npr-section" aria-labelledby="nprKindsTitle">
               <h3 id="nprKindsTitle">録画する種類</h3>
               ${kindSwitch('recordVideoCheckbox', 'video', s.RECORD_VIDEO, 'コメントなし', '映像と音声をそのまま録画します')}
-              ${kindSwitch('recordCommentsCheckbox', 'comments', s.RECORD_WITH_COMMENTS, 'コメントあり', '流れるコメントを重ねて録画します（タブを表示している間）')}
+              ${kindSwitch('recordCommentsCheckbox', 'comments', s.RECORD_WITH_COMMENTS, 'コメントあり', '流れるコメントを重ねて録画します。タブを表示していない時は、コメントは録画されません')}
               <div class="npr-kind-info npr-kind-screen">
                 <span class="npr-option-text">
                   <span class="npr-option-title"><span class="npr-kind-dot" aria-hidden="true"></span>画面録画</span>
                   <span class="npr-option-desc">${this.screenCaptureSupported
-                    ? 'ゲームやギフトなどの演出も含めて、プレイヤーの画面をそのまま録画します。録画バーの「画面録画」を押して始めます（ブラウザの決まりで、ページを開くたびに画面共有の許可が必要です）'
+                    ? 'ゲームやギフトなどの演出も含めて、プレイヤーの画面をそのまま録画します。タブを表示していない時も録画できます。録画バーの「画面録画」を押して始めます（ページを開くたびに画面共有の許可が必要です）'
                     : 'この環境では使えません'}</span>
                 </span>
               </div>
@@ -276,22 +276,22 @@ class SettingsModal {
               ${optionSwitch('autostartCheckbox', s.AUTO_START, 'オートスタート', '番組を開いたら録画を始めます')}
               ${optionSwitch('autoReloadCheckbox', s.AUTO_RELOAD_ON_FAILURE, 'オートリロード', '映像が止まったら読み込み直します')}
               <fieldset class="npr-group">
-                <legend><h3>動画の解像度が変わった時</h3></legend>
+                <legend><h3>配信の画質が変わった時</h3></legend>
                 <label class="npr-radio" for="resolutionSplitRadio">
                   <input id="resolutionSplitRadio" type="radio" name="resolutionMode" value="split" ${checked(s.RESOLUTION_MODE === 'split')} />
                   <span class="npr-option-text">
-                    <span class="npr-option-title">録画を分ける</span>
-                    <span class="npr-option-desc">元の解像度のまま録ります。解像度が変わった所で録画が分かれ、まとめて保存する時も別のファイルになります</span>
+                    <span class="npr-option-title">画質が変わった所で分ける</span>
+                    <span class="npr-option-desc">配信の画質のまま録ります。画質が変わった所で、録画が分かれます</span>
                   </span>
                 </label>
                 <label class="npr-radio" for="resolutionFixedRadio">
                   <input id="resolutionFixedRadio" type="radio" name="resolutionMode" value="fixed" ${checked(s.RESOLUTION_MODE === 'fixed')} />
                   <span class="npr-option-text">
-                    <span class="npr-option-title">一定の解像度で録る</span>
-                    <span class="npr-option-desc">画質が変わっても1本の録画のまま（拡大・縮小します）</span>
+                    <span class="npr-option-title">1本の録画にそろえる</span>
+                    <span class="npr-option-desc">画質が変わっても、下で選んだ大きさにそろえて録り続けます（元の画質より大きくすると、ぼやけます）</span>
                   </span>
                 </label>
-                <select id="fixedResolutionSelect" class="npr-select" aria-label="一定の解像度で録る時の解像度" ${s.RESOLUTION_MODE === 'fixed' ? '' : 'disabled'}>
+                <select id="fixedResolutionSelect" class="npr-select" aria-label="そろえる大きさ" ${s.RESOLUTION_MODE === 'fixed' ? '' : 'disabled'}>
                   ${FIXED_RESOLUTION_OPTIONS.map(option => `<option value="${option.height}" ${option.height === s.FIXED_RESOLUTION_HEIGHT ? 'selected' : ''}>${option.label}</option>`).join('')}
                 </select>
               </fieldset>

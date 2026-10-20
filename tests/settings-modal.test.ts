@@ -360,14 +360,14 @@ describe('設定画面', () => {
     })
 
     describe('解像度が変わった時', () => {
-        it('初期値は「録画を分ける」で、解像度は選べない', () => {
+        it('初期値は「画質が変わった所で分ける」で、大きさは選べない', () => {
             modal.show()
 
             expect((document.getElementById('resolutionSplitRadio') as HTMLInputElement).checked).toBe(true)
             expect((document.getElementById('fixedResolutionSelect') as HTMLSelectElement).disabled).toBe(true)
         })
 
-        it('「一定の解像度で録る」を選ぶと保存され、解像度を選べるようになる', async () => {
+        it('「1本の録画にそろえる」を選ぶと保存され、大きさを選べるようになる', async () => {
             modal.show()
             const fixed = document.getElementById('resolutionFixedRadio') as HTMLInputElement
             const select = document.getElementById('fixedResolutionSelect') as HTMLSelectElement

@@ -270,6 +270,37 @@ describe('シークバー', () => {
     })
 })
 
+describe('動画を押す', () => {
+    it('録画一覧では、動画を押すと再生・一時停止する', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const video = root.querySelector('video')!
+        const play = vi.spyOn(video, 'play').mockResolvedValue()
+        const pause = vi.spyOn(video, 'pause').mockImplementation(() => {})
+
+        video.click()
+        expect(play).toHaveBeenCalledTimes(1)
+        Object.defineProperty(video, 'paused', { value: false, configurable: true })
+        video.click()
+        expect(pause).toHaveBeenCalledTimes(1)
+        view.destroy()
+    })
+
+    it('プレイバックのウィンドウでは、動画を押しても再生・一時停止しない（窓を前に出すために押すことがあるので）', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'live', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const video = root.querySelector('video')!
+        const play = vi.spyOn(video, 'play').mockResolvedValue()
+        const callsBefore = play.mock.calls.length
+
+        video.click()
+        expect(play.mock.calls.length).toBe(callsBefore)
+        view.destroy()
+    })
+})
+
 describe('キー操作', () => {
     it('ボタンの上のスペースはそのボタンを押す（再生・一時停止にしない）', async () => {
         const root = document.getElementById('root')!

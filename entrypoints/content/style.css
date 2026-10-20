@@ -35,7 +35,8 @@
   letter-spacing: 0.02em;
   text-align: left;
   container-type: inline-size;
-  z-index: 1;
+  /* z-index は付けない（下の「放送参加」の部分から上に開くギフト・エモーションなどの表示が、
+     録画バーの下に隠れないように。付けると、z-index のない表示より常に上に描かれる） */
 }
 .npr-bar[hidden] { display: none; }
 .npr-bar *,
