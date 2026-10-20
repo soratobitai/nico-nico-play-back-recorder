@@ -325,6 +325,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         // 種類が2つ以上ある時だけ、切り替えのボタンを出す
         const kinds = availableKinds()
         kindsGroup.hidden = kinds.length < 2
+        kindsGroup.dataset.count = String(kinds.length) // 3つの時は、狭い時に早めに詰める
         for (const button of kindButtons) {
             const kind = button.dataset.kind as RecordingKind
             button.hidden = !kinds.includes(kind)
@@ -366,11 +367,15 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
 
     seek.addEventListener('input', () => { dragging = true; render() })
-    seek.addEventListener('change', () => {
+    // 動かし終えたら、その位置へ移る。動かして元の値に戻して離した時は change が届かないので、
+    // 離した時などにも終える（終えないと、シークバーと時刻の表示が止まったままになる）
+    const endDrag = () => {
+        if (!dragging) return
         dragging = false
         player.seek(Number(seek.value))
         render()
-    })
+    }
+    for (const type of ['change', 'pointerup', 'pointercancel', 'lostpointercapture', 'blur']) seek.addEventListener(type, endDrag)
     backButton.addEventListener('click', () => skip(-SKIP_SECONDS))
     forwardButton.addEventListener('click', () => skip(SKIP_SECONDS))
     playButton.addEventListener('click', togglePlay)

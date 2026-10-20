@@ -160,6 +160,27 @@ describe('再生の作り方', () => {
     })
 })
 
+describe('シークバー', () => {
+    it('動かして元の値に戻して離しても（change が届かなくても）、離した所で終え、表示が止まったままにならない', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const seek = root.querySelector<HTMLInputElement>('.seek')!
+        current().position = 4
+        seek.value = '4'
+
+        seek.dispatchEvent(new Event('input')) // 動かして元の値に戻した
+        seek.dispatchEvent(new Event('pointerup'))
+        expect(current().seek).toHaveBeenLastCalledWith(4)
+
+        // 10秒進むと、シークバーも進む
+        root.querySelector<HTMLButtonElement>('.forward')!.click()
+        root.querySelector('video')!.dispatchEvent(new Event('timeupdate'))
+        expect(seek.value).toBe('14')
+        view.destroy()
+    })
+})
+
 describe('キー操作', () => {
     it('ボタンの上のスペースはそのボタンを押す（再生・一時停止にしない）', async () => {
         const root = document.getElementById('root')!

@@ -51,9 +51,11 @@ const REVIEW_STYLE = `
   background: var(--bar);
   border-top: 1px solid var(--line);
 }
-/* ボタン類は縮めない（形を保つ）。入り切らない時は、消したり重ねたりせず横にスクロールする */
+/* ボタン類は縮めない（形を保つ）。入り切らない時は、消したり重ねたりせず横にスクロールする
+   （スクロールする所の端で、選んだボタンの枠が切れないように、少し余白をとる） */
 .review .row {
   display: flex; align-items: center; gap: 4px; min-width: 0;
+  padding: 3px; margin: -3px;
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
@@ -179,6 +181,18 @@ const REVIEW_STYLE = `
   .review .time { margin: 0 4px; }
   .review .live { padding: 0; width: calc(var(--control) - 4px); margin-left: 2px; }
   .review .live .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+/* 種類が3つの時は、ボタンが増える分、早めに詰める */
+@container (max-width: 760px) {
+  .review .row:has(.kinds[data-count="3"]) :is(.mute, .back, .forward) .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@container (max-width: 650px) {
+  .review .kinds[data-count="3"] .kind-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .review .kinds[data-count="3"] .kind { padding: 0; width: calc(var(--control) - 6px); }
+  .review .kinds[data-count="3"] .kind-dot { width: 9px; height: 9px; }
+}
+@container (max-width: 330px) {
+  .review .kinds[data-count="3"] .kind { width: calc(var(--control) - 10px); }
 }
 /* さらに狭い: ライブからの遅れの説明を隠す */
 @container (max-width: 360px) {

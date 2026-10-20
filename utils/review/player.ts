@@ -183,7 +183,10 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         }
         if (inGap) return here.start
         const next = flat[i + 1]
-        if (next && here.end - t < FRAGMENT_TAIL_SECONDS && next.start > here.end + 0.05) return next.start
+        if (next && here.end - t < FRAGMENT_TAIL_SECONDS && next.start > here.end + 0.05) {
+            // 戻る操作なら、この断片の端数の手前へ（次の録った所へ進めると、戻れずに同じ所へ移り続ける）
+            return backward ? Math.max(here.start, here.end - FRAGMENT_TAIL_SECONDS) : next.start
+        }
         return t
     }
 
