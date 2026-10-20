@@ -11,6 +11,11 @@ export default defineConfig({
     return {
       build: {
         sourcemap: isDev, // ← dev の時のみ true、本番は false
+        // ページに共通のファイルを先読みする指定（modulepreload）を入れない。
+        // ニコ生のページに埋め込む bridge.html では、Chrome が先読みを使えず
+        // 「preload ... is not used because it is a cross-world extension resource mismatch」と警告が溜まるため
+        // （拡張機能の中のファイルなので、先読みしなくても読み込みは速い）
+        modulePreload: false,
       },
       esbuild: !isDev
         ? {
