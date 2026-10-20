@@ -153,7 +153,7 @@ export default async () => {
 
     // 種類の録画が止まった後。録画している種類がなくなったら停止する
     const afterKindStopped = (kind: RecordingKind) => {
-        if (kind === 'screen') refreshScreenChip()
+        if (kind === 'screen') refreshScreenButton()
         if (sessionActive && recorders.size === 0 && restartPending.size === 0) stopSession('stopped')
     }
 
@@ -334,15 +334,15 @@ export default async () => {
         if (resolutionMode === 'fixed') restartVideoKinds()
     })
 
-    // ---- 演出あり（プレイヤーの画面ごとの録画） ----
-    // 「このタブを共有」の確認を出すので、録画バーのチップのクリックから始める（自動では始められないので、設定にはしない）
+    // ---- 画面録画（プレイヤーの画面をそのまま録る。ゲームやギフトなどの演出も入る） ----
+    // 「このタブを共有」の確認を出すので、録画バーのボタンのクリックから始める（自動では始められないので、設定にはしない）
 
-    // 録画バーのチップの表示を合わせる
-    const refreshScreenChip = () => {
+    // 録画バーのボタンの表示を合わせる
+    const refreshScreenButton = () => {
         setScreenCaptureButton(recorders.has('screen'))
     }
 
-    // 演出ありの録画を始める（他の種類と並行して録る。停止中なら、設定で選んだ種類も一緒に録り始める）
+    // 画面録画を始める（他の種類と並行して録る。停止中なら、設定で選んだ種類も一緒に録り始める）
     // 始められたら true（共有の確認でキャンセルされた場合などは false）
     let screenStarting = false // 共有の確認を出している間（続けて押されても、2つ目の取り込みを始めない）
     const startScreen = async (): Promise<boolean> => {
@@ -352,12 +352,12 @@ export default async () => {
         let source: RecordingSource
         screenStarting = true
         try {
-            // Chrome の「共有を停止」で取り込みが終わったら、演出ありの録画だけやめる
+            // Chrome の「共有を停止」で取り込みが終わったら、画面録画だけやめる
             const capture = await startScreenCapture(fixedHeight() ?? video.videoHeight, () => stopKind('screen'))
             source = { stream: capture.stream, fixedSize: true, steadySize: true, stop: capture.stop }
         } catch (error) {
             // 「このタブを共有」でキャンセルされた場合など
-            console.log('演出ありの録画を開始できませんでした:', error)
+            console.log('画面録画を開始できませんでした:', error)
             return false
         } finally {
             screenStarting = false
@@ -371,11 +371,11 @@ export default async () => {
             source.stop()
             if (recorders.size === 0) stopSession('stopped')
         }
-        refreshScreenChip()
+        refreshScreenButton()
         return started
     }
 
-    // 録画バーのチップ。録っていれば演出ありの録画だけやめ、録っていなければ始める
+    // 録画バーの画面録画のボタン。録っていれば画面録画だけやめ、録っていなければ始める
     const toggleScreenCapture = async () => {
         if (recorders.has('screen')) {
             stopKind('screen')
@@ -416,7 +416,7 @@ export default async () => {
         }
 
         const startRecordingFromStream = () => {
-            // 既に録画中なら二重に開始しない（待っている間に演出ありの録画で始まった場合など）
+            // 既に録画中なら二重に開始しない（待っている間に画面録画のボタンで始まった場合など）
             if (sessionActive) return
 
             beginSession()
@@ -430,7 +430,7 @@ export default async () => {
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
             const timeoutId = setTimeout(() => {
-                // 待っている間に別の方法（演出ありの録画など）で録画が始まっていれば何もしない
+                // 待っている間に別の方法（画面録画のボタンなど）で録画が始まっていれば何もしない
                 if (sessionActive) return
                 // タイムアウトした場合は状態を停止中に設定
                 stateManager.setState('stopped')

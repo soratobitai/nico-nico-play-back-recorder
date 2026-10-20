@@ -153,7 +153,7 @@ describe('設定画面', () => {
             expect(checkbox('recordCommentsCheckbox').checked).toBe(true)
         })
 
-        it('演出ありはスイッチにせず、録画バーの「演出あり」で始めることだけ説明する', async () => {
+        it('画面録画はスイッチにせず、録画バーの「画面録画」で始めることだけ説明する', async () => {
             modal.close()
             modal = new SettingsModal({ screenCaptureSupported: true })
             await flush()
@@ -161,10 +161,10 @@ describe('設定画面', () => {
 
             expect(document.getElementById('recordScreenCheckbox')).toBeNull()
             expect(document.querySelectorAll('[aria-labelledby="nprKindsTitle"] input[type="checkbox"]')).toHaveLength(2)
-            expect(document.querySelector('.npr-kind-screen')?.textContent).toContain('録画バーの「演出あり」を押して始めます')
+            expect(document.querySelector('.npr-kind-screen')?.textContent).toContain('録画バーの「画面録画」を押して始めます')
         })
 
-        it('演出ありを使えない環境では、使えないことだけ出す', () => {
+        it('画面録画を使えない環境では、使えないことだけ出す', () => {
             modal.show()
 
             expect(document.querySelector('.npr-kind-screen')?.textContent).toContain('この環境では使えません')

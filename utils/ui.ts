@@ -1,5 +1,6 @@
 // ニコ生のページに置く録画バー（プレイヤーの下の1行）
-// 左: 録画の状態と録画時間 / 中: 録る種類（コメントなし・コメントあり・演出あり。設定のショートカット） / 右: プレイバック・録画一覧・スクリーンショット・設定・録画開始/停止
+// 左: 録画の状態と録画時間 / 中: 録る種類（コメントなし・コメントあり。設定のショートカット）と、画面録画を始めるボタン /
+// 右: プレイバック・録画一覧・スクリーンショット・設定・録画開始/停止
 // 録画の再生・保存・削除は、録画一覧のページ（拡張機能のページ）で行う。
 import { getScreenShotAndDownload } from "./feature"
 import { UI_COLLAPSED } from "./storage"
@@ -12,7 +13,7 @@ type RecorderBarOptions = {
     stop: () => void
     showSettings: () => void
     toggleKind: (kind: VideoKind) => void // 録る種類（コメントなし・コメントあり）を切り替える
-    toggleScreenCapture: (() => void) | null // 演出あり（画面ごとの録画）を始める・やめる。使えない環境では null（チップを出さない）
+    toggleScreenCapture: (() => void) | null // 画面録画を始める・やめる。使えない環境では null（ボタンを出さない）
     togglePlayback: (() => void) | null // プレイバック（別ウィンドウ）を使えない環境では null（ボタンを出さない）
     openRecordings: () => void // 録画一覧のページを開く
 }
@@ -24,7 +25,8 @@ const icon = (path: string, filled = false) =>
     `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" ${filled ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'}>${path}</svg>`
 const ICONS = {
     check: icon('<path d="M5 12.5l4.5 4.5L19 7.5"></path>'),
-    plus: icon('<path d="M12 5v14M5 12h14"></path>'),
+    // 画面（真ん中の丸は、録画中は点滅する）
+    screen: icon('<rect x="2.5" y="4" width="19" height="13" rx="2.2"></rect><path d="M8.5 20.5h7M12 17v3.5"></path><circle class="npr-screen-rec" cx="12" cy="10.5" r="3.4" fill="currentColor" stroke="none"></circle>'),
     play: icon('<path d="M8 5.5v13l10.5-6.5z"></path>', true),
     list: icon('<rect x="3" y="4" width="18" height="6" rx="1.5"></rect><rect x="3" y="14" width="18" height="6" rx="1.5"></rect>'),
     camera: icon('<path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle>'),
@@ -49,10 +51,14 @@ const BAR_HTML = `
     <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" title="コメントあり: 流れるコメントを重ねて録画します（タブを表示している間）">
       <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">コメントあり</span><span class="npr-short" aria-hidden="true">コメあり</span>
     </button>
-    <button type="button" id="screenCaptureButton" class="npr-chip npr-chip-screen" aria-pressed="false" hidden>
-      <span class="npr-chip-icon">${ICONS.plus}</span><span class="npr-long">演出あり</span><span class="npr-short" aria-hidden="true">演出</span>
-    </button>
     <span class="npr-hint" role="status"></span>
+  </div>
+
+  <!-- 画面録画（設定ではなく、ページを開くたびに押して始める。録る種類のチップとは別の、開始ボタンの形） -->
+  <div class="npr-screen">
+    <button type="button" id="screenCaptureButton" class="npr-screen-button" aria-pressed="false" hidden>
+      ${ICONS.screen}<span class="npr-screen-label">画面録画</span>
+    </button>
   </div>
 
   <p id="recorderError" class="npr-error">${ICONS.warning}<span>${ERROR_MESSAGE}</span></p>
@@ -158,15 +164,15 @@ const showBarHint = (text: string) => {
     hintTimer = setTimeout(() => hint.classList.remove('is-visible'), 3000)
 }
 
-// 演出あり（画面ごとの録画）のチップの表示（active: 録っている）
-// 演出ありは、ページを開くたびにこのチップを押して、画面共有を許可して始める（自動では始められない）
+// 画面録画のボタンの表示（active: 録っている）
+// 画面録画は、ページを開くたびにこのボタンを押して、画面共有を許可して始める（自動では始められない）
 function setScreenCaptureButton(active: boolean) {
     if (!screenCaptureButton) return
     screenCaptureButton.setAttribute('aria-pressed', String(active))
-    screenCaptureButton.querySelector('.npr-chip-icon')!.innerHTML = active ? ICONS.check : ICONS.plus
+    screenCaptureButton.querySelector('.npr-screen-label')!.textContent = active ? '画面録画中' : '画面録画'
     screenCaptureButton.title = active
-        ? '演出あり: クリックすると、演出ありの録画だけをやめます'
-        : '演出あり: ゲームやギフトなどの演出も含めて、プレイヤーの画面ごと録画します（クリックして「このタブを共有」を許可すると始まります）'
+        ? 'クリックすると、画面録画だけを止めます（他の録画は続きます）'
+        : 'ゲームやギフトなどの演出も含めて、プレイヤーの画面をそのまま録画します（クリックして「このタブを共有」を許可すると始まります）'
 }
 
 // プレイバックのボタンの表示

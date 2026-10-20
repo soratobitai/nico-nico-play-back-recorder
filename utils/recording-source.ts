@@ -1,7 +1,7 @@
 // 種類ごとに、録画する映像（と音声）を作る
 // - コメントなし: 動画をそのまま。一定の解像度で録る場合は、決まった大きさに描き直す
 // - コメントあり: 動画に流れるコメントを重ねたもの（comment-compositor）
-// - 演出あり: プレイヤーの表示部分を画面ごと（screen-capture。ユーザーの操作から始める必要があるので、ここでは作らない）
+// - 画面録画: プレイヤーの表示部分を画面ごと（screen-capture。ユーザーの操作から始める必要があるので、ここでは作らない）
 import { createFramePipeline, drawContain, getOutputSize, isFramePipelineSupported } from './frame-pipeline'
 import { createCommentCompositor } from './comment-compositor'
 

@@ -29,7 +29,7 @@ interface Settings {
 }
 
 type SettingsModalOptions = {
-  // 演出あり（画面ごとの録画）を、この環境で使えるか。演出ありは設定ではなく、録画バーのボタンで始める
+  // 画面録画を、この環境で使えるか。画面録画は設定ではなく、録画バーのボタンで始める
   // （ブラウザの決まりで、ページを開くたびにクリックして画面共有を許可する必要があり、自動では始められないため）
   screenCaptureSupported?: boolean
 }
@@ -254,9 +254,9 @@ class SettingsModal {
               ${kindSwitch('recordCommentsCheckbox', 'comments', s.RECORD_WITH_COMMENTS, 'コメントあり', '流れるコメントを重ねて録画します（タブを表示している間）')}
               <div class="npr-kind-info npr-kind-screen">
                 <span class="npr-option-text">
-                  <span class="npr-option-title"><span class="npr-kind-dot" aria-hidden="true"></span>演出あり（画面録画）</span>
+                  <span class="npr-option-title"><span class="npr-kind-dot" aria-hidden="true"></span>画面録画</span>
                   <span class="npr-option-desc">${this.screenCaptureSupported
-                    ? 'ゲームやギフトなどの演出も含めて、画面ごと録画します。録画バーの「演出あり」を押して始めます（ブラウザの決まりで、ページを開くたびに画面共有の許可が必要です）'
+                    ? 'ゲームやギフトなどの演出も含めて、プレイヤーの画面をそのまま録画します。録画バーの「画面録画」を押して始めます（ブラウザの決まりで、ページを開くたびに画面共有の許可が必要です）'
                     : 'この環境では使えません'}</span>
                 </span>
               </div>

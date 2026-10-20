@@ -160,7 +160,7 @@
   box-shadow: 0 0 6px rgba(var(--npr-kind-rgb), 0.7);
 }
 .npr-kind-switch input:checked { background: rgb(var(--npr-kind-rgb)); }
-/* 演出あり（設定ではなく、録画バーのボタンで始める。説明だけ） */
+/* 画面録画（設定ではなく、録画バーのボタンで始める。説明だけ） */
 .npr-kind-info { padding: var(--s-row) 0; }
 .npr-kinds-note { margin-top: var(--s-row); padding-top: calc(var(--s-row) * 1.3); border-top: 1px solid var(--npr-line); }
 .npr-kinds-message { margin: 6px 0 0; font-size: var(--s-fs-desc); color: #ffb3ba; }
