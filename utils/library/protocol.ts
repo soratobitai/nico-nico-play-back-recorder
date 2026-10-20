@@ -38,7 +38,8 @@ type BridgeRequestType = BridgeRequest['type']
 type BridgeRequestOf<T extends BridgeRequestType> = Extract<BridgeRequest, { type: T }>
 
 // 録画中の書き込み（拡張機能側に保存できない間は、ニコ生側に一時保存してあとで移す）
-const WRITE_REQUEST_TYPES: ReadonlySet<BridgeRequestType> = new Set(['createSegment', 'setSegmentInit', 'appendFragments', 'finishSegment'])
+// 録り始めてすぐの区間を残さずに消す依頼も含める（その区間を一時保存していたら、移した後に消えるように）
+const WRITE_REQUEST_TYPES: ReadonlySet<BridgeRequestType> = new Set(['createSegment', 'setSegmentInit', 'appendFragments', 'finishSegment', 'deleteSegments'])
 
 // content script → background: bridge を使うための合言葉をもらう
 const BRIDGE_TOKEN_MESSAGE = 'playback-bridge:token'

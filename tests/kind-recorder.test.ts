@@ -184,17 +184,19 @@ describe('createKindRecorder', () => {
         expect(options.onEnded).not.toHaveBeenCalled()
     })
 
-    it('録り始めた時刻を覚えておく（区切っても変わらない）', async () => {
+    it('今の区間を録り始めた時刻を覚えておき、区切ると次の区間の時刻になる', async () => {
         const { recorder } = create()
-        expect(recorder.startedAt).toBeNull()
-        const before = Date.now()
+        expect(recorder.segmentStartedAt).toBeNull()
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1000)
         recorder.start()
-        const startedAt = recorder.startedAt!
-        expect(startedAt).toBeGreaterThanOrEqual(before)
+        expect(recorder.segmentStartedAt).toBe(1000)
+        expect(createdSegments()[0].startedAt).toBe(1000)
 
         await flush()
+        now.mockReturnValue(5000)
         recorder.split()
-        expect(recorder.startedAt).toBe(startedAt)
+        expect(recorder.segmentStartedAt).toBe(5000)
+        now.mockRestore()
         recorder.stop()
         await flush()
     })

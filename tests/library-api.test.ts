@@ -76,6 +76,38 @@ describe('一時保存', () => {
         expect(call.mock.calls.filter(([request]) => request.type === 'appendFragments')).toHaveLength(0)
     })
 
+    it('一時保存した区間を残さずに消す依頼も、まだ移せなければ一時保存する（移した後に区間が戻らないように）', async () => {
+        call.mockRejectedValueOnce(new client.BridgeUnavailableError('timeout'))
+        await api.createSegment(segment('A'))
+        vi.mocked(pending.flushPendingRequests).mockResolvedValue({ sent: 0, complete: false })
+        await api.appendFragments('A', [fragment(0)])
+
+        await api.deleteSegments(['A'])
+
+        expect(pendingTypes()).toEqual(['createSegment', 'appendFragments', 'deleteSegments'])
+        expect(call.mock.calls.filter(([request]) => request.type === 'deleteSegments')).toHaveLength(0)
+    })
+
+    it('一時保存した区間を消す前に、一時保存した分を移せたら、移してから直接消す', async () => {
+        call.mockRejectedValueOnce(new client.BridgeUnavailableError('timeout'))
+        await api.createSegment(segment('A'))
+        vi.mocked(pending.flushPendingRequests).mockResolvedValueOnce({ sent: 1, complete: true })
+
+        await api.deleteSegments(['A'])
+
+        expect(pending.flushPendingRequests).toHaveBeenCalledTimes(1)
+        expect(pendingTypes()).toEqual(['createSegment'])
+        expect(call.mock.calls.at(-1)?.[0]).toEqual({ type: 'deleteSegments', segmentIds: ['A'] })
+    })
+
+    it('区間を消す依頼が拡張機能側に届かなければ、一時保存してあとで消す', async () => {
+        call.mockRejectedValueOnce(new client.BridgeUnavailableError('invalidated'))
+
+        await api.deleteSegments(['A'])
+
+        expect(pendingTypes()).toEqual(['deleteSegments'])
+    })
+
     it('拡張機能が更新された後は、一時保存は上限まで。超えたら容量不足にする（録画を止めてお知らせする）', async () => {
         api.setPendingLimit(250)
         vi.mocked(client.isExtensionContextValid).mockReturnValue(false)

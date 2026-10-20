@@ -77,7 +77,8 @@ class Timeline {
                 this.addSegment(input)
                 continue
             }
-            existing.endedAt = input.endedAt
+            // 録画を終えた区間が録画中に戻ることはない（終えたと届いた後に、それより前に読んだ内容で戻さない）
+            existing.endedAt = input.endedAt ?? existing.endedAt
             // 保存先にない古い断片は消されたもの。保存先にまだない新しい断片（録画中に届いたもの）は残す
             const stored = new Map(input.fragments.map(f => [f.index, f]))
             const maxStored = Math.max(-1, ...stored.keys())

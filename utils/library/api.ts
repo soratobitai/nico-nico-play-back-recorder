@@ -22,13 +22,14 @@ const setPendingLimit = (bytes: number) => {
     pendingLimit = bytes
 }
 
-const segmentIdOf = (request: BridgeRequest) => {
+const segmentIdsOf = (request: BridgeRequest): string[] => {
     switch (request.type) {
-        case 'createSegment': return request.segment.segmentId
+        case 'createSegment': return [request.segment.segmentId]
         case 'setSegmentInit':
         case 'appendFragments':
-        case 'finishSegment': return request.segmentId
-        default: return null
+        case 'finishSegment': return [request.segmentId]
+        case 'deleteSegments': return request.segmentIds
+        default: return []
     }
 }
 
@@ -48,8 +49,7 @@ const saveToPending = async <T extends BridgeRequestType>(request: BridgeRequest
         throw new DOMException('一時保存の上限を超えました', 'QuotaExceededError')
     }
     console.log('拡張機能側に保存できないため、一時保存します:', request.type)
-    const segmentId = segmentIdOf(request)
-    if (segmentId !== null) pendingSegments.add(segmentId)
+    for (const segmentId of segmentIdsOf(request)) pendingSegments.add(segmentId)
     pendingSaves++
     await savePendingRequest(request)
     pendingBytes += bytes
@@ -58,11 +58,11 @@ const saveToPending = async <T extends BridgeRequestType>(request: BridgeRequest
 
 const callLibrary = async <T extends BridgeRequestType>(request: BridgeRequestOf<T>): Promise<BridgeResults[T]> => {
     const isWrite = WRITE_REQUEST_TYPES.has(request.type)
-    const segmentId = segmentIdOf(request)
-    if (isWrite && segmentId !== null && pendingSegments.has(segmentId)) {
+    const isPending = () => segmentIdsOf(request).some(segmentId => pendingSegments.has(segmentId))
+    if (isWrite && isPending()) {
         // 一時保存した分をすべて移せたら（pendingSegments が空になる）、この書き込みは直接保存する
         await flushPending().catch(() => {})
-        if (pendingSegments.has(segmentId)) return saveToPending(request)
+        if (isPending()) return saveToPending(request)
     }
     try {
         const bridge = await getBridge()

@@ -30,6 +30,11 @@ const RESTART_DELAY_MS = 1000
 // 録り始めてからこれ以内に解像度が変わったら、それまでの区間は残さない
 // （ニコ生は番組を開いた直後の画質が低く、すぐに上がる。数秒だけの低い画質の区間が、録画一覧やまとめて保存で別に分かれないように）
 const EARLY_RESIZE_MS = 10 * 1000
+// 残さずに消すのは、録り始めてこれ以内の区間だけ（解像度が続けて変わって録り直しが遅れても、長い区間は消さない）
+const EARLY_DISCARD_MAX_MS = 2 * EARLY_RESIZE_MS
+// 画面録画の解像度の下限（高さ）。画面録画は途中で解像度を変えないので、番組を開いた直後の低い画質のまま
+// 録り続けないようにする（コメントやゲームは画面に表示された大きさで描かれるので、動画より細かいこともある）
+const SCREEN_MIN_HEIGHT = 720
 // 複数の種類を区切る・録り直す時に、種類ごとにずらす時間
 // （同時に録り始めると、ハードウェアのエンコーダーをどの種類が使うかが入れ替わり、同じ種類の前の区間と
 //   映像の設定が変わって、つないで保存できなくなる。ずらせば、どの種類も前と同じエンコーダーを使う）
@@ -83,6 +88,10 @@ export default async () => {
     let cancelRestarts: (() => VideoKind[]) | undefined // 順番待ちの録り直しを取り消す
     const discardPending = new Set<VideoKind>() // 録り直す時に、それまでの区間を残さない種類
     let sessionStartedAt = 0 // 録画を始めた時刻
+
+    // 残さずに消してよい、録り始めて間もない区間か
+    const isEarlySegment = (recorder: KindRecorder | undefined) =>
+        recorder?.segmentStartedAt != null && Date.now() - recorder.segmentStartedAt <= EARLY_DISCARD_MAX_MS
 
     // 一定の解像度で録る場合の高さ
     const fixedHeight = () => resolutionMode === 'fixed' ? fixedResolutionHeight : null
@@ -244,7 +253,7 @@ export default async () => {
             restartPending.add(kind)
             if (discardEarly) discardPending.add(kind)
             if (!recorders.get(kind)?.steadySize) {
-                stopKind(kind, discardPending.has(kind))
+                stopKind(kind, discardPending.has(kind) && isEarlySegment(recorders.get(kind)))
                 discardPending.delete(kind)
             }
         }
@@ -257,7 +266,7 @@ export default async () => {
                 const previous = recorders.get(kind)
                 if (previous) {
                     recorders.delete(kind)
-                    if (discardPending.has(kind)) previous.discard()
+                    if (discardPending.has(kind) && isEarlySegment(previous)) previous.discard()
                     else previous.stop()
                 }
                 discardPending.delete(kind)
@@ -353,7 +362,7 @@ export default async () => {
         screenStarting = true
         try {
             // Chrome の「共有を停止」で取り込みが終わったら、画面録画だけやめる
-            const capture = await startScreenCapture(fixedHeight() ?? video.videoHeight, () => stopKind('screen'))
+            const capture = await startScreenCapture(fixedHeight() ?? Math.max(video.videoHeight, SCREEN_MIN_HEIGHT), () => stopKind('screen'))
             source = { stream: capture.stream, fixedSize: true, steadySize: true, stop: capture.stop }
         } catch (error) {
             // 「このタブを共有」でキャンセルされた場合など

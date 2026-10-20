@@ -77,6 +77,20 @@ describe('Timeline（見直し用の時間軸）', () => {
         expect(timeline.fragments.map(f => f.index)).toEqual([0, 1, 2])
     })
 
+    it('録画を終えたと届いた区間は、それより前に読んだ内容で読み直しても録画中に戻さない（消された区間が残り続けないように）', () => {
+        const timeline = new Timeline()
+        timeline.sync([segment('A', 100_000, fragments(2), null)])
+        timeline.finishSegment('A', 106_000)
+
+        // 終えたと届く前に読み始めていた内容（まだ録画中）
+        timeline.sync([segment('A', 100_000, fragments(2), null)])
+        expect(timeline.segment('A')?.endedAt).toBe(106_000)
+
+        // 区間が消されていれば、次に読み直した時に外れる
+        timeline.sync([])
+        expect(timeline.segment('A')).toBeUndefined()
+    })
+
     it('indexAt は時刻を含む断片、間にある時は次の断片、最後より後なら最後の断片を返す', () => {
         const timeline = new Timeline()
         timeline.sync([segment('A', 100_000, fragments(2)), segment('B', 108_000, fragments(2))]) // A: 0〜6、B: 8〜14

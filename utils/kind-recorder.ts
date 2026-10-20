@@ -28,7 +28,7 @@ const createKindRecorder = ({
     let current: MediaRecorder | null = null
     const requestedStops = new WeakSet<MediaRecorder>() // こちらから止めた recorder
     const requestedDiscards = new WeakSet<MediaRecorder>() // 区間を残さずに止めた recorder
-    let startedAt: number | null = null // 録り始めた時刻
+    let segmentStartedAt: number | null = null // 今の区間を録り始めた時刻
 
     const releaseSource = () => {
         source?.stop()
@@ -37,6 +37,7 @@ const createKindRecorder = ({
 
     // 区間を1つ録り始める（失敗したら例外）
     const startSegment = () => {
+        segmentStartedAt = Date.now()
         const mimeType = getRecordingMimeType()
         const recorder = new MediaRecorder(source!.stream, mimeType ? { mimeType } : {})
         const recordingMimeType = mimeType ?? (recorder.mimeType || 'video/webm')
@@ -45,7 +46,7 @@ const createKindRecorder = ({
             kind,
             format: segmentFormatOf(recordingMimeType),
             mimeType: recordingMimeType,
-            startedAt: Date.now(),
+            startedAt: segmentStartedAt,
             ...segmentDetails(),
         })
         const failed = (error: unknown) => {
@@ -131,9 +132,9 @@ const createKindRecorder = ({
             return source?.fixedSize ?? false
         },
 
-        // 録り始めた時刻（start を呼んだ時。区切っても変わらない）
-        get startedAt() {
-            return startedAt
+        // 今の区間を録り始めた時刻（区切ると変わる）
+        get segmentStartedAt() {
+            return segmentStartedAt
         },
 
         // 動画の解像度が変わっても、録り直すまで録り続けられるか
@@ -145,7 +146,6 @@ const createKindRecorder = ({
         start() {
             if (current) return
             source = createSource()
-            startedAt = Date.now()
             try {
                 startSegment()
             } catch (error) {
