@@ -47,6 +47,27 @@ const WATCH_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
 const VIDEO_KINDS = ['video', 'comments'] as const
 type VideoKind = typeof VIDEO_KINDS[number]
 
+// このタブで録画する種類（録画バーのチップで切り替える。タブごとに別々で、そのタブを閉じるまで覚えておく。
+// 番組を移ったり、ページを読み直したりしても、同じタブなら続けて使う）
+type TabKinds = { video: boolean, comments: boolean }
+const TAB_KINDS_KEY = 'nico-playback-recorder:record-kinds'
+const loadTabKinds = (): TabKinds | null => {
+    try {
+        const kinds = JSON.parse(sessionStorage.getItem(TAB_KINDS_KEY) ?? 'null')
+        if (typeof kinds?.video === 'boolean' && typeof kinds?.comments === 'boolean' && (kinds.video || kinds.comments)) return kinds
+    } catch {
+        // 読めなければ、設定の種類を使う
+    }
+    return null
+}
+const saveTabKinds = (kinds: TabKinds) => {
+    try {
+        sessionStorage.setItem(TAB_KINDS_KEY, JSON.stringify(kinds))
+    } catch {
+        // 覚えておけなくても、このページでは切り替えたまま録画する
+    }
+}
+
 export default async () => {
 
     // ステータスを確認（取得できなかった時は、通信の失敗などかもしれないので、間を伸ばしながら確かめ直す。
@@ -76,6 +97,13 @@ export default async () => {
         RESOLUTION_MODE.getValue(),
         FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
+
+    // このタブで録画バーのチップで選んだ種類があれば、それを使う（設定の種類は、新しく開いたタブで使う）
+    const tabKinds = loadTabKinds()
+    if (tabKinds) {
+        recordVideo = tabKinds.video
+        recordWithComments = tabKinds.comments
+    }
 
     const { programId, userName, title, beginAt } = getProgramData() // 番組情報を取得
     const video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
@@ -337,17 +365,14 @@ export default async () => {
     AUTO_RELOAD_ON_FAILURE.watch((newValue) => {
         autoReloadOnFailure = newValue
     })
-    // 録画中に種類を変えた場合は、その場で始める・止める
-    RECORD_VIDEO.watch((newValue) => {
-        recordVideo = newValue
-        setKindChips({ video: recordVideo, comments: recordWithComments })
+    // このタブで録画する種類を変える（録画中なら、その場で始める・止める）。他のタブには影響しない
+    const setTabKinds = (kinds: TabKinds) => {
+        recordVideo = kinds.video
+        recordWithComments = kinds.comments
+        saveTabKinds(kinds)
+        setKindChips(kinds)
         applyKinds()
-    })
-    RECORD_WITH_COMMENTS.watch((newValue) => {
-        recordWithComments = newValue
-        setKindChips({ video: recordVideo, comments: recordWithComments })
-        applyKinds()
-    })
+    }
 
     // 拡張機能が更新された後の古いページでは、設定の保存や録画一覧などの拡張機能の機能を使えない。
     // 黙って効かないままにせず、ページを開き直すように知らせる
@@ -357,18 +382,15 @@ export default async () => {
         return false
     }
 
-    // 録画バーのチップで、録る種類を切り替える（少なくとも1つは録る）
+    // 録画バーのチップで、このタブで録る種類を切り替える（少なくとも1つは録る。設定の種類は変えない）
     const toggleKind = (kind: VideoKind) => {
-        if (!extensionAvailable()) return
         const next = { video: recordVideo, comments: recordWithComments }
         next[kind] = !next[kind]
         if (!next.video && !next.comments) {
             showBarHint('少なくとも1つは録画します')
             return
         }
-        setKindChips(next)
-        if (kind === 'video') void RECORD_VIDEO.setValue(next.video)
-        else void RECORD_WITH_COMMENTS.setValue(next.comments)
+        setTabKinds(next)
     }
     // 録画中に解像度の設定を変えた場合は、録り直して反映する
     RESOLUTION_MODE.watch((newValue) => {
@@ -593,7 +615,8 @@ export default async () => {
     }
 
     // 設定モーダルを初期化
-    const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported() })
+    // 設定で録画する種類を変えた時は、このタブにもすぐ使う（他のタブは、そのタブで選んだ種類のまま）
+    const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported(), onRecordKindsChange: setTabKinds })
 
     // 動画の解像度の変更・読み込み直しを見張る（録画バーのボタンで録画を始められるようになる前から。
     // ページを開いてすぐ「画面録画」を押した直後に画質が上がった時も、録り直せるように）

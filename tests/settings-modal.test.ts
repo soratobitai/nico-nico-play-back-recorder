@@ -331,13 +331,32 @@ describe('設定画面', () => {
             expect(document.querySelector('.npr-kinds-message')?.textContent).toContain('少なくとも1つ')
         })
 
-        it('録画バーのチップで切り替えたら、開いている設定画面も合わせる', async () => {
+        it('他のタブの設定画面で変えたら、開いている設定画面も合わせる', async () => {
             modal.show()
 
             await RECORD_WITH_COMMENTS.setValue(true)
             await flush()
 
             expect(checkbox('recordCommentsCheckbox').checked).toBe(true)
+        })
+
+        it('変えた種類を、設定画面を開いたタブに知らせる（そのタブにもすぐ使う）', async () => {
+            modal.close()
+            const onRecordKindsChange = vi.fn()
+            modal = new SettingsModal({ onRecordKindsChange })
+            await flush()
+            modal.show()
+
+            toggle('recordCommentsCheckbox')
+            await flush()
+            expect(onRecordKindsChange).toHaveBeenLastCalledWith({ video: true, comments: true })
+
+            // 両方は外せない（知らせない）
+            toggle('recordVideoCheckbox')
+            toggle('recordCommentsCheckbox')
+            await flush()
+            expect(onRecordKindsChange).toHaveBeenLastCalledWith({ video: false, comments: true })
+            expect(onRecordKindsChange).toHaveBeenCalledTimes(2)
         })
 
         it('画面録画はスイッチにせず、録画バーの「画面録画」で始めることだけ説明する', async () => {

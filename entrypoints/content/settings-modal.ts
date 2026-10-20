@@ -38,6 +38,8 @@ type SettingsModalOptions = {
   // 画面録画を、この環境で使えるか。画面録画は設定ではなく、録画バーのボタンで始める
   // （ブラウザの決まりで、ページを開くたびにクリックして画面共有を許可する必要があり、自動では始められないため）
   screenCaptureSupported?: boolean
+  // 録画する種類を変えた（ページを開いた時に録画する種類。開いているこのタブにもすぐ使う）
+  onRecordKindsChange?: (kinds: { video: boolean, comments: boolean }) => void
 }
 
 // 「1本の録画にそろえる」（一定の解像度で録る）時に選べる高さ（幅は 16:9。ニコ生は 720p 以下の番組が多い）
@@ -75,6 +77,7 @@ class SettingsModal {
     FIXED_RESOLUTION_HEIGHT: 720,
   }
   private screenCaptureSupported: boolean
+  private onRecordKindsChange?: SettingsModalOptions['onRecordKindsChange']
   private currentStorageUsage: number | null = null
   private usageError = false // 使用量を読み込めなかった
   private storageQuota: number = 0
@@ -84,8 +87,9 @@ class SettingsModal {
   private pendingWheelSave: { timer: ReturnType<typeof setTimeout>, save: () => void } | null = null // ホイールで動かした値の、待っている保存
   private closedAt = -Infinity // 閉じた時刻（performance.now）
 
-  constructor({ screenCaptureSupported = false }: SettingsModalOptions = {}) {
+  constructor({ screenCaptureSupported = false, onRecordKindsChange }: SettingsModalOptions = {}) {
     this.screenCaptureSupported = screenCaptureSupported
+    this.onRecordKindsChange = onRecordKindsChange
     this.loadSettings()
     this.watchSettings()
     // 使用量は全録画を読んで数えるので、ここでは取らずに設定画面を開いた時に取る
@@ -267,7 +271,7 @@ class SettingsModal {
                     : 'この環境では使えません'}</span>
                 </span>
               </div>
-              <p class="npr-option-desc npr-kinds-note">選んだ種類は、別々の録画として同時に録ります。録画バーのボタンでも切り替えられます</p>
+              <p class="npr-option-desc npr-kinds-note">ページを開いた時に録画する種類です（ここで変えると、このタブにもすぐ使います）。選んだ種類は、別々の録画として同時に録ります。録画バーのボタンでは、そのタブだけ切り替えられます</p>
               <p class="npr-kinds-message" role="status"></p>
             </section>
 
@@ -388,6 +392,7 @@ class SettingsModal {
           return
         }
         this.updateSetting(key, checkbox.checked)
+        this.onRecordKindsChange?.({ video: videoCheckbox.checked, comments: commentsCheckbox.checked })
       })
     }
 
