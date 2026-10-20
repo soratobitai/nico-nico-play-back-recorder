@@ -179,6 +179,19 @@ describe('シークバー', () => {
         expect(seek.value).toBe('14')
         view.destroy()
     })
+
+    it('値を変えて change だけが届いた時も（支援技術などで）、その位置へ移る', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const seek = root.querySelector<HTMLInputElement>('.seek')!
+
+        seek.value = '10'
+        seek.dispatchEvent(new Event('change'))
+
+        expect(current().seek).toHaveBeenLastCalledWith(10)
+        view.destroy()
+    })
 })
 
 describe('キー操作', () => {

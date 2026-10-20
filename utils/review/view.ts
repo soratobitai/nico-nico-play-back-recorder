@@ -367,15 +367,18 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
 
     seek.addEventListener('input', () => { dragging = true; render() })
-    // 動かし終えたら、その位置へ移る。動かして元の値に戻して離した時は change が届かないので、
-    // 離した時などにも終える（終えないと、シークバーと時刻の表示が止まったままになる）
-    const endDrag = () => {
-        if (!dragging) return
+    // 動かし終えたら（値が変わったら）、その位置へ移る
+    const commitSeek = () => {
         dragging = false
         player.seek(Number(seek.value))
         render()
     }
-    for (const type of ['change', 'pointerup', 'pointercancel', 'lostpointercapture', 'blur']) seek.addEventListener(type, endDrag)
+    seek.addEventListener('change', commitSeek)
+    // 動かして元の値に戻して離した時は change が届かないので、離した時などにも終える
+    // （終えないと、シークバーと時刻の表示が止まったままになる）
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture', 'blur']) {
+        seek.addEventListener(type, () => { if (dragging) commitSeek() })
+    }
     backButton.addEventListener('click', () => skip(-SKIP_SECONDS))
     forwardButton.addEventListener('click', () => skip(SKIP_SECONDS))
     playButton.addEventListener('click', togglePlay)
