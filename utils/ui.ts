@@ -130,30 +130,47 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     $<HTMLButtonElement>('#capButton').addEventListener('click', getScreenShotAndDownload)
     $<HTMLButtonElement>('#settingsButton').addEventListener('click', showSettings)
 
-    // 中身の大きさが変わったら（幅・録画時間・ボタンの文字など）、はみ出していないか確かめる
-    const observer = new ResizeObserver(fitBar)
-    for (const element of [bar, ...bar.children]) observer.observe(element)
+    // 幅や中身（録画時間・ボタンの文字・状態など）が変わったら、入り切るか確かめ直す
+    // （詰めた表示では文字が隠れていて、中身が変わっても大きさが変わらないので、文字の変化も見る）
+    const resizeObserver = new ResizeObserver(scheduleFit)
+    for (const element of [bar, ...bar.children]) resizeObserver.observe(element)
+    new MutationObserver(scheduleFit).observe(bar, {
+        subtree: true, childList: true, characterData: true,
+        attributes: true, attributeFilter: ['data-state', 'hidden', 'aria-pressed'],
+    })
+    scheduleFit()
 
     setRecorderState(state)
 }
 
 // 幅ごとに詰める表示（style.css のコンテナクエリ）でも入り切らない時は、最も詰めた表示にする
-// （ブラウザの最小フォントサイズの設定などで、文字が想定より大きく表示される環境）。
-// その時のバーの幅より広くなったら、元に戻して確かめ直す
-let tightWidth = 0
+// （ブラウザの最小フォントサイズの設定などで、文字が想定より大きく表示される環境）
+
 // 中身が、バーの左右の余白を除いた所からはみ出しているか（余白にはみ出しただけでは scrollWidth に出ないので、位置で比べる）
+// 隠れている部分（大きさが 0）は数えない。バーが隠れていれば、はみ出していないことにする
 const isOverflowing = (target: HTMLElement) => {
-    const right = target.getBoundingClientRect().right - parseFloat(getComputedStyle(target).paddingRight)
-    return [...target.children].some(child => child.getBoundingClientRect().right > right + 0.5)
+    const box = target.getBoundingClientRect()
+    if (box.width === 0) return false
+    const right = box.right - parseFloat(getComputedStyle(target).paddingRight)
+    return [...target.children].some((child) => {
+        const rect = child.getBoundingClientRect()
+        return rect.width > 0 && rect.right > right + 0.5
+    })
 }
+// 詰めた表示をいったん外して入り切るか確かめ、入り切らなければ詰め直す（画面に出る前に行うので、ちらつかない）
 const fitBar = () => {
     if (!bar) return
-    const width = bar.clientWidth
-    if (bar.dataset.tight !== undefined && width > tightWidth) delete bar.dataset.tight
-    if (bar.dataset.tight === undefined && isOverflowing(bar)) {
-        bar.dataset.tight = ''
-        tightWidth = width
-    }
+    delete bar.dataset.tight
+    if (isOverflowing(bar)) bar.dataset.tight = ''
+}
+// 次に描く前に1回だけ確かめる（大きさが変わったことを知らせる処理の中で表示を変えると、知らせが繰り返されるため）
+let fitFrame = 0
+const scheduleFit = () => {
+    if (fitFrame) return
+    fitFrame = requestAnimationFrame(() => {
+        fitFrame = 0
+        fitBar()
+    })
 }
 
 // 録画の状態を表示する
