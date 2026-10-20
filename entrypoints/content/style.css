@@ -249,6 +249,8 @@
   cursor: pointer;
 }
 .npr-icon-button svg { width: 15px; height: 15px; }
+/* スクリーンショットのカメラは大きめに */
+#capButton svg { width: 19px; height: 19px; }
 .npr-icon-button:hover,
 .npr-icon-button[aria-expanded="true"] { background: var(--npr-surface-hover); color: var(--npr-text); }
 

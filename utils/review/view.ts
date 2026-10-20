@@ -1,7 +1,7 @@
 // 録画を見る画面（再生・シークバー・10秒戻る/進む・種類の切り替え）
 // プレイバックのウィンドウ（ニコ生のページから開く。mode: 'live'）と、録画一覧のページ（mode: 'library'）で使う。
 // - live: 録画中の番組を、ライブの少し前から見る。音は初めは消しておく（ライブの音はそのまま）。
-//         「ライブに戻る」で最新の録画へ移り、録画中に届く断片を追いかける。
+//         「ライブ」ボタンで最新の録画へ移り、録画中に届く断片を追いかける。
 // - library: 録画した番組を見る。音は出す。録った時刻を指定して見られる。
 // 種類（コメントなし・コメントあり・演出あり）を同時に録っている場合は、同じ場面のまま切り替えて見られる。
 import type { RecordingKind, TimelineSegment } from '../library/db'
@@ -11,7 +11,7 @@ import { createReviewPlayer, type ReviewPlayer } from './player'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
-// 「ライブに戻る」で移る位置（最新の録画のこれだけ前。届いたばかりの断片で途切れないように少し余裕を持つ）
+// 「ライブ」ボタンで移る位置（最新の録画のこれだけ前。届いたばかりの断片で途切れないように少し余裕を持つ）
 const LIVE_EDGE_SECONDS = 8
 // ライブからこれ以内なら「ライブ」とみなす（録画は数秒ごとの断片で届くので、少し遅れる）
 const LIVE_THRESHOLD_SECONDS = 15
@@ -64,10 +64,10 @@ const TEMPLATE = `
     <div class="time"><span class="clock">--:--:--</span><span class="behind"></span></div>
     <span class="spacer"></span>
     <div class="kinds" role="group" aria-label="録画の種類" hidden>
-      ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" hidden>${KIND_LABELS[kind]}</button>`).join('')}
+      ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}" hidden><span class="kind-dot" aria-hidden="true"></span><span class="kind-label">${KIND_LABELS[kind]}</span></button>`).join('')}
     </div>
     <button type="button" class="mute" title="音（M）"></button>
-    <button type="button" class="live" title="最新の録画へ（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブに戻る</span></button>
+    <button type="button" class="live" title="最新の録画へ戻る（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブ</span></button>
   </div>
 </div>
 `
@@ -140,7 +140,6 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const forwardButton = $<HTMLButtonElement>('.forward')
     const muteButton = $<HTMLButtonElement>('.mute')
     const liveButton = $<HTMLButtonElement>('.live')
-    const liveLabel = $<HTMLSpanElement>('.live-label')
     const clock = $<HTMLSpanElement>('.clock')
     const behind = $<HTMLSpanElement>('.behind')
     const kindsGroup = $<HTMLDivElement>('.kinds')
@@ -304,6 +303,9 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             seek.value = String(player.position)
         }
         const t = dragging ? Number(seek.value) : player.position
+        // シークバーの再生した所まで色をつける
+        const length = timeline.end - timeline.start
+        seek.style.setProperty('--progress', `${length > 0 ? Math.min(100, Math.max(0, ((t - timeline.start) / length) * 100)) : 0}%`)
         const wallClock = empty ? null : timeline.wallClockAt(t)
         clock.textContent = wallClock === null ? '--:--:--' : formatClock(wallClock)
         seek.setAttribute('aria-valuetext', clock.textContent)
@@ -314,7 +316,6 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             behind.textContent = behindSeconds === null ? '' : atLive ? 'ライブ' : `ライブの ${formatDuration(behindSeconds)} 前`
             liveButton.classList.toggle('at-live', atLive)
             liveButton.disabled = empty || atLive
-            liveLabel.textContent = atLive ? 'ライブ' : 'ライブに戻る'
             liveButton.setAttribute('aria-label', atLive ? 'ライブ（最新の録画）を再生中' : 'ライブに戻る')
         } else {
             // 番組の録画の中での位置
