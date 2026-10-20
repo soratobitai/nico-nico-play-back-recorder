@@ -42,8 +42,11 @@ type SettingsModalOptions = {
   screen?: ScreenRecording | null // この環境で使えなければ null
 }
 
-// 一定の解像度で録る時に選べる高さ
+// 一定の解像度で録る時に選べる高さ（幅は 16:9。ニコ生は 720p 以下の番組が多い）
 const FIXED_RESOLUTION_OPTIONS = [
+  { height: 360, label: '360p（640×360）' },
+  { height: 450, label: '450p（800×450）' },
+  { height: 540, label: '540p（960×540）' },
   { height: 720, label: '720p（1280×720）' },
   { height: 1080, label: '1080p（1920×1080）' },
 ]
@@ -284,7 +287,7 @@ class SettingsModal {
                   <input id="resolutionSplitRadio" type="radio" name="resolutionMode" value="split" ${checked(s.RESOLUTION_MODE === 'split')} />
                   <span class="npr-option-text">
                     <span class="npr-option-title">録画を分ける</span>
-                    <span class="npr-option-desc">元の解像度のまま録ります</span>
+                    <span class="npr-option-desc">元の解像度のまま録ります。解像度が変わった所で録画が分かれ、まとめて保存する時も別のファイルになります</span>
                   </span>
                 </label>
                 <label class="npr-radio" for="resolutionFixedRadio">

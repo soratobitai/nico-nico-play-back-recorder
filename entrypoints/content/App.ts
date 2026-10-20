@@ -289,7 +289,6 @@ export default async () => {
     RECORD_VIDEO.watch((newValue) => {
         recordVideo = newValue
         setKindChips({ video: recordVideo, comments: recordWithComments })
-    refreshScreenChip()
         applyKinds()
     })
     RECORD_WITH_COMMENTS.watch((newValue) => {
@@ -563,6 +562,8 @@ export default async () => {
         },
     })
     setKindChips({ video: recordVideo, comments: recordWithComments })
+    // 設定で「演出あり」を選んでいれば、押して始めるよう「演出あり」を光らせる
+    refreshScreenChip()
 
     // 録画状態の変更を監視してボタンを更新
     stateManager.onChange((state) => {

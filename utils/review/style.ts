@@ -1,7 +1,8 @@
 // 録画を見る画面（プレイバック・録画一覧）の見た目
 // Document Picture-in-Picture のウィンドウにはページの CSS が届かないので、文字列で持って埋め込む。
 // 録画一覧のページでも同じ画面を使うので、.review の中だけに効くようにする。
-// 幅が狭い時は、文字を小さくし、ラベル → 種類の名前 → 説明の順に隠してコンパクトにする（文字は読み上げには残す）
+// 幅が狭い時は、文字を小さくし、ラベル → 種類の名前 → 説明の順に隠してコンパクトにする（文字は読み上げには残す）。
+// 幅で変える指定は .review の中の要素に書く（.review 自身は幅を測る側なので、@container の指定が効かない）
 const REVIEW_STYLE = `
 .review {
   --ground: #0b0c0f;
@@ -50,8 +51,14 @@ const REVIEW_STYLE = `
   background: var(--bar);
   border-top: 1px solid var(--line);
 }
-.review .row { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.review .spacer { flex: 1; min-width: 4px; }
+/* ボタン類は縮めない（形を保つ）。入り切らない時は、消したり重ねたりせず横にスクロールする */
+.review .row {
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+.review .row > * { flex-shrink: 0; }
+.review .spacer { flex: 1 0 4px; }
 
 /* シークバー（細い線。再生した所まで色をつける） */
 .review .seek {
@@ -96,7 +103,7 @@ const REVIEW_STYLE = `
 /* 再生・一時停止（白い丸） */
 .review .play {
   width: calc(var(--control) + 4px); height: calc(var(--control) + 4px); min-width: 0; padding: 0;
-  border-radius: 50%; background: #f2f4f8; color: #111216;
+  flex: none; aspect-ratio: 1; border-radius: 50%; background: #f2f4f8; color: #111216;
 }
 .review .play:hover { background: #fff; color: #000; }
 .review .play:disabled { background: rgba(255, 255, 255, 0.3); }
@@ -147,8 +154,7 @@ const REVIEW_STYLE = `
 
 /* 広い時（録画一覧など）は少しゆったり */
 @container (min-width: 820px) {
-  .review { --control: 34px; font-size: 12.5px; }
-  .review .bar { padding: 4px 14px 10px; }
+  .review .bar { --control: 34px; font-size: 12.5px; padding: 4px 14px 10px; }
   .review .clock { font-size: 14px; }
   .review .kind { font-size: 11.5px; }
 }
@@ -165,8 +171,7 @@ const REVIEW_STYLE = `
 }
 /* とても狭い: ボタンを小さく、ライブはラベルなしの丸に */
 @container (max-width: 460px) {
-  .review { --control: 28px; font-size: 11px; }
-  .review .bar { padding: 0 6px 6px; }
+  .review .bar { --control: 28px; font-size: 11px; padding: 0 6px 6px; }
   .review .row { gap: 2px; }
   .review button svg { width: 16px; height: 16px; }
   .review .play svg { width: 14px; height: 14px; }
