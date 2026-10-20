@@ -271,24 +271,49 @@ describe('シークバー', () => {
 })
 
 describe('時間の表示', () => {
-    it('番組の経過時間を大きく出し、録画一覧では放送した時刻（午前・午後）も出す', async () => {
+    it('録画を始めてからの時間を大きく出し、横に番組の経過時間、2段目にその場面の時刻を出す', async () => {
         const root = document.getElementById('root')!
-        const view = mountReviewView({ root, mode: 'library', programBeginAt: 40_000, readTimeline: async () => recordings(), readFragments: async () => [] })
+        const view = mountReviewView({ root, mode: 'library', programBeginAt: 40_000, recordingStartedAt: 70_000, readTimeline: async () => recordings(), readFragments: async () => [] })
         await flush()
 
-        // A の始め（100 秒）は、番組が始まって（40 秒）から 1 分
-        expect(root.querySelector('.clock')!.textContent).toBe('0:01:00')
-        expect(root.querySelector('.behind')!.textContent).toMatch(/^(\d+\/\d+ )?午[前後]\d+:\d\d に放送$/)
-        expect(root.querySelector<HTMLElement>('.clock')!.title).toContain('に放送')
+        // A の始め（100 秒）は、録画を始めて（70 秒）から 30 秒、番組が始まって（40 秒）から 1 分
+        expect(root.querySelector('.clock')!.textContent).toBe('0:30')
+        expect(root.querySelector('.program-time')!.textContent).toBe('（番組 0:01:00）')
+        expect(root.querySelector('.behind')!.textContent).toMatch(/^(\d+\/\d+ )?午[前後]\d+:\d\d時点$/)
+        expect(root.querySelector('.seek')!.getAttribute('aria-valuetext')).toMatch(/^録画 0:30（番組 0:01:00） .+時点$/)
         view.destroy()
     })
 
-    it('番組が始まった時刻が分からなければ、最初に録った時刻からの経過時間', async () => {
+    it('録画を始めた時刻を指定しなければ最初に録った所から数え、番組が始まった時刻が分からなければ番組の経過時間を出さない', async () => {
         const root = document.getElementById('root')!
         const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
         await flush()
-        expect(root.querySelector('.clock')!.textContent).toBe('0:00:00')
+        expect(root.querySelector('.clock')!.textContent).toBe('0:00')
+        expect(root.querySelector('.program-time')!.textContent).toBe('')
         view.destroy()
+    })
+
+    it('プレイバックのウィンドウでは、時刻の横にライブからどれだけ前かを出す', async () => {
+        const root = document.getElementById('root')!
+        let now = 0
+        const spy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+        try {
+            const view = mountReviewView({ root, mode: 'live', readTimeline: async () => recordings(), readFragments: async () => [] })
+            await flush()
+            const wallClock = current().timeline.wallClockAt(current().position)!
+            const video = root.querySelector('video')!
+
+            now = wallClock + 5 * 60_000 + 30_000
+            video.dispatchEvent(new Event('timeupdate'))
+            expect(root.querySelector('.behind')!.textContent).toMatch(/^(\d+\/\d+ )?午[前後]\d+:\d\d時点（5:30前）$/)
+
+            now = wallClock + 5_000
+            video.dispatchEvent(new Event('timeupdate'))
+            expect(root.querySelector('.behind')!.textContent).toMatch(/時点（ライブ）$/)
+            view.destroy()
+        } finally {
+            spy.mockRestore()
+        }
     })
 })
 

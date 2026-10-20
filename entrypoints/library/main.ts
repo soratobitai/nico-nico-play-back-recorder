@@ -13,7 +13,7 @@ import { mountReviewView, KIND_LABELS, type ReviewView, type ReviewViewState } f
 import { REVIEW_STYLE } from '@/utils/review/style'
 import { downloadBlob, formatDateForFileName, getVideoExtension } from '@/utils/feature'
 import { MAX_STORAGE_SIZE } from '@/utils/storage'
-import { formatElapsed, formatBroadcastTime } from '@/utils/time-format'
+import { formatRecorded, formatElapsed, formatBroadcastTime } from '@/utils/time-format'
 
 // 一覧を読み直す間隔（録画中の番組の分が増える）
 const REFRESH_INTERVAL_MS = 15 * 1000
@@ -108,8 +108,10 @@ const formatBytes = (bytes: number) => {
     return `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 const programName = (program: ProgramSummary) => program.title || '（タイトルなし）'
-// 番組の経過時間の基準（番組が始まった時刻。分からない以前の録画は、最初に録り始めた時刻）
-const elapsedBase = (program: ProgramSummary) => program.beginAt ?? program.startedAt
+// その時刻の、録画を始めてからの時間・番組の経過時間・時刻（例: 12:34（番組 1:02:03）午後5:20時点）
+// 番組が始まった時刻が分からない以前の録画は、番組の経過時間を出さない
+const describeTime = (program: ProgramSummary, wallClock: number) =>
+    `${formatRecorded(wallClock - program.startedAt)}${program.beginAt ? `（番組 ${formatElapsed(wallClock - program.beginAt)}）` : ''}${formatBroadcastTime(wallClock)}時点`
 // 録り終えた区間（録画中の区間は書き込み中なので、消さない）
 const finishedSegments = (program: ProgramSummary) => program.segments.filter(segment => !isRecordingSegment(segment))
 
@@ -405,7 +407,8 @@ const renderProgram = () => {
             mode: 'library',
             readTimeline: () => db.getTimelineForSegments(programs.find(p => p.key === key)?.segments.map(s => s.segmentId) ?? []),
             readFragments: db.getFragmentBlobs,
-            programBeginAt: elapsedBase(program),
+            programBeginAt: program.beginAt,
+            recordingStartedAt: program.startedAt,
             onChange: onViewChange,
         })
         viewKey = key
@@ -555,13 +558,12 @@ const spanOf = (program: ProgramSummary) => {
 
 const renderTimeline = (program: ProgramSummary) => {
     const { start, length } = spanOf(program)
-    const base = elapsedBase(program)
     const ticks = element('div', 'ticks')
     ticks.setAttribute('aria-hidden', 'true')
     for (let i = 0; i <= 4; i++) {
         const time = start + (length * i) / 4
-        // 短い番組は秒まで出す（目盛りが同じ時刻ばかりにならないように）
-        const tick = element('span', undefined, formatElapsed(time - base, { seconds: length < 10 * 60 * 1000 }))
+        // 録画を始めてからの時間
+        const tick = element('span', undefined, formatRecorded(time - start))
         tick.style.left = `${(i / 4) * 100}%`
         ticks.append(tick)
     }
@@ -671,7 +673,7 @@ const showHover = (program: ProgramSummary, x: number) => {
     line.style.left = `${((x - rect.left) / rect.width) * 100}%`
     const tip = line.firstElementChild ?? line.appendChild(element('span'))
     const wallClock = wallClockAtX(program, x)
-    tip.textContent = `${formatElapsed(wallClock - elapsedBase(program))}（${formatBroadcastTime(wallClock)}）${timelineDragging ? '' : '・クリックで再生'}`
+    tip.textContent = `${describeTime(program, wallClock)}${timelineDragging ? '' : '・クリックで再生'}`
 }
 const hideHover = () => {
     const line = lanes.querySelector<HTMLElement>('.hoverline')
@@ -757,10 +759,9 @@ const fileRow = (program: ProgramSummary, file: RecordingFile, position: number)
     item.dataset.kind = file.kind
     item.dataset.start = String(file.startedAt)
     item.dataset.end = String(file.endedAt)
-    // 番組の経過時間（放送した時刻は、マウスを乗せると出す）
-    const base = elapsedBase(program)
-    const when = `${formatElapsed(file.startedAt - base)} 〜 ${file.recording ? '録画中' : formatElapsed(file.endedAt - base)}`
-    item.title = `${formatBroadcastTime(file.startedAt, { seconds: true })} 〜 ${file.recording ? '録画中' : formatBroadcastTime(file.endedAt, { seconds: true })} に放送`
+    // 録画を始めてからの時間（番組の経過時間と時刻は、マウスを乗せると出す）
+    const when = `${formatRecorded(file.startedAt - program.startedAt)} 〜 ${file.recording ? '録画中' : formatRecorded(file.endedAt - program.startedAt)}`
+    item.title = `${describeTime(program, file.startedAt)} 〜 ${file.recording ? '録画中' : describeTime(program, file.endedAt)}`
 
     // 画像を押すと、その録画の始めから再生する（webm の録画は、ここでは再生できない）
     const play = element('button', 'file-play')
@@ -807,7 +808,7 @@ const fileRow = (program: ProgramSummary, file: RecordingFile, position: number)
     remove.addEventListener('click', async () => {
         const bytes = finished.reduce((sum, segment) => sum + segment.bytes, 0)
         const note = finished.length < file.segments.length ? '\n（録画中の分は残します）' : ''
-        if (!confirm(`${formatBroadcastTime(file.startedAt, { seconds: true })}からの録画（${formatBytes(bytes)}）を削除しますか？${note}`)) return
+        if (!confirm(`${formatBroadcastTime(file.startedAt, { seconds: true })}時点からの録画（${formatBytes(bytes)}）を削除しますか？${note}`)) return
         await deleteAndReload(finished.map(segment => segment.segmentId), position)
     })
     actions.append(save, remove)

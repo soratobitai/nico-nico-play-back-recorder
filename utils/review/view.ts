@@ -8,7 +8,7 @@ import type { RecordingKind, TimelineSegment } from '../library/db'
 import type { LiveFeedEvent } from './live-feed'
 import { Timeline } from './timeline'
 import { createReviewPlayer, type ReviewPlayer } from './player'
-import { formatElapsed, formatBroadcastTime } from '../time-format'
+import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '../time-format'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -64,7 +64,7 @@ const TEMPLATE = `
     <button type="button" class="back" aria-label="${SKIP_SECONDS}秒戻る" title="${SKIP_SECONDS}秒戻る（←）">${ICONS.back}<span class="label">${SKIP_SECONDS}秒</span></button>
     <button type="button" class="play" aria-label="再生" title="再生・一時停止（スペース）">${ICONS.play}</button>
     <button type="button" class="forward" aria-label="${SKIP_SECONDS}秒進む" title="${SKIP_SECONDS}秒進む（→）"><span class="label">${SKIP_SECONDS}秒</span>${ICONS.forward}</button>
-    <div class="time"><span class="clock">--:--:--</span><span class="behind"></span></div>
+    <div class="time"><span class="time-main"><span class="clock">--:--</span><span class="program-time" title="番組が始まってからの時間（ニコ生のプレイヤーの表示と同じ）"></span></span><span class="behind" hidden><span class="scene-time"></span><span class="ago"></span></span></div>
     <span class="spacer"></span>
     <div class="kinds" role="group" aria-label="録画の種類" hidden>
       ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}" hidden><span class="kind-dot" aria-hidden="true"></span><span class="kind-label">${KIND_LABELS[kind]}</span></button>`).join('')}
@@ -74,15 +74,6 @@ const TEMPLATE = `
   </div>
 </div>
 `
-
-const pad = (n: number) => String(n).padStart(2, '0')
-
-const formatDuration = (seconds: number) => {
-    const s = Math.max(0, Math.floor(seconds))
-    const h = Math.floor(s / 3600)
-    const m = Math.floor((s % 3600) / 60)
-    return h > 0 ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`
-}
 
 // 拡張機能が更新・削除されて、このページから拡張機能の機能を使えなくなった
 const isExtensionGone = () => {
@@ -116,12 +107,14 @@ type ReviewViewOptions = {
     // 録画中に書き込んだ断片の知らせ（live。同じページで録画している番組の分だけ使う）
     subscribe?: (listener: (event: LiveFeedEvent) => void) => () => void
     programId?: string
-    // 番組が始まった時刻（番組の経過時間を出す。分からなければ、最初に録った時刻からの経過時間）
+    // 番組が始まった時刻（録画の時間の横に、番組の経過時間を出す。分からなければ出さない）
     programBeginAt?: number | null
+    // 録画を始めた時刻（録画の時間を出す。指定しなければ、最初に録った所の時刻）
+    recordingStartedAt?: number | null
     onChange?: (state: ReviewViewState) => void
 }
 
-const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, programBeginAt, onChange }: ReviewViewOptions) => {
+const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, programBeginAt, recordingStartedAt, onChange }: ReviewViewOptions) => {
     const doc = root.ownerDocument
     const messages = MESSAGES[mode]
     const container = doc.createElement('div')
@@ -140,7 +133,10 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const muteButton = $<HTMLButtonElement>('.mute')
     const liveButton = $<HTMLButtonElement>('.live')
     const clock = $<HTMLSpanElement>('.clock')
+    const programTime = $<HTMLSpanElement>('.program-time')
     const behind = $<HTMLSpanElement>('.behind')
+    const sceneTime = $<HTMLSpanElement>('.scene-time')
+    const ago = $<HTMLSpanElement>('.ago')
     const kindsGroup = $<HTMLDivElement>('.kinds')
     const kindButtons = [...container.querySelectorAll<HTMLButtonElement>('.kind')]
     // live はプレイバックの音を消しておく（ライブの音と重ならないように）
@@ -292,6 +288,16 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         moveTo(kinds[0], null, mode === 'live')
     }
 
+    // 最初に録った所の時刻（録画を始めた時刻を指定されていない時に、録画の時間を数える基準）
+    const firstRecordedAt = () => {
+        let first: number | null = null
+        for (const t of timelines.values()) {
+            const wallClock = t.isEmpty ? null : t.wallClockAt(t.start)
+            if (wallClock !== null && (first === null || wallClock < first)) first = wallClock
+        }
+        return first
+    }
+
     const render = () => {
         if (destroyed) return
         const empty = timeline.isEmpty
@@ -306,23 +312,26 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         const length = timeline.end - timeline.start
         seek.style.setProperty('--progress', `${length > 0 ? Math.min(100, Math.max(0, ((t - timeline.start) / length) * 100)) : 0}%`)
         const wallClock = empty ? null : timeline.wallClockAt(t)
-        // 番組の経過時間（ニコ生のプレイヤーの表示と同じ）。番組が始まった時刻が分からなければ、最初に録った時刻から
-        const base = programBeginAt ?? (empty ? null : timeline.wallClockAt(timeline.start))
-        clock.textContent = wallClock === null || base === null ? '--:--:--' : formatElapsed(wallClock - base)
-        const aired = wallClock === null ? '' : formatBroadcastTime(wallClock, { seconds: true })
-        clock.title = wallClock === null ? '' : `経過時間（${aired} に放送）`
-        seek.setAttribute('aria-valuetext', wallClock === null ? clock.textContent : `経過時間 ${clock.textContent}（${aired} に放送）`)
+        // 大きく出すのは、録画を始めてからの時間。横に番組の経過時間（ニコ生のプレイヤーの表示と同じ）
+        const recordedBase = recordingStartedAt ?? firstRecordedAt()
+        clock.textContent = wallClock === null || recordedBase === null ? '--:--' : formatRecorded(wallClock - recordedBase)
+        programTime.textContent = wallClock === null || !programBeginAt ? '' : `（番組 ${formatElapsed(wallClock - programBeginAt)}）`
+        // 2段目は、その場面の時刻（プレイバックのウィンドウでは、ライブからどれだけ前か も）
+        const at = wallClock === null ? '' : `${formatBroadcastTime(wallClock)}時点`
+        sceneTime.textContent = at
+        behind.hidden = !at
+        // 窓が狭くて番組の経過時間が隠れている時も、マウスを乗せれば分かるように
+        clock.title = `録画を始めてからの時間${programTime.textContent}`
+        behind.title = wallClock === null ? '' : `${formatBroadcastTime(wallClock, { seconds: true })}時点`
+        seek.setAttribute('aria-valuetext', wallClock === null ? clock.textContent : `録画 ${clock.textContent}${programTime.textContent} ${at}`)
 
         if (mode === 'live') {
-            const behindSeconds = wallClock === null ? null : (Date.now() - wallClock) / 1000
-            const atLive = behindSeconds !== null && behindSeconds < LIVE_THRESHOLD_SECONDS
-            behind.textContent = behindSeconds === null ? '' : atLive ? 'ライブ' : `ライブの ${formatDuration(behindSeconds)} 前`
+            const behindMs = wallClock === null ? null : Date.now() - wallClock
+            const atLive = behindMs !== null && behindMs < LIVE_THRESHOLD_SECONDS * 1000
+            ago.textContent = behindMs === null ? '' : `（${atLive ? 'ライブ' : formatAgo(behindMs)}）`
             liveButton.classList.toggle('at-live', atLive)
             liveButton.disabled = empty || atLive
             liveButton.setAttribute('aria-label', atLive ? 'ライブ（最新の録画）を再生中' : 'ライブに戻る')
-        } else {
-            // 放送した時刻（午前・午後）
-            behind.textContent = wallClock === null ? '' : `${formatBroadcastTime(wallClock)} に放送`
         }
 
         // 種類が2つ以上ある時だけ、切り替えのボタンを出す

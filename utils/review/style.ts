@@ -115,14 +115,26 @@ const REVIEW_STYLE = `
 .review .play:disabled { background: rgba(255, 255, 255, 0.3); }
 .review .play svg { width: 16px; height: 16px; }
 
-/* 録った時刻と、ライブからの遅れ（録画一覧では、番組の中での位置） */
+/* 録画を始めてからの時間（横に番組の経過時間）と、その場面の時刻（プレイバックでは、ライブからどれだけ前か も） */
 .review .time {
-  display: flex; flex-direction: column; justify-content: center; min-width: 0; flex-shrink: 0;
+  display: flex; flex-direction: column; justify-content: center; min-width: 0; flex: 0 1 auto;
   margin: 0 6px; line-height: 1.25; font-variant-numeric: tabular-nums;
 }
-.review .clock { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; letter-spacing: 0.03em; }
-.review .behind { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.review .behind:empty { display: none; }
+/* 番組の経過時間は、入りきらない時は折り返した2行目に回して隠す（途中で切れて見えないように） */
+.review .time-main {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 5px;
+  height: 1lh; overflow: hidden; font-size: 13px; white-space: nowrap;
+}
+.review .clock { font-size: 1em; font-weight: 700; color: var(--text); letter-spacing: 0.03em; }
+.review .program-time { font-size: 10.5px; font-weight: 600; color: var(--muted); }
+.review .program-time:empty { display: none; }
+/* ライブからどれだけ前かも、入りきらない時は2行目に回して隠す。時刻も入りきらなければ … で切る */
+.review .behind {
+  display: flex; flex-wrap: wrap; height: 1lh; overflow: hidden;
+  font-size: 10.5px; color: var(--muted); white-space: nowrap;
+}
+.review .behind[hidden] { display: none; }
+.review .scene-time { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* 種類の切り替え（色の丸つきのセグメント） */
 .review .kinds {
@@ -161,7 +173,7 @@ const REVIEW_STYLE = `
 /* 広い時（録画一覧など）は少しゆったり */
 @container (min-width: 820px) {
   .review .bar { --control: 34px; font-size: 12.5px; padding: 4px 14px 10px; }
-  .review .clock { font-size: 14px; }
+  .review .time-main { font-size: 14px; }
   .review .kind { font-size: 11.5px; }
 }
 /* 少し狭い: 音と10秒のラベルを隠す */
@@ -181,7 +193,7 @@ const REVIEW_STYLE = `
   .review .row { gap: 2px; }
   .review button svg { width: 16px; height: 16px; }
   .review .play svg { width: 14px; height: 14px; }
-  .review .clock { font-size: 12px; }
+  .review .time-main { font-size: 12px; }
   .review .time { margin: 0 4px; }
   .review .live { padding: 0; width: calc(var(--control) - 4px); margin-left: 2px; }
   .review .live .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

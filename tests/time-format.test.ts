@@ -1,6 +1,21 @@
 // 録画を見る時の時間の出し方
 import { describe, expect, it } from 'vitest'
-import { formatElapsed, formatBroadcastTime } from '@/utils/time-format'
+import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '@/utils/time-format'
+
+describe('録画の時間', () => {
+    it('1時間に満たなければ 分:秒、それより長ければ 時:分:秒', () => {
+        expect(formatRecorded(0)).toBe('0:00')
+        expect(formatRecorded(65 * 1000)).toBe('1:05')
+        expect(formatRecorded((59 * 60 + 59) * 1000 + 999)).toBe('59:59')
+        expect(formatRecorded((3600 + 2 * 60 + 3) * 1000)).toBe('1:02:03')
+        expect(formatRecorded(-1000)).toBe('0:00')
+    })
+
+    it('どれだけ前か', () => {
+        expect(formatAgo(330 * 1000)).toBe('5:30前')
+        expect(formatAgo((3600 + 2 * 60 + 3) * 1000)).toBe('1:02:03前')
+    })
+})
 
 describe('番組の経過時間', () => {
     it('時:分:秒で出す（1時間に満たなくても時を付ける。ニコ生のプレイヤーと同じ）', () => {
