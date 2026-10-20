@@ -120,46 +120,10 @@ describe('録画バー', () => {
             chip.click()
             expect(toggleScreenCapture).toHaveBeenCalledTimes(1)
 
-            setScreenCaptureButton('on')
+            setScreenCaptureButton(true)
             expect(chip.getAttribute('aria-pressed')).toBe('true')
-            setScreenCaptureButton('off')
+            setScreenCaptureButton(false)
             expect(chip.getAttribute('aria-pressed')).toBe('false')
-        })
-
-        it('設定で「演出あり」を選んでいて、まだ始めていない時は、チップの上の吹き出しで押すよう促す', () => {
-            const toggleScreenCapture = vi.fn()
-            insertRecorderBar(options({ toggleScreenCapture }))
-            const chip = $<HTMLButtonElement>('#screenCaptureButton')
-            const callout = $<HTMLElement>('#screenCallout')
-            expect(callout.hidden).toBe(true)
-
-            setScreenCaptureButton('ready')
-
-            expect(chip.classList.contains('is-ready')).toBe(true)
-            expect(chip.getAttribute('aria-pressed')).toBe('false')
-            expect(callout.hidden).toBe(false)
-            expect(callout.textContent).toContain('共有を許可すると始まります')
-            // 吹き出しの「開始」は、チップを押したのと同じ
-            $<HTMLButtonElement>('.npr-callout-start').click()
-            expect(toggleScreenCapture).toHaveBeenCalledTimes(1)
-
-            setScreenCaptureButton('on')
-            expect(chip.classList.contains('is-ready')).toBe(false)
-            expect(callout.hidden).toBe(true)
-        })
-
-        it('吹き出しを閉じたら、このページではもう出さない', () => {
-            insertRecorderBar(options({ toggleScreenCapture: vi.fn() }))
-            const callout = $<HTMLElement>('#screenCallout')
-            setScreenCaptureButton('ready')
-
-            $<HTMLButtonElement>('.npr-callout-close').click()
-            expect(callout.hidden).toBe(true)
-
-            setScreenCaptureButton('off')
-            setScreenCaptureButton('ready')
-            expect(callout.hidden).toBe(true)
-            expect($<HTMLButtonElement>('#screenCaptureButton').classList.contains('is-ready')).toBe(true) // チップは押せるまま
         })
     })
 

@@ -32,7 +32,6 @@ const ICONS = {
     record: '<span class="npr-record-dot" aria-hidden="true"></span>',
     stop: icon('<rect x="6" y="6" width="12" height="12" rx="2"></rect>', true),
     warning: icon('<path d="M12 3l10 18H2z"></path><path d="M12 10v5M12 18v.5"></path>'),
-    close: icon('<path d="M6 6l12 12M18 6L6 18"></path>'),
 }
 
 const BAR_HTML = `
@@ -50,18 +49,9 @@ const BAR_HTML = `
     <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" title="コメントあり: 流れるコメントを重ねて録画します（タブを表示している間）">
       <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">コメントあり</span><span class="npr-short" aria-hidden="true">コメあり</span>
     </button>
-    <span class="npr-screen">
-      <button type="button" id="screenCaptureButton" class="npr-chip npr-chip-screen" aria-pressed="false" aria-describedby="screenCallout" hidden>
-        <span class="npr-chip-icon">${ICONS.plus}</span><span class="npr-long">演出あり</span><span class="npr-short" aria-hidden="true">演出</span>
-      </button>
-      <span id="screenCallout" class="npr-callout" role="status" hidden>
-        <span class="npr-callout-text"><strong>演出ありの録画</strong>「開始」を押して、このタブの共有を許可すると始まります</span>
-        <span class="npr-callout-actions">
-          <button type="button" class="npr-callout-start">開始</button>
-          <button type="button" class="npr-callout-close" aria-label="このお知らせを閉じる">${ICONS.close}</button>
-        </span>
-      </span>
-    </span>
+    <button type="button" id="screenCaptureButton" class="npr-chip npr-chip-screen" aria-pressed="false" hidden>
+      <span class="npr-chip-icon">${ICONS.plus}</span><span class="npr-long">演出あり</span><span class="npr-short" aria-hidden="true">演出</span>
+    </button>
     <span class="npr-hint" role="status"></span>
   </div>
 
@@ -86,8 +76,6 @@ const BAR_HTML = `
 let bar: HTMLElement | null = null
 let recordButton: HTMLButtonElement | null = null
 let screenCaptureButton: HTMLButtonElement | null = null
-let screenCallout: HTMLElement | null = null
-let screenCalloutDismissed = false // このページでは、もう「演出あり」の吹き出しを出さない
 let playbackButton: HTMLButtonElement | null = null
 let state: BarState = 'preparing'
 let hintTimer: ReturnType<typeof setTimeout> | undefined
@@ -106,8 +94,6 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     const $ = <T extends HTMLElement>(selector: string) => bar!.querySelector<T>(selector)!
     recordButton = $<HTMLButtonElement>('#recordButton')
     screenCaptureButton = $<HTMLButtonElement>('#screenCaptureButton')
-    screenCallout = $<HTMLElement>('#screenCallout')
-    screenCalloutDismissed = false
     playbackButton = $<HTMLButtonElement>('#playbackButton')
 
     // 録画開始・停止（1つのボタンで切り替える）
@@ -123,13 +109,7 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     if (toggleScreenCapture) {
         screenCaptureButton.hidden = false
         screenCaptureButton.addEventListener('click', toggleScreenCapture)
-        // 吹き出しの「開始」は、チップを押したのと同じ（共有の確認を出すので、クリックから始める）
-        $<HTMLButtonElement>('.npr-callout-start').addEventListener('click', toggleScreenCapture)
-        $<HTMLButtonElement>('.npr-callout-close').addEventListener('click', () => {
-            screenCalloutDismissed = true
-            screenCallout!.hidden = true
-        })
-        setScreenCaptureButton('off')
+        setScreenCaptureButton(false)
     }
 
     if (togglePlayback) {
@@ -178,21 +158,15 @@ const showBarHint = (text: string) => {
     hintTimer = setTimeout(() => hint.classList.remove('is-visible'), 3000)
 }
 
-// 演出あり（画面ごとの録画）のチップの表示
-// off: 録っていない / ready: 設定で「演出あり」を選んでいるが、まだ始めていない（押して共有を許可すると始まる）/ on: 録っている
-// ready の間は、チップの上の吹き出しで、押して共有を許可するよう促す（閉じたら、このページではもう出さない）
-type ScreenChipState = 'off' | 'ready' | 'on'
-function setScreenCaptureButton(chipState: ScreenChipState) {
+// 演出あり（画面ごとの録画）のチップの表示（active: 録っている）
+// 演出ありは、ページを開くたびにこのチップを押して、画面共有を許可して始める（自動では始められない）
+function setScreenCaptureButton(active: boolean) {
     if (!screenCaptureButton) return
-    screenCaptureButton.setAttribute('aria-pressed', String(chipState === 'on'))
-    screenCaptureButton.classList.toggle('is-ready', chipState === 'ready')
-    if (screenCallout) screenCallout.hidden = chipState !== 'ready' || screenCalloutDismissed
-    screenCaptureButton.querySelector('.npr-chip-icon')!.innerHTML = chipState === 'on' ? ICONS.check : ICONS.plus
-    screenCaptureButton.title = {
-        on: '演出あり: クリックすると、演出ありの録画だけをやめます',
-        ready: '演出あり: クリックして「このタブを共有」を許可すると、ゲームやギフトなどの演出も含めた録画を始めます',
-        off: '演出あり: ゲームやギフトなどの演出も含めて、プレイヤーの画面ごと録画します（「このタブを共有」の許可が必要です）',
-    }[chipState]
+    screenCaptureButton.setAttribute('aria-pressed', String(active))
+    screenCaptureButton.querySelector('.npr-chip-icon')!.innerHTML = active ? ICONS.check : ICONS.plus
+    screenCaptureButton.title = active
+        ? '演出あり: クリックすると、演出ありの録画だけをやめます'
+        : '演出あり: ゲームやギフトなどの演出も含めて、プレイヤーの画面ごと録画します（クリックして「このタブを共有」を許可すると始まります）'
 }
 
 // プレイバックのボタンの表示
@@ -263,4 +237,4 @@ export {
     insertToggleButton,
     updateToggleButton,
 }
-export type { BarState, ScreenChipState }
+export type { BarState }

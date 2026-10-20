@@ -2,7 +2,7 @@ import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments, setPendi
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
 import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setKindChips, showBarHint } from "../../utils/ui"
-import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RECORD_SCREEN, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, type ResolutionMode } from '../../utils/storage'
+import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, type ResolutionMode } from '../../utils/storage'
 import { createVideoCapture, createVideoSource, createCommentSource, type RecordingSource } from '../../utils/recording-source'
 import { createKindRecorder, type KindRecorder } from '../../utils/kind-recorder'
 import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen-capture'
@@ -51,18 +51,16 @@ export default async () => {
     let autoReloadOnFailure = false
     let recordVideo = true
     let recordWithComments = false
-    let recordScreen = false // 演出あり（ページを開くたびに、録画バーのチップで始める）
     let resolutionMode: ResolutionMode = 'split'
     let fixedResolutionHeight = 720
 
     // 初期設定読み込み
-    ;[maxStorageSize, autoStart, autoReloadOnFailure, recordVideo, recordWithComments, recordScreen, resolutionMode, fixedResolutionHeight] = await Promise.all([
+    ;[maxStorageSize, autoStart, autoReloadOnFailure, recordVideo, recordWithComments, resolutionMode, fixedResolutionHeight] = await Promise.all([
         MAX_STORAGE_SIZE.getValue(),
         AUTO_START.getValue(),
         AUTO_RELOAD_ON_FAILURE.getValue(),
         RECORD_VIDEO.getValue(),
         RECORD_WITH_COMMENTS.getValue(),
-        RECORD_SCREEN.getValue(),
         RESOLUTION_MODE.getValue(),
         FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
@@ -337,12 +335,11 @@ export default async () => {
     })
 
     // ---- 演出あり（プレイヤーの画面ごとの録画） ----
-    // 「このタブを共有」の確認を出すので、クリックの処理から始める必要がある（自動では始められない）。
-    // 設定で「演出あり」を選んでいる間は、まだ始めていなければ録画バーのチップの上の吹き出しで促す
+    // 「このタブを共有」の確認を出すので、録画バーのチップのクリックから始める（自動では始められないので、設定にはしない）
 
     // 録画バーのチップの表示を合わせる
     const refreshScreenChip = () => {
-        setScreenCaptureButton(recorders.has('screen') ? 'on' : recordScreen ? 'ready' : 'off')
+        setScreenCaptureButton(recorders.has('screen'))
     }
 
     // 演出ありの録画を始める（他の種類と並行して録る。停止中なら、設定で選んだ種類も一緒に録り始める）
@@ -355,11 +352,8 @@ export default async () => {
         let source: RecordingSource
         screenStarting = true
         try {
-            // Chrome の「共有を停止」で取り込みが終わったら、演出ありの録画をやめる（設定もやめたことにする）
-            const capture = await startScreenCapture(fixedHeight() ?? video.videoHeight, () => {
-                stopKind('screen')
-                void RECORD_SCREEN.setValue(false)
-            })
+            // Chrome の「共有を停止」で取り込みが終わったら、演出ありの録画だけやめる
+            const capture = await startScreenCapture(fixedHeight() ?? video.videoHeight, () => stopKind('screen'))
             source = { stream: capture.stream, fixedSize: true, steadySize: true, stop: capture.stop }
         } catch (error) {
             // 「このタブを共有」でキャンセルされた場合など
@@ -381,23 +375,14 @@ export default async () => {
         return started
     }
 
-    // 録画バーのチップ（設定の「演出あり」のショートカット）。録っていれば止めて、設定もやめる。
-    // 録っていなければ始め、始められたら設定も「演出あり」にする
+    // 録画バーのチップ。録っていれば演出ありの録画だけやめ、録っていなければ始める
     const toggleScreenCapture = async () => {
         if (recorders.has('screen')) {
             stopKind('screen')
-            void RECORD_SCREEN.setValue(false)
             return
         }
-        if (await startScreen()) void RECORD_SCREEN.setValue(true)
+        await startScreen()
     }
-
-    // 他のタブや設定画面で「演出あり」を変えた時（やめたら、このページの演出ありの録画もやめる）
-    RECORD_SCREEN.watch((newValue) => {
-        recordScreen = newValue
-        if (!newValue) stopKind('screen')
-        refreshScreenChip()
-    })
 
     // 動画の再生を待って録画を開始する
     const initStream = () => {
@@ -559,12 +544,7 @@ export default async () => {
     }
 
     // 設定モーダルを初期化
-    const settingsModal = new SettingsModal({
-        // 設定画面の「演出あり」をオンにした時に、このページでもすぐ始める
-        screen: isScreenCaptureSupported()
-            ? { isRecording: () => recorders.has('screen'), start: startScreen, stop: () => stopKind('screen') }
-            : null,
-    })
+    const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported() })
 
     // 録画バーを作る
     insertRecorderBar({
@@ -581,8 +561,6 @@ export default async () => {
         },
     })
     setKindChips({ video: recordVideo, comments: recordWithComments })
-    // 設定で「演出あり」を選んでいれば、押して始めるよう「演出あり」の上に吹き出しを出す
-    refreshScreenChip()
 
     // 録画状態の変更を監視してボタンを更新
     stateManager.onChange((state) => {

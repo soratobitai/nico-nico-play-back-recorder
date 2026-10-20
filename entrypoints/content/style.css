@@ -147,82 +147,6 @@
 .npr-chip-screen[aria-pressed="false"] { border-style: dashed; }
 .npr-chip-screen[aria-pressed="false"] .npr-chip-icon svg { display: block; width: 11px; height: 11px; color: rgb(var(--npr-kind-rgb)); }
 .npr-chip-screen[aria-pressed="false"] .npr-chip-icon::before { display: none; }
-/* 設定で「演出あり」を選んでいて、まだ始めていない時は、チップの上の吹き出しで押すよう促す */
-.npr-screen { position: relative; display: inline-flex; }
-.npr-chip-screen.is-ready {
-  border-style: solid;
-  border-color: rgba(var(--npr-kind-rgb), 0.7);
-  background: rgba(var(--npr-kind-rgb), 0.1);
-  color: #ffe2b0;
-}
-.npr-callout {
-  position: absolute;
-  left: -4px;
-  bottom: calc(100% + 10px);
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: max-content;
-  max-width: 300px;
-  padding: 8px 8px 8px 12px;
-  border: 1px solid rgba(var(--npr-screen-rgb), 0.55);
-  border-radius: 8px;
-  background: #1d1f25;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-  color: #d9dce4;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: normal;
-  animation: npr-callout-in 0.2s ease-out;
-}
-.npr-callout[hidden] { display: none; }
-/* チップを指す三角 */
-.npr-callout::after {
-  content: "";
-  position: absolute;
-  left: 22px;
-  bottom: -6px;
-  width: 10px;
-  height: 10px;
-  background: #1d1f25;
-  border-right: 1px solid rgba(var(--npr-screen-rgb), 0.55);
-  border-bottom: 1px solid rgba(var(--npr-screen-rgb), 0.55);
-  transform: rotate(45deg);
-}
-.npr-callout-text strong { display: block; color: #ffd28a; font-size: 11.5px; }
-.npr-callout-actions { display: flex; align-items: center; gap: 2px; flex: none; }
-.npr-callout-start {
-  height: 26px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 6px;
-  background: rgb(var(--npr-screen-rgb));
-  color: #1c1406;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.npr-callout-start:hover { background: #ffc46a; }
-.npr-callout-close {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--npr-muted);
-  cursor: pointer;
-}
-.npr-callout-close:hover { background: var(--npr-surface-hover); color: var(--npr-text); }
-.npr-callout-close svg { width: 12px; height: 12px; }
-@keyframes npr-callout-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
-}
 .npr-chip[hidden] { display: none; }
 .npr-short { display: none; }
 
@@ -369,8 +293,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .npr-bar .npr-status-dot,
-  .npr-callout { animation: none !important; }
+  .npr-bar .npr-status-dot { animation: none !important; }
   .npr-hint, .npr-bar button { transition: none; }
 }
 

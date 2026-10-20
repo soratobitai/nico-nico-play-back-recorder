@@ -6,7 +6,6 @@ import {
   AUTO_RELOAD_ON_FAILURE,
   RECORD_VIDEO,
   RECORD_WITH_COMMENTS,
-  RECORD_SCREEN,
   RESOLUTION_MODE,
   FIXED_RESOLUTION_HEIGHT,
   type ResolutionMode,
@@ -25,21 +24,14 @@ interface Settings {
   AUTO_RELOAD_ON_FAILURE: boolean
   RECORD_VIDEO: boolean
   RECORD_WITH_COMMENTS: boolean
-  RECORD_SCREEN: boolean
   RESOLUTION_MODE: ResolutionMode
   FIXED_RESOLUTION_HEIGHT: number
 }
 
-// 演出あり（画面ごとの録画）を、このページで始める・やめる（録画している App が渡す）
-// 始めるには「このタブを共有」の許可が要るので、クリックの処理の中で start を呼ぶ
-type ScreenRecording = {
-  isRecording: () => boolean
-  start: () => Promise<boolean> // 始められたら true（共有の確認でキャンセルされたら false）
-  stop: () => void
-}
-
 type SettingsModalOptions = {
-  screen?: ScreenRecording | null // この環境で使えなければ null
+  // 演出あり（画面ごとの録画）を、この環境で使えるか。演出ありは設定ではなく、録画バーのボタンで始める
+  // （ブラウザの決まりで、ページを開くたびにクリックして画面共有を許可する必要があり、自動では始められないため）
+  screenCaptureSupported?: boolean
 }
 
 // 一定の解像度で録る時に選べる高さ（幅は 16:9。ニコ生は 720p 以下の番組が多い）
@@ -62,7 +54,6 @@ const CHECKBOXES: Partial<Record<keyof Settings, string>> = {
   AUTO_RELOAD_ON_FAILURE: 'autoReloadCheckbox',
   RECORD_VIDEO: 'recordVideoCheckbox',
   RECORD_WITH_COMMENTS: 'recordCommentsCheckbox',
-  RECORD_SCREEN: 'recordScreenCheckbox',
 }
 
 class SettingsModal {
@@ -75,11 +66,10 @@ class SettingsModal {
     AUTO_RELOAD_ON_FAILURE: false,
     RECORD_VIDEO: true,
     RECORD_WITH_COMMENTS: false,
-    RECORD_SCREEN: false,
     RESOLUTION_MODE: 'split',
     FIXED_RESOLUTION_HEIGHT: 720,
   }
-  private screen: ScreenRecording | null
+  private screenCaptureSupported: boolean
   private currentStorageUsage: number | null = null
   private usageError = false // 使用量を読み込めなかった
   private storageQuota: number = 0
@@ -87,8 +77,8 @@ class SettingsModal {
   private kindsMessageTimer: ReturnType<typeof setTimeout> | null = null
   private usageUpdateInterval: ReturnType<typeof setInterval> | null = null
 
-  constructor({ screen = null }: SettingsModalOptions = {}) {
-    this.screen = screen
+  constructor({ screenCaptureSupported = false }: SettingsModalOptions = {}) {
+    this.screenCaptureSupported = screenCaptureSupported
     this.loadSettings()
     this.watchSettings()
     // 使用量は全録画を読んで数えるので、ここでは取らずに設定画面を開いた時に取る
@@ -96,13 +86,12 @@ class SettingsModal {
   }
 
   private async loadSettings() {
-    const [size, autoStart, autoReload, recordVideo, recordComments, recordScreen, resolutionMode, fixedResolutionHeight] = await Promise.all([
+    const [size, autoStart, autoReload, recordVideo, recordComments, resolutionMode, fixedResolutionHeight] = await Promise.all([
       MAX_STORAGE_SIZE.getValue(),
       AUTO_START.getValue(),
       AUTO_RELOAD_ON_FAILURE.getValue(),
       RECORD_VIDEO.getValue(),
       RECORD_WITH_COMMENTS.getValue(),
-      RECORD_SCREEN.getValue(),
       RESOLUTION_MODE.getValue(),
       FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
@@ -111,7 +100,6 @@ class SettingsModal {
     this.applySetting('AUTO_RELOAD_ON_FAILURE', autoReload)
     this.applySetting('RECORD_VIDEO', recordVideo)
     this.applySetting('RECORD_WITH_COMMENTS', recordComments)
-    this.applySetting('RECORD_SCREEN', recordScreen)
     this.applySetting('RESOLUTION_MODE', resolutionMode)
     this.applySetting('FIXED_RESOLUTION_HEIGHT', fixedResolutionHeight)
   }
@@ -123,7 +111,6 @@ class SettingsModal {
     AUTO_RELOAD_ON_FAILURE.watch(value => this.applySetting('AUTO_RELOAD_ON_FAILURE', value))
     RECORD_VIDEO.watch(value => this.applySetting('RECORD_VIDEO', value))
     RECORD_WITH_COMMENTS.watch(value => this.applySetting('RECORD_WITH_COMMENTS', value))
-    RECORD_SCREEN.watch(value => this.applySetting('RECORD_SCREEN', value))
     RESOLUTION_MODE.watch(value => this.applySetting('RESOLUTION_MODE', value))
     FIXED_RESOLUTION_HEIGHT.watch(value => this.applySetting('FIXED_RESOLUTION_HEIGHT', value))
   }
@@ -201,9 +188,6 @@ class SettingsModal {
       case 'RECORD_WITH_COMMENTS':
         await RECORD_WITH_COMMENTS.setValue(value as boolean)
         break
-      case 'RECORD_SCREEN':
-        await RECORD_SCREEN.setValue(value as boolean)
-        break
       case 'RESOLUTION_MODE':
         await RESOLUTION_MODE.setValue(value as ResolutionMode)
         break
@@ -239,13 +223,13 @@ class SettingsModal {
     const s = this.settings
     const recommended = this.storageQuota > 0 ? `（おすすめ: ${toGB(Math.min(this.storageQuota, STORAGE_QUOTA_ESTIMATE))} GB 以下）` : ''
     const checked = (value: boolean) => value ? 'checked' : ''
-    const kindSwitch = (id: string, kind: string, value: boolean, title: string, desc: string, disabled = false) => `
+    const kindSwitch = (id: string, kind: string, value: boolean, title: string, desc: string) => `
       <label class="npr-switch npr-kind-switch npr-kind-${kind}" for="${id}">
         <span class="npr-option-text">
           <span class="npr-option-title"><span class="npr-kind-dot" aria-hidden="true"></span>${title}</span>
           <span class="npr-option-desc">${desc}</span>
         </span>
-        <input id="${id}" type="checkbox" role="switch" ${checked(value)} ${disabled ? 'disabled' : ''} />
+        <input id="${id}" type="checkbox" role="switch" ${checked(value)} />
       </label>`
     const optionSwitch = (id: string, value: boolean, title: string, desc: string) => `
       <label class="npr-switch" for="${id}">
@@ -268,11 +252,14 @@ class SettingsModal {
               <h3 id="nprKindsTitle">録画する種類</h3>
               ${kindSwitch('recordVideoCheckbox', 'video', s.RECORD_VIDEO, 'コメントなし', '映像と音声をそのまま録画します')}
               ${kindSwitch('recordCommentsCheckbox', 'comments', s.RECORD_WITH_COMMENTS, 'コメントあり', '流れるコメントを重ねて録画します（タブを表示している間）')}
-              ${kindSwitch('recordScreenCheckbox', 'screen', s.RECORD_SCREEN, '演出あり（画面録画）',
-                this.screen
-                  ? 'ゲームやギフトなどの演出も含めて、画面ごと録画します。ページを開くたびに、録画バーの「演出あり」を押して始めます（画面共有の許可が必要です）'
-                  : 'この環境では使えません',
-                !this.screen)}
+              <div class="npr-kind-info npr-kind-screen">
+                <span class="npr-option-text">
+                  <span class="npr-option-title"><span class="npr-kind-dot" aria-hidden="true"></span>演出あり（画面録画）</span>
+                  <span class="npr-option-desc">${this.screenCaptureSupported
+                    ? 'ゲームやギフトなどの演出も含めて、画面ごと録画します。録画バーの「演出あり」を押して始めます（ブラウザの決まりで、ページを開くたびに画面共有の許可が必要です）'
+                    : 'この環境では使えません'}</span>
+                </span>
+              </div>
               <p class="npr-option-desc npr-kinds-note">選んだ種類は、別々の録画として同時に録ります。録画バーのボタンでも切り替えられます</p>
               <p class="npr-kinds-message" role="status"></p>
             </section>
@@ -350,7 +337,7 @@ class SettingsModal {
     })
 
     for (const [key, id] of Object.entries(CHECKBOXES) as [keyof Settings, string][]) {
-      if (key === 'RECORD_VIDEO' || key === 'RECORD_WITH_COMMENTS' || key === 'RECORD_SCREEN') continue
+      if (key === 'RECORD_VIDEO' || key === 'RECORD_WITH_COMMENTS') continue
       modal.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('change', (e) => {
         this.updateSetting(key, (e.target as HTMLInputElement).checked)
       })
@@ -369,17 +356,6 @@ class SettingsModal {
         this.updateSetting(key, checkbox.checked)
       })
     }
-
-    // 演出あり。オンにしたら、このページでもすぐに始める（「このタブを共有」の確認が出る）。
-    // 共有をキャンセルしても設定は覚えておき、録画バーの「演出あり」で始められるようにする
-    const screenCheckbox = modal.querySelector<HTMLInputElement>('#recordScreenCheckbox')!
-    screenCheckbox.addEventListener('change', () => {
-      const on = screenCheckbox.checked
-      this.updateSetting('RECORD_SCREEN', on)
-      if (!this.screen) return
-      if (on && !this.screen.isRecording()) void this.screen.start()
-      if (!on && this.screen.isRecording()) this.screen.stop()
-    })
 
     // 解像度が変わった時の録り方。録画中に変えた場合は、録り直して反映する（App.ts で設定の変更を監視している）
     const fixedResolutionSelect = modal.querySelector('#fixedResolutionSelect') as HTMLSelectElement
@@ -519,4 +495,3 @@ class SettingsModal {
 }
 
 export default SettingsModal
-export type { ScreenRecording }

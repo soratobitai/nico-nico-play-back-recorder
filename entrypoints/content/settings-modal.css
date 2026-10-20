@@ -146,8 +146,6 @@
 }
 .npr-switch input:checked { background: var(--npr-accent); }
 .npr-switch input:checked::after { transform: translateX(calc(var(--s-switch-w) - var(--s-switch-h))); background: #fff; }
-.npr-switch input:disabled { opacity: 0.4; cursor: default; }
-.npr-switch:has(input:disabled) { cursor: default; }
 
 /* 録画する種類（色の丸と、オンの時はその色のスイッチ） */
 .npr-kind-video { --npr-kind-rgb: var(--npr-video-rgb); }
@@ -162,6 +160,8 @@
   box-shadow: 0 0 6px rgba(var(--npr-kind-rgb), 0.7);
 }
 .npr-kind-switch input:checked { background: rgb(var(--npr-kind-rgb)); }
+/* 演出あり（設定ではなく、録画バーのボタンで始める。説明だけ） */
+.npr-kind-info { padding: var(--s-row) 0; }
 .npr-kinds-note { margin-top: var(--s-row); padding-top: calc(var(--s-row) * 1.3); border-top: 1px solid var(--npr-line); }
 .npr-kinds-message { margin: 6px 0 0; font-size: var(--s-fs-desc); color: #ffb3ba; }
 .npr-kinds-message:empty { display: none; }

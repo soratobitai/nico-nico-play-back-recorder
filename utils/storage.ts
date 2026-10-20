@@ -42,14 +42,8 @@ export const RECORD_WITH_COMMENTS = storage.defineItem<boolean>(
         fallback: false,
     }
 )
-// 演出あり（プレイヤーの画面ごと。ゲームやギフトも入る）
-// ブラウザの決まりで自動では始められないので、ON の時はページを開くたびに録画バーのボタンで始めるよう促す
-export const RECORD_SCREEN = storage.defineItem<boolean>(
-    'local:RECORD_SCREEN',
-    {
-        fallback: false,
-    }
-)
+// 演出あり（プレイヤーの画面ごと）は設定にしない。ブラウザの決まりで自動では始められないので、
+// ページを開くたびに録画バーのボタンで始める
 
 // 動画の解像度が変わった時
 // split: 録画を分けて、元の解像度のまま録る / fixed: 一定の解像度（FIXED_RESOLUTION_HEIGHT）に描き直して録り続ける
