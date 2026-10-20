@@ -108,6 +108,29 @@ describe('一時保存', () => {
         expect(pendingTypes()).toEqual(['deleteSegments'])
     })
 
+    it('拡張機能側に直接保存できたら、このページで一時保存した分を移す（続きの書き込みがない区間の分も、次にページを開くまで残さない）', async () => {
+        call.mockRejectedValueOnce(new client.BridgeUnavailableError('timeout'))
+        await api.deleteSegments(['A']) // 一時保存した
+        vi.mocked(pending.flushPendingRequests).mockResolvedValue({ sent: 1, complete: true })
+
+        await api.createSegment(segment('B')) // 別の区間は直接保存できた
+        await vi.waitFor(() => expect(pending.flushPendingRequests).toHaveBeenCalledTimes(1))
+    })
+
+    it('一時保存した分は、他のタブが移している間は移さない（同じ書き込みを2回送らない）。その間の書き込みも一時保存に続ける', async () => {
+        call.mockRejectedValueOnce(new client.BridgeUnavailableError('timeout'))
+        await api.createSegment(segment('A'))
+        let release = () => {}
+        const otherTab = navigator.locks.request('playback-pending-flush', () => new Promise<void>(resolve => { release = resolve }))
+
+        await api.appendFragments('A', [fragment(0)])
+
+        expect(pending.flushPendingRequests).not.toHaveBeenCalled()
+        expect(pendingTypes()).toEqual(['createSegment', 'appendFragments'])
+        release()
+        await otherTab
+    })
+
     it('拡張機能が更新された後は、一時保存は上限まで。超えたら容量不足にする（録画を止めてお知らせする）', async () => {
         api.setPendingLimit(250)
         vi.mocked(client.isExtensionContextValid).mockReturnValue(false)

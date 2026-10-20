@@ -66,7 +66,11 @@ const callLibrary = async <T extends BridgeRequestType>(request: BridgeRequestOf
     }
     try {
         const bridge = await getBridge()
-        return await bridge.call(request)
+        const result = await bridge.call(request)
+        // 拡張機能側に保存できるようになったら、このページで一時保存した分を移す
+        // （一時保存した区間に続きの書き込みがなくても、例えば一時保存した「区間を消す依頼」が次にページを開くまで残らないように）
+        if (pendingSegments.size > 0) void flushPending().catch(() => {})
+        return result
     } catch (error) {
         if (error instanceof BridgeUnavailableError && isWrite) return saveToPending(request)
         throw error
@@ -102,10 +106,16 @@ const flushPending = (): Promise<number> => flushing ??= (async () => {
         // 拡張機能が更新された後は移せない（この後も一時保存を続ける）
         if (!isExtensionContextValid()) return 0
         const savesBefore = pendingSaves
-        const { sent, complete } = await flushPendingRequests(
+        const replay = () => flushPendingRequests(
             async (request) => (await getBridge()).call(request),
             error => error instanceof BridgeUnavailableError,
         )
+        // 一時保存した分はニコ生のタブで共有しているので、複数のタブで同時に移さない
+        // （同じ書き込みを2つのタブが送ると順番が崩れ、例えば消した区間を作り直してしまう）。
+        // 他のタブが移している間は、そのタブに任せる（移し終えるまで、このタブの書き込みも一時保存に続ける）
+        const { sent, complete } = navigator.locks
+            ? await navigator.locks.request('playback-pending-flush', { ifAvailable: true }, lock => lock ? replay() : { sent: 0, complete: false })
+            : await replay()
         // 移している間に新しく一時保存したものは、まだ移したか分からないので、次の機会に移す
         if (complete && pendingSaves === savesBefore) {
             pendingSegments.clear()
