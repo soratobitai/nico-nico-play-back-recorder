@@ -152,6 +152,13 @@ const createSegmentWriter = (segment: NewSegment) => {
             publishLiveFeed({ type: 'finish', segmentId: segment.segmentId, endedAt })
             return summary
         },
+
+        // 録った区間を残さずに消す（録り始めてすぐに解像度が変わった時の、数秒だけの区間など）
+        async discard(endedAt: number) {
+            await library.deleteSegments([segment.segmentId])
+            // プレイバックの窓では、終えた区間として扱い、次に保存先から読み直した時に外す
+            publishLiveFeed({ type: 'finish', segmentId: segment.segmentId, endedAt })
+        },
     }
 }
 

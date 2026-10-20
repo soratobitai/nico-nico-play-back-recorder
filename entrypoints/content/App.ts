@@ -27,6 +27,9 @@ const ENFORCE_LIMIT_INTERVAL_MS = 60 * 1000
 const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
 // 動画の解像度が変わってから録り直すまでの時間（続けて変わる間は待つ）
 const RESTART_DELAY_MS = 1000
+// 録り始めてからこれ以内に解像度が変わったら、それまでの区間は残さない
+// （ニコ生は番組を開いた直後の画質が低く、すぐに上がる。数秒だけの低い画質の区間が、録画一覧やまとめて保存で別に分かれないように）
+const EARLY_RESIZE_MS = 10 * 1000
 // 複数の種類を区切る・録り直す時に、種類ごとにずらす時間
 // （同時に録り始めると、ハードウェアのエンコーダーをどの種類が使うかが入れ替わり、同じ種類の前の区間と
 //   映像の設定が変わって、つないで保存できなくなる。ずらせば、どの種類も前と同じエンコーダーを使う）
@@ -80,6 +83,8 @@ export default async () => {
     let limitTimer: ReturnType<typeof setInterval> | undefined
     let restartTimer: ReturnType<typeof setTimeout> | undefined
     let cancelRestarts: (() => VideoKind[]) | undefined // 順番待ちの録り直しを取り消す
+    const discardPending = new Set<VideoKind>() // 録り直す時に、それまでの区間を残さない種類
+    let sessionStartedAt = 0 // 録画を始めた時刻
 
     // 一定の解像度で録る場合の高さ
     const fixedHeight = () => resolutionMode === 'fixed' ? fixedResolutionHeight : null
@@ -138,11 +143,13 @@ export default async () => {
         return true
     }
 
-    const stopKind = (kind: RecordingKind) => {
+    // discard: 今の区間は残さずに消す
+    const stopKind = (kind: RecordingKind, discard = false) => {
         const recorder = recorders.get(kind)
         if (!recorder) return
         recorders.delete(kind)
-        recorder.stop()
+        if (discard) recorder.discard()
+        else recorder.stop()
         afterKindStopped(kind)
     }
 
@@ -203,6 +210,7 @@ export default async () => {
         if (sessionActive) return
         sessionActive = true
         sessionId++
+        sessionStartedAt = Date.now()
         // 一定の間隔で、すべての種類の区間を区切る（区間の間に空白を作らないよう、すぐに次の区間を録り始める）
         splitTimer = setInterval(() => {
             console.log("🔄 録画を区切ります...")
@@ -220,6 +228,7 @@ export default async () => {
         cancelRestarts?.()
         cancelRestarts = undefined
         restartPending.clear()
+        discardPending.clear()
         for (const kind of [...recorders.keys()]) stopKind(kind)
         stopTimer()
         stateManager.setState(state)
@@ -228,13 +237,18 @@ export default async () => {
     // 動画から作る種類を、少し待ってから録り直す（解像度が変わった時や、設定を変えた時）
     // 映像の大きさが変わらないように描き直している種類は、録り直すまで録り続ける（録画の間を空けない）。
     // 描き直せない種類は、大きさが変わった所から再生できなくなるので、すぐに止める
-    const scheduleRestart = (kinds: VideoKind[]) => {
+    // discardEarly: 録り直す前の区間は残さない（録り始めてすぐに解像度が変わった時）
+    const scheduleRestart = (kinds: VideoKind[], { discardEarly = false } = {}) => {
         // 前の録り直しで、まだ順番待ちの種類は、今回まとめて録り直す（同じ種類を続けて2回録り直さない）
         for (const kind of cancelRestarts?.() ?? []) restartPending.add(kind)
         cancelRestarts = undefined
         for (const kind of kinds) {
             restartPending.add(kind)
-            if (!recorders.get(kind)?.steadySize) stopKind(kind)
+            if (discardEarly) discardPending.add(kind)
+            if (!recorders.get(kind)?.steadySize) {
+                stopKind(kind, discardPending.has(kind))
+                discardPending.delete(kind)
+            }
         }
         clearTimeout(restartTimer)
         restartTimer = setTimeout(() => {
@@ -245,8 +259,10 @@ export default async () => {
                 const previous = recorders.get(kind)
                 if (previous) {
                     recorders.delete(kind)
-                    previous.stop()
+                    if (discardPending.has(kind)) previous.discard()
+                    else previous.stop()
                 }
+                discardPending.delete(kind)
                 if (enabledKinds().includes(kind)) startKind(kind, () => createSourceFor(kind))
             }, () => {
                 if (recorders.size === 0) stopSession('stopped')
@@ -269,6 +285,7 @@ export default async () => {
                 if (!restartPending.has(kind)) startKind(kind, () => createSourceFor(kind))
             } else {
                 restartPending.delete(kind)
+                discardPending.delete(kind)
                 stopKind(kind)
             }
         }
@@ -502,7 +519,9 @@ export default async () => {
             if (!sessionActive) return
             const kinds = VIDEO_KINDS.filter(kind => recorders.get(kind) && !recorders.get(kind)!.fixedSize)
             console.log("動画の解像度が変わりました", `${video.videoWidth}x${video.videoHeight}`, kinds)
-            if (kinds.length > 0 || restartPending.size > 0) scheduleRestart(kinds)
+            // 録り始めてすぐなら、それまでの数秒の区間は残さない
+            const discardEarly = Date.now() - sessionStartedAt <= EARLY_RESIZE_MS
+            if (kinds.length > 0 || restartPending.size > 0) scheduleRestart(kinds, { discardEarly })
         })
 
         // 動画が読み込み直された（プレイヤーの再読み込みなど）。今の録画のトラックにはコマが届かなくなる

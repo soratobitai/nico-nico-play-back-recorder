@@ -27,6 +27,8 @@ const createKindRecorder = ({
     let source: RecordingSource | null = null
     let current: MediaRecorder | null = null
     const requestedStops = new WeakSet<MediaRecorder>() // こちらから止めた recorder
+    const requestedDiscards = new WeakSet<MediaRecorder>() // 区間を残さずに止めた recorder
+    let startedAt: number | null = null // 録り始めた時刻
 
     const releaseSource = () => {
         source?.stop()
@@ -84,8 +86,12 @@ const createKindRecorder = ({
                 releaseSource()
                 onEnded?.()
             }
-            // 最後のデータの書き込みを待ってから、区間を確定する
+            // 最後のデータの書き込みを待ってから、区間を確定する（残さない区間は消す）
             await saving
+            if (requestedDiscards.has(recorder)) {
+                await writer.discard(Date.now()).catch((error) => console.error('録画の区間を消せませんでした:', error))
+                return
+            }
             const segment = await writer.finish(Date.now(), recorder.mimeType || undefined).catch((error) => {
                 console.error('録画の区間を確定できませんでした:', error)
                 return null
@@ -125,6 +131,11 @@ const createKindRecorder = ({
             return source?.fixedSize ?? false
         },
 
+        // 録り始めた時刻（start を呼んだ時。区切っても変わらない）
+        get startedAt() {
+            return startedAt
+        },
+
         // 動画の解像度が変わっても、録り直すまで録り続けられるか
         get steadySize() {
             return source?.steadySize ?? false
@@ -134,6 +145,7 @@ const createKindRecorder = ({
         start() {
             if (current) return
             source = createSource()
+            startedAt = Date.now()
             try {
                 startSegment()
             } catch (error) {
@@ -157,6 +169,14 @@ const createKindRecorder = ({
 
         // 止める（今の区間は確定して保存される）
         stop() {
+            stopCurrent()
+            releaseSource()
+        },
+
+        // 止めて、今の区間は残さずに消す
+        discard() {
+            const recorder = current
+            if (recorder) requestedDiscards.add(recorder)
             stopCurrent()
             releaseSource()
         },

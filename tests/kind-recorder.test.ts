@@ -15,6 +15,7 @@ vi.mock('@/utils/library/api', () => ({
     appendFragments: vi.fn(async () => {}),
     finishSegment: vi.fn(async (segmentId: string, endedAt: number) => ({ segmentId, endedAt })),
     freeSpace: vi.fn(async () => ({ freed: 0, deletedSegmentIds: [] })),
+    deleteSegments: vi.fn(async () => {}),
 }))
 
 // MediaRecorder の代わり（webm だけに対応している）
@@ -161,6 +162,41 @@ describe('createKindRecorder', () => {
         expect(sources[0].stop).toHaveBeenCalledTimes(1)
         expect(library.finishSegment).toHaveBeenCalledTimes(1)
         expect(options.onEnded).not.toHaveBeenCalled()
+    })
+
+    it('区間を残さずに止めると、最後のデータの書き込みを待ってから区間を消す（確定しない）', async () => {
+        const { recorder, options, sources } = create()
+        recorder.start()
+        await flush()
+        const [segment] = createdSegments()
+
+        recorder.discard()
+        await flush()
+
+        expect(recorder.isRecording).toBe(false)
+        expect(sources[0].stop).toHaveBeenCalledTimes(1)
+        expect(library.finishSegment).not.toHaveBeenCalled()
+        expect(library.deleteSegments).toHaveBeenCalledWith([segment.segmentId])
+        const [appended] = vi.mocked(library.appendFragments).mock.invocationCallOrder
+        const [deleted] = vi.mocked(library.deleteSegments).mock.invocationCallOrder
+        expect(appended).toBeLessThan(deleted)
+        expect(options.onSegmentFinished).not.toHaveBeenCalled()
+        expect(options.onEnded).not.toHaveBeenCalled()
+    })
+
+    it('録り始めた時刻を覚えておく（区切っても変わらない）', async () => {
+        const { recorder } = create()
+        expect(recorder.startedAt).toBeNull()
+        const before = Date.now()
+        recorder.start()
+        const startedAt = recorder.startedAt!
+        expect(startedAt).toBeGreaterThanOrEqual(before)
+
+        await flush()
+        recorder.split()
+        expect(recorder.startedAt).toBe(startedAt)
+        recorder.stop()
+        await flush()
     })
 
     it('映像が終わるなどして勝手に止まったら、映像を解放して知らせる', async () => {

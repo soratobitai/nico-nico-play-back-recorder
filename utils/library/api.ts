@@ -83,6 +83,7 @@ const getUsage = () => callLibrary({ type: 'getUsage' })
 const enforceLimit = (maxBytes: number) => callLibrary({ type: 'enforceLimit', maxBytes })
 const freeSpace = (bytes: number) => callLibrary({ type: 'freeSpace', bytes })
 const closeStaleSegments = (idleMs: number) => callLibrary({ type: 'closeStaleSegments', idleMs })
+const deleteSegments = (segmentIds: string[]) => callLibrary({ type: 'deleteSegments', segmentIds })
 const estimateStorage = () => callLibrary({ type: 'estimateStorage' })
 
 // すべての録画を削除する（録画中の区間は、続きを書き込めるように中身だけ消す）。一時保存した録画のデータも消す
@@ -123,6 +124,6 @@ const migrateLegacy = () => migrateLegacyRecordings(async (request) => (await ge
 export {
     createSegment, setSegmentInit, appendFragments, finishSegment,
     getTimeline, getFragmentBlobs,
-    getUsage, enforceLimit, freeSpace, closeStaleSegments, clearAll, estimateStorage, flushPending, migrateLegacy,
+    getUsage, enforceLimit, freeSpace, closeStaleSegments, deleteSegments, clearAll, estimateStorage, flushPending, migrateLegacy,
     setPendingLimit,
 }
