@@ -81,5 +81,91 @@ const groupByDay = (programs: ProgramSummary[], now = new Date()) => {
     return groups
 }
 
-export { summarizePrograms, filterPrograms, groupByDay, programKeyOf }
-export type { ProgramSummary }
+// 番組の並べ方（recent: 最近録った順 / size: 大きい順。容量を空けたい時に）
+type ProgramOrder = 'recent' | 'size'
+const sortPrograms = (programs: ProgramSummary[], order: ProgramOrder) =>
+    order === 'size' ? [...programs].sort((a, b) => b.bytes - a.bytes) : programs
+
+// 録った時間（秒）。種類を問わず、どれかを録っていた時間を合わせる（同時に録った所は1回だけ数える）
+const recordedSeconds = (segments: SegmentSummary[]) => {
+    let total = 0
+    let until = -Infinity
+    for (const segment of [...segments].sort((a, b) => a.startedAt - b.startedAt)) {
+        const end = segmentEnd(segment)
+        if (end <= until) continue
+        total += end - Math.max(segment.startedAt, until)
+        until = end
+    }
+    return total / 1000
+}
+
+// 一覧に出す画像（最後に録った区間の画像）
+const thumbnailOf = (segments: SegmentSummary[]) =>
+    [...segments].reverse().find(segment => segment.thumbnail)?.thumbnail ?? null
+
+// 区間を、保存した時のファイルの単位にまとめる（items は録り始めた順）
+// 続けて並んだ同じ種類の区間のうち、映像・音声の設定（signature）が同じものは1本のファイルにつなぐ。
+// 設定が分からない区間（webm・初期化セグメントがまだない）は、それだけで1本
+const groupIntoFiles = <T>(items: T[], keyOf: (item: T) => { kind: RecordingKind, signature: string | null }): T[][] => {
+    const groups: { kind: RecordingKind, signature: string | null, items: T[] }[] = []
+    for (const item of items) {
+        const { kind, signature } = keyOf(item)
+        const last = groups[groups.length - 1]
+        if (signature !== null && last && last.kind === kind && last.signature === signature) last.items.push(item)
+        else groups.push({ kind, signature, items: [item] })
+    }
+    return groups.map(group => group.items)
+}
+
+// 録画一覧のページで1行に出す録画（保存した時の1本のファイル）
+type RecordingFile = {
+    kind: RecordingKind
+    segments: SegmentSummary[]
+    startedAt: number
+    endedAt: number // 録画中なら、今のところの終わり
+    recording: boolean
+    seconds: number // 録った時間
+    bytes: number
+    thumbnail: string | null
+    // 前のファイルからすぐ続いている（解像度などの設定が変わって、ファイルが分かれた）
+    splitBySettings: boolean
+    // タイムラインに描く範囲（続けて録った区間はつなぐ。間が空いた所は分ける）
+    blocks: { start: number, end: number }[]
+}
+
+// これより短い間で続いていれば、続けて録ったものとする（区切りや録り直しの、わずかな間）
+const CONTINUOUS_GAP_MS = 3000
+
+// 番組の1つの種類の区間を、保存した時のファイルの単位にまとめる
+// signatures: 区間ごとの映像・音声の設定の印（分からなければ null）
+const filesOf = (segments: SegmentSummary[], kind: RecordingKind, signatures: ReadonlyMap<string, string | null>): RecordingFile[] => {
+    const ofKind = segments.filter(segment => segment.kind === kind).sort((a, b) => a.startedAt - b.startedAt)
+    const groups = groupIntoFiles(ofKind, segment => ({ kind, signature: segment.format === 'fmp4' ? signatures.get(segment.segmentId) ?? null : null }))
+    let previousEnd = -Infinity
+    return groups.map((group) => {
+        const blocks: RecordingFile['blocks'] = []
+        for (const segment of group) {
+            const last = blocks[blocks.length - 1]
+            if (last && segment.startedAt - last.end <= CONTINUOUS_GAP_MS) last.end = Math.max(last.end, segmentEnd(segment))
+            else blocks.push({ start: segment.startedAt, end: segmentEnd(segment) })
+        }
+        const startedAt = group[0].startedAt
+        const file: RecordingFile = {
+            kind,
+            segments: group,
+            startedAt,
+            endedAt: Math.max(...group.map(segmentEnd)),
+            recording: group.some(segment => segment.endedAt === null),
+            seconds: recordedSeconds(group),
+            bytes: group.reduce((sum, segment) => sum + segment.bytes, 0),
+            thumbnail: group.find(segment => segment.thumbnail)?.thumbnail ?? null,
+            splitBySettings: startedAt - previousEnd <= CONTINUOUS_GAP_MS * 5,
+            blocks,
+        }
+        previousEnd = file.endedAt
+        return file
+    })
+}
+
+export { summarizePrograms, filterPrograms, groupByDay, programKeyOf, sortPrograms, recordedSeconds, thumbnailOf, groupIntoFiles, filesOf, segmentEnd }
+export type { ProgramSummary, ProgramOrder, RecordingFile }

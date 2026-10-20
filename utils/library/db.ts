@@ -6,6 +6,7 @@
 // fmp4 の区間は「初期化セグメント」と数秒ごとの「断片（fragment）」に分けて持つ。
 // 断片のまま持つので、録画中でも再生でき、容量の上限を超えたら古い断片から消していける。
 import { buildFmp4File, initSignature } from '../fmp4'
+import { groupIntoFiles } from './programs'
 
 const DB_NAME = 'PlaybackLibrary'
 const DB_VERSION = 1
@@ -222,22 +223,13 @@ const buildDownloadFiles = async (segmentIds: string[]): Promise<DownloadFile[]>
     })
     items.sort((a, b) => a.segment.startedAt - b.segment.startedAt)
 
-    type Group = { kind: RecordingKind, signature: string | null, items: typeof items }
-    const groups: Group[] = []
-    for (const item of items) {
-        const { segment } = item
-        const signature = segment.format === 'fmp4' && segment.init
-            ? initSignature(new Uint8Array(await segment.init.arrayBuffer()))
-            : null
-        const last = groups[groups.length - 1]
-        if (signature !== null && last && last.kind === segment.kind && last.signature === signature) {
-            last.items.push(item)
-        } else {
-            groups.push({ kind: segment.kind, signature, items: [item] })
-        }
-    }
+    // 録画一覧のページで出すファイルの単位（groupIntoFiles）と同じにまとめる
+    const signatures = new Map(await Promise.all(items.map(async item => [item, await signatureOf(item.segment)] as const)))
+    const groups = groupIntoFiles(items, item => ({ kind: item.segment.kind, signature: signatures.get(item) ?? null }))
 
-    return Promise.all(groups.map(async ({ kind, signature, items: group }): Promise<DownloadFile> => {
+    return Promise.all(groups.map(async (group): Promise<DownloadFile> => {
+        const kind = group[0].segment.kind
+        const signature = signatures.get(group[0]) ?? null
         const first = group[0].segment
         const last = group[group.length - 1].segment
         const blob = signature !== null
@@ -248,6 +240,25 @@ const buildDownloadFiles = async (segmentIds: string[]): Promise<DownloadFile[]>
             segmentIds: group.map(({ segment }) => segment.segmentId),
         }
     }))
+}
+
+// 区間の映像・音声の設定の印（同じなら、つないで1本のファイルにできる）。mp4 の初期化セグメントがなければ null
+const signatureOf = async (segment: Pick<SegmentRecord, 'format' | 'init'>) => {
+    if (segment.format !== 'fmp4' || !segment.init) return null
+    try {
+        return initSignature(new Uint8Array(await segment.init.arrayBuffer()))
+    } catch {
+        return null
+    }
+}
+
+// 区間ごとの映像・音声の設定の印（録画一覧のページで、保存した時のファイルの単位を出すのに使う）
+const getInitSignatures = async (segmentIds: string[]) => {
+    const segments = await withTransaction([SEGMENTS], 'readonly', tx => Promise.all(
+        segmentIds.map(id => promisify<SegmentRecord | undefined>(tx.objectStore(SEGMENTS).get(id))),
+    ))
+    // 初期化セグメントを読むのは、読み出しを終えてから（待っている間に読み出しが閉じないように）
+    return new Map(await Promise.all(segmentIds.map(async (id, i) => [id, segments[i] ? await signatureOf(segments[i]!) : null] as const)))
 }
 
 const deleteSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
@@ -433,6 +444,7 @@ export {
     getFragmentBlobs,
     listAllSegments,
     buildDownloadFiles,
+    getInitSignatures,
     clearAll,
     getUsage,
     closeStaleSegments,

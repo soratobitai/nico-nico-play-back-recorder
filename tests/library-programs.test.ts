@@ -2,9 +2,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { summarizePrograms, filterPrograms, groupByDay, programKeyOf } from '@/utils/library/programs'
+import { summarizePrograms, filterPrograms, groupByDay, programKeyOf, sortPrograms, recordedSeconds, thumbnailOf, filesOf } from '@/utils/library/programs'
 import {
-    clearAll, createSegment, setSegmentInit, appendFragments, finishSegment, buildDownloadFiles, listAllSegments, getTimelineForSegments,
+    clearAll, createSegment, setSegmentInit, appendFragments, finishSegment, buildDownloadFiles, listAllSegments, getTimelineForSegments, getInitSignatures,
     type NewSegment, type SegmentSummary,
 } from '@/utils/library/db'
 import { splitFmp4Blob, initSignature } from '@/utils/fmp4'
@@ -59,6 +59,49 @@ describe('番組ごとにまとめる', () => {
         ])
 
         expect(groupByDay(programs, now).map(g => [g.label, g.programs.length])).toEqual([['今日', 1], ['昨日', 1], ['10月17日（土）', 2]])
+    })
+})
+
+describe('録画一覧のページに出す形', () => {
+    it('大きい順に並べられる（最近録った順はそのまま）', () => {
+        const programs = summarizePrograms([
+            summary({ segmentId: 'a', programId: 'lv1', startedAt: 1000, endedAt: 2000, bytes: 30 }),
+            summary({ segmentId: 'b', programId: 'lv2', startedAt: 5000, endedAt: 6000, bytes: 10 }),
+            summary({ segmentId: 'c', programId: 'lv3', startedAt: 3000, endedAt: 4000, bytes: 20 }),
+        ])
+        expect(sortPrograms(programs, 'recent').map(p => p.key)).toEqual(['lv2', 'lv3', 'lv1'])
+        expect(sortPrograms(programs, 'size').map(p => p.key)).toEqual(['lv1', 'lv3', 'lv2'])
+    })
+
+    it('録った時間は、どれかの種類を録っていた時間を合わせる（同時に録った所は1回だけ。空いた所は数えない）', () => {
+        expect(recordedSeconds([
+            summary({ segmentId: 'a', startedAt: 0, endedAt: 60_000 }),
+            summary({ segmentId: 'b', kind: 'comments', startedAt: 30_000, endedAt: 90_000 }),
+            summary({ segmentId: 'c', startedAt: 3_600_000, endedAt: 3_610_000 }),
+        ])).toBe(100)
+    })
+
+    it('一覧の画像は、最後に録った区間の画像', () => {
+        expect(thumbnailOf([summary({ segmentId: 'a', thumbnail: 'A' }), summary({ segmentId: 'b', thumbnail: 'B' }), summary({ segmentId: 'c', thumbnail: null })])).toBe('B')
+    })
+
+    it('種類ごとに、保存した時のファイルの単位にまとめる（設定が変わった所で分ける。続けて録った区間は1つの帯）', () => {
+        const segments = [
+            summary({ segmentId: 'a', startedAt: 0, endedAt: 300_000 }),
+            summary({ segmentId: 'b', startedAt: 300_500, endedAt: 600_000 }), // 5分ごとの区切り
+            summary({ segmentId: 'c', startedAt: 600_800, endedAt: 700_000 }), // 解像度が変わった
+            summary({ segmentId: 'd', startedAt: 4_000_000, endedAt: null, duration: 60 }), // ページを開き直した（同じ設定）
+            summary({ segmentId: 'x', kind: 'comments', startedAt: 0, endedAt: 600_000 }),
+        ]
+        const signatures = new Map([['a', '720p'], ['b', '720p'], ['c', '1080p'], ['d', '1080p'], ['x', '720p']])
+
+        const files = filesOf(segments, 'video', signatures)
+
+        expect(files.map(f => f.segments.map(s => s.segmentId))).toEqual([['a', 'b'], ['c', 'd']])
+        expect(files.map(f => f.splitBySettings)).toEqual([false, true])
+        expect(files[0].blocks).toEqual([{ start: 0, end: 600_000 }])
+        expect(files[1].blocks).toEqual([{ start: 600_800, end: 700_000 }, { start: 4_000_000, end: 4_060_000 }])
+        expect(files[1]).toMatchObject({ recording: true, seconds: 99.2 + 60 })
     })
 })
 
@@ -124,6 +167,18 @@ describe('まとめて保存（buildDownloadFiles）', () => {
         await createSegment(segment('E', 9000))
 
         expect((await buildDownloadFiles(['A', 'E'])).map(f => f.segmentIds)).toEqual([['A']])
+    })
+
+    it('区間ごとの設定の印を読める（初期化セグメントのない区間・ない区間は null）', async () => {
+        await record(segment('A', 1000))
+        await record(segment('B', 9000), await otherResolution())
+        await createSegment(segment('E', 17000))
+
+        const signatures = await getInitSignatures(['A', 'B', 'E', 'missing'])
+
+        expect(signatures.get('A')).toBe(initSignature(new Uint8Array(await init.arrayBuffer())))
+        expect(signatures.get('B')).not.toBe(signatures.get('A'))
+        expect([signatures.get('E'), signatures.get('missing')]).toEqual([null, null])
     })
 
     it('初期化セグメントのつなげるかどうかの印は、作った日時などに左右されず、解像度の違いでは変わる', async () => {

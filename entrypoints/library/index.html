@@ -8,26 +8,45 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>録画一覧</h1>
-    <label class="search">
-      <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4-4"></path></svg>
-      <input id="search" type="search" placeholder="番組名・配信者で検索" aria-label="番組名・配信者で検索">
-    </label>
+    <h1 class="brand"><span class="brand-mark" aria-hidden="true"></span>録画一覧</h1>
     <div class="usage" id="usage"></div>
-    <button type="button" id="refresh" class="button">更新</button>
   </header>
 
   <div class="layout">
-    <nav class="programs" aria-label="番組">
-      <div class="filters" role="group" aria-label="種類で絞り込み">
-        <button type="button" class="filter" data-kind="" aria-pressed="true">すべて</button>
-        <button type="button" class="filter kind-video" data-kind="video" aria-pressed="false">コメントなし</button>
-        <button type="button" class="filter kind-comments" data-kind="comments" aria-pressed="false">コメントあり</button>
-        <button type="button" class="filter kind-screen" data-kind="screen" aria-pressed="false">画面録画</button>
+    <!-- 左: 番組の一覧 -->
+    <nav class="side" aria-label="番組">
+      <div class="side-tools">
+        <label class="search">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4-4"></path></svg>
+          <input id="search" type="search" placeholder="番組名・配信者で検索" aria-label="番組名・配信者で検索">
+        </label>
+        <div class="tools-row">
+          <div class="filters" role="group" aria-label="種類で絞り込み">
+            <button type="button" class="filter" data-kind="" aria-pressed="true">すべて</button>
+            <button type="button" class="filter" data-kind="video" aria-pressed="false" title="コメントなし"><i class="dot kind-video" aria-hidden="true"></i>コメなし</button>
+            <button type="button" class="filter" data-kind="comments" aria-pressed="false" title="コメントあり"><i class="dot kind-comments" aria-hidden="true"></i>コメあり</button>
+            <button type="button" class="filter" data-kind="screen" aria-pressed="false" title="画面録画"><i class="dot kind-screen" aria-hidden="true"></i>画面</button>
+          </div>
+          <select id="order" class="order" aria-label="並べ方">
+            <option value="recent">新しい順</option>
+            <option value="size">大きい順</option>
+          </select>
+        </div>
       </div>
       <div id="programList" class="program-list"></div>
+      <div class="side-foot">
+        <span id="listSummary"></span>
+        <button type="button" id="selectMode" class="link-button">選んで削除…</button>
+      </div>
+      <!-- 選んで削除している間 -->
+      <div class="select-bar" id="selectBar" hidden>
+        <span id="selectSummary"></span>
+        <button type="button" id="selectCancel" class="button small">やめる</button>
+        <button type="button" id="selectDelete" class="button small danger">削除</button>
+      </div>
     </nav>
 
+    <!-- 右: 選んだ番組 -->
     <main id="main" class="main">
       <p id="emptyState" class="empty" hidden></p>
       <section id="program" class="program" hidden>
@@ -37,14 +56,50 @@
             <p id="programMeta" class="meta"></p>
           </div>
           <div class="program-actions">
-            <button type="button" id="downloadProgram" class="button"></button>
-            <button type="button" id="deleteProgram" class="button danger">この番組の録画を削除</button>
+            <a id="openWatch" class="button ghost" target="_blank" rel="noopener noreferrer">
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>ニコ生で開く
+            </a>
+            <div class="split">
+              <button type="button" id="downloadProgram" class="button primary">
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>保存
+              </button>
+              <button type="button" id="downloadMenuButton" class="button primary" aria-label="保存する種類を選ぶ" aria-haspopup="menu" aria-expanded="false">
+                <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+              </button>
+            </div>
+            <button type="button" id="moreButton" class="button icon" aria-label="その他" aria-haspopup="menu" aria-expanded="false">
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="19" cy="12" r="2"></circle></svg>
+            </button>
+            <div id="downloadMenu" class="menu" role="menu" hidden></div>
+            <div id="moreMenu" class="menu" role="menu" hidden>
+              <button type="button" id="deleteProgram" class="menu-item danger" role="menuitem">
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>この番組の録画を削除…
+              </button>
+            </div>
           </div>
         </div>
-        <div id="player" class="player"></div>
-        <div id="lanes" class="lanes" aria-label="録った時間（クリックした時刻から再生）"></div>
-        <h3 id="segmentsTitle" class="section-title">区間</h3>
-        <ol id="segments" class="segments"></ol>
+
+        <div class="body">
+          <div class="stage">
+            <div id="player" class="player"></div>
+            <section class="panel timeline-panel" aria-labelledby="timelineTitle">
+              <div class="panel-head">
+                <h3 id="timelineTitle">タイムライン</h3>
+                <span class="panel-hint">クリックした時刻から再生。押したまま動かすと、その場面を表示。種類の名前を押すと切り替え（同じ時刻のまま）</span>
+              </div>
+              <div id="lanes" class="lanes"></div>
+            </section>
+          </div>
+
+          <section class="panel files" aria-labelledby="filesTitle">
+            <div class="files-head">
+              <h3 id="filesTitle">録画 <span>保存するとこの単位のファイルになります</span></h3>
+              <div id="fileTabs" class="tabs" role="tablist" aria-label="種類"></div>
+            </div>
+            <ol id="files" class="file-list"></ol>
+            <p class="files-foot">5分ごとの内部の区切りはまとめて表示します。画質が変わった所などで分かれます。</p>
+          </section>
+        </div>
       </section>
     </main>
   </div>
