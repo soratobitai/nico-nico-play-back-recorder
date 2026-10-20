@@ -24,7 +24,9 @@ const ERROR_MESSAGE = '空き容量が足りず録画を止めました。古い
 const icon = (path: string, filled = false) =>
     `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" ${filled ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'}>${path}</svg>`
 const ICONS = {
-    check: icon('<path d="M5 12.5l4.5 4.5L19 7.5"></path>'),
+    // 録る種類（狭い時はチップを文字の代わりにこのアイコンにする）。コメントなしは吹き出しに斜線、コメントありは吹き出しに文字の線
+    commentsOff: icon('<path d="M4 4.5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9l-4.5 3.5v-3.5H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"></path><path d="M3.5 3l17 17.5"></path>'),
+    comments: icon('<path d="M4 4.5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9l-4.5 3.5v-3.5H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"></path><path d="M7.5 9h9M7.5 12.5h6"></path>'),
     // 画面（真ん中の丸は、録画中は点滅する）
     screen: icon('<rect x="2.5" y="4" width="19" height="13" rx="2.2"></rect><path d="M8.5 20.5h7M12 17v3.5"></path><circle class="npr-screen-rec" cx="12" cy="10.5" r="3.4" fill="currentColor" stroke="none"></circle>'),
     play: icon('<path d="M8 5.5v13l10.5-6.5z"></path>', true),
@@ -46,10 +48,10 @@ const BAR_HTML = `
 
   <div class="npr-kinds" role="group" aria-label="録画する種類">
     <button type="button" class="npr-chip npr-chip-video" data-kind="video" aria-pressed="true" title="コメントなし: 映像と音声をそのまま録画します">
-      <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">コメントなし</span><span class="npr-short" aria-hidden="true">コメなし</span>
+      <span class="npr-chip-icon" aria-hidden="true"></span>${ICONS.commentsOff}<span class="npr-long">コメントなし</span><span class="npr-short" aria-hidden="true">コメなし</span>
     </button>
     <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" title="コメントあり: 流れるコメントを重ねて録画します（タブを表示している間）">
-      <span class="npr-chip-icon">${ICONS.check}</span><span class="npr-long">コメントあり</span><span class="npr-short" aria-hidden="true">コメあり</span>
+      <span class="npr-chip-icon" aria-hidden="true"></span>${ICONS.comments}<span class="npr-long">コメントあり</span><span class="npr-short" aria-hidden="true">コメあり</span>
     </button>
     <span class="npr-hint" role="status"></span>
   </div>

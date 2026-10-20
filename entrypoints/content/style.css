@@ -41,7 +41,8 @@
 .npr-bar *,
 .npr-bar *::before,
 .npr-bar *::after { box-sizing: border-box; }
-.npr-bar button {
+/* ボタンの見た目を揃える（:where で詳しさを下げ、各ボタンの文字の大きさなどの指定が勝つようにする） */
+.npr-bar :where(button) {
   margin: 0;
   font: inherit;
   letter-spacing: inherit;
@@ -121,8 +122,9 @@
 .npr-chip-comments { --npr-kind-rgb: var(--npr-comments-rgb); }
 .npr-chip:hover { background: var(--npr-surface); border-color: var(--npr-border-strong); color: var(--npr-text); }
 .npr-chip-icon { width: 10px; height: 10px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+/* 狭い時に文字の代わりに出すアイコン */
+.npr-bar .npr-chip svg { display: none; width: 15px; height: 15px; }
 /* 丸（選んでいない種類は、空の丸） */
-.npr-chip .npr-chip-icon svg { display: none; }
 .npr-chip .npr-chip-icon::before {
   content: "";
   width: 7px;
@@ -302,42 +304,52 @@
 .npr-record.is-stop:hover { background: rgba(var(--npr-rec-rgb), 0.22); color: #fff; }
 
 /* 幅が狭い時は、文字を小さく・短くし、アイコンだけにする（文字は読み上げには残す）。
-   「画面録画」と「録画一覧」の文字はできるだけ残し、録る種類のチップとプレイバックから先に詰める。
+   「画面録画」と「録画一覧」の文字はできるだけ残し、録る種類のチップとプレイバックから先に詰める
+   （チップは、さらに狭い時は文字の代わりにアイコンにする）。
    はみ出さないように、各段階で中身が必要とする幅を測って、次の段階へ切り替える幅を決めている */
-/* 1. 録る種類のチップを短い表記にし、チップとプレイバックの文字を小さくする */
-@container (max-width: 860px) {
+/* 1. 録る種類のチップを短い表記にし、チップ・画面録画・プレイバックの文字を小さくする */
+@container (max-width: 820px) {
   .npr-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-short { display: inline; }
   .npr-chip { padding: 0 8px 0 7px; gap: 5px; font-size: 9.5px; }
+  .npr-screen-button { padding: 0 10px 0 8px; gap: 5px; font-size: 9.5px; }
   #playbackButton { padding: 0 8px; gap: 5px; font-size: 9.5px; }
 }
 /* 2. プレイバックをアイコンだけにする */
-@container (max-width: 780px) {
+@container (max-width: 740px) {
   #playbackButton { width: 28px; padding: 0; justify-content: center; }
   #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-/* 3. 録画開始・停止をアイコンだけにする */
-@container (max-width: 715px) {
+/* 3. 録る種類のチップを、文字の代わりにアイコンにする（選んでいる種類は、その色のアイコン） */
+@container (max-width: 675px) {
+  .npr-chip { width: 30px; padding: 0; justify-content: center; }
+  .npr-chip .npr-chip-icon,
+  .npr-chip .npr-short { display: none; }
+  .npr-bar .npr-chip svg { display: block; }
+  .npr-chip[aria-pressed="true"] svg { color: rgb(var(--npr-kind-rgb)); }
+}
+/* 4. 録画開始・停止をアイコンだけにする */
+@container (max-width: 590px) {
   .npr-bar .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-record { width: 28px; padding: 0; justify-content: center; }
 }
-/* 4. 録画時間を隠す */
-@container (max-width: 675px) {
+/* 5. 録画時間を隠す */
+@container (max-width: 555px) {
   .npr-time { display: none; }
 }
-/* 5. 録画の状態の文字を隠す（色の丸だけにする） */
-@container (max-width: 605px) {
+/* 6. 録画の状態の文字を隠す（色の丸だけにする） */
+@container (max-width: 485px) {
   .npr-bar .npr-status-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-kinds,
   .npr-screen { padding-left: 8px; }
 }
-/* 6. 録画一覧をアイコンだけにする */
-@container (max-width: 550px) {
+/* 7. 録画一覧をアイコンだけにする */
+@container (max-width: 430px) {
   #recordingsButton { width: 28px; padding: 0; justify-content: center; }
   #recordingsButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-/* 7. 画面録画をアイコンだけにする */
-@container (max-width: 490px) {
+/* 8. 画面録画をアイコンだけにする */
+@container (max-width: 375px) {
   .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
   .npr-screen-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
@@ -345,7 +357,7 @@
 @media (prefers-reduced-motion: reduce) {
   .npr-bar .npr-status-dot,
   .npr-bar .npr-screen-rec { animation: none !important; }
-  .npr-hint, .npr-bar button { transition: none; }
+  .npr-hint, .npr-bar :where(button) { transition: none; }
 }
 
 /* プレイヤーの操作バーに置く、録画バーを隠す・出すボタン（録画中は赤い印） */
