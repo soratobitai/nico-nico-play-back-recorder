@@ -271,32 +271,20 @@ describe('シークバー', () => {
 })
 
 describe('動画を押す', () => {
-    it('録画一覧では、動画を押すと再生・一時停止する', async () => {
+    it.each(['library', 'live'] as const)('動画を押すと再生・一時停止する（%s）', async (mode) => {
         const root = document.getElementById('root')!
-        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        const view = mountReviewView({ root, mode, readTimeline: async () => recordings(), readFragments: async () => [] })
         await flush()
         const video = root.querySelector('video')!
         const play = vi.spyOn(video, 'play').mockResolvedValue()
         const pause = vi.spyOn(video, 'pause').mockImplementation(() => {})
+        Object.defineProperty(video, 'paused', { value: true, configurable: true }) // 止めている
 
         video.click()
         expect(play).toHaveBeenCalledTimes(1)
         Object.defineProperty(video, 'paused', { value: false, configurable: true })
         video.click()
         expect(pause).toHaveBeenCalledTimes(1)
-        view.destroy()
-    })
-
-    it('プレイバックのウィンドウでは、動画を押しても再生・一時停止しない（窓を前に出すために押すことがあるので）', async () => {
-        const root = document.getElementById('root')!
-        const view = mountReviewView({ root, mode: 'live', readTimeline: async () => recordings(), readFragments: async () => [] })
-        await flush()
-        const video = root.querySelector('video')!
-        const play = vi.spyOn(video, 'play').mockResolvedValue()
-        const callsBefore = play.mock.calls.length
-
-        video.click()
-        expect(play.mock.calls.length).toBe(callsBefore)
         view.destroy()
     })
 })

@@ -430,8 +430,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     muteButton.addEventListener('click', toggleMute)
     liveButton.addEventListener('click', goLive)
     for (const button of kindButtons) button.addEventListener('click', () => selectKind(button.dataset.kind as RecordingKind))
-    // 録画一覧では、動画を押すと再生・一時停止する（プレイバックのウィンドウでは、窓を前に出すために押すことがあるので、しない）
-    if (mode === 'library') video.addEventListener('click', () => { if (!timeline.isEmpty) togglePlay() })
+    // 動画を押すと再生・一時停止する
+    video.addEventListener('click', () => { if (!timeline.isEmpty) togglePlay() })
 
     const onKeyDown = (event: KeyboardEvent) => {
         if (event.ctrlKey || event.metaKey || event.altKey || isTyping(event.target)) return

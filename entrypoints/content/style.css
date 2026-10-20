@@ -93,7 +93,8 @@
   50% { opacity: 0.35; }
 }
 
-/* 録る種類のチップ（選んでいる種類は、その色の丸と薄い色の面） */
+/* 録る種類のチップ（吹き出しのアイコン。選んでいる種類は、その色のアイコンと薄い色の面）
+   名前は読み上げとマウスを乗せた時の説明で伝える */
 .npr-kinds {
   position: relative;
   display: flex;
@@ -105,47 +106,30 @@
 }
 .npr-chip {
   --npr-kind-rgb: 139, 144, 156;
+  width: 32px;
   height: 26px;
-  padding: 0 10px 0 8px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   border-radius: 6px;
   border: 1px solid var(--npr-border);
   background: transparent;
   color: var(--npr-muted);
-  font-size: 10.5px;
-  font-weight: 600;
-  white-space: nowrap;
   cursor: pointer;
 }
 .npr-chip-video { --npr-kind-rgb: var(--npr-video-rgb); }
 .npr-chip-comments { --npr-kind-rgb: var(--npr-comments-rgb); }
 .npr-chip:hover { background: var(--npr-surface); border-color: var(--npr-border-strong); color: var(--npr-text); }
-.npr-chip-icon { width: 10px; height: 10px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
-/* 狭い時に文字の代わりに出すアイコン */
-.npr-bar .npr-chip svg { display: none; width: 15px; height: 15px; }
-/* 丸（選んでいない種類は、空の丸） */
-.npr-chip .npr-chip-icon::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  border: 1.5px solid rgb(var(--npr-kind-rgb));
-  opacity: 0.75;
-}
+.npr-bar .npr-chip svg { width: 16px; height: 16px; }
+.npr-chip-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .npr-chip[aria-pressed="true"] {
   background: rgba(var(--npr-kind-rgb), 0.14);
   border-color: rgba(var(--npr-kind-rgb), 0.5);
   color: #f2f4f8;
 }
 .npr-chip[aria-pressed="true"]:hover { background: rgba(var(--npr-kind-rgb), 0.22); }
-.npr-chip[aria-pressed="true"] .npr-chip-icon::before {
-  background: rgb(var(--npr-kind-rgb));
-  opacity: 1;
-  box-shadow: 0 0 6px rgba(var(--npr-kind-rgb), 0.8);
-}
-.npr-short { display: none; }
+.npr-chip[aria-pressed="true"] svg { color: rgb(var(--npr-kind-rgb)); }
 
 /* チップの上に出る短いお知らせ */
 .npr-hint {
@@ -311,69 +295,52 @@
 .npr-record.is-stop svg { width: 11px; height: 11px; color: var(--npr-rec); }
 .npr-record.is-stop:hover { background: rgba(var(--npr-rec-rgb), 0.22); color: #fff; }
 
-/* 幅が狭い時は、文字を小さく・短くし、アイコンだけにする（文字は読み上げには残す）。
-   「画面録画」と「録画一覧」の文字はできるだけ残し、録る種類のチップとプレイバックから先に詰める
-   （チップは、さらに狭い時は文字の代わりにアイコンにする）。
+/* 幅が狭い時は、文字を小さくし、アイコンだけにする（文字は読み上げには残す）。
+   「録画一覧」「プレイバック」「画面録画」の文字はできるだけ残し、録画開始・停止の文字、録画時間、
+   録画の状態の文字から先に詰める。
    はみ出さないように、各段階で中身が必要とする幅を測って、次の段階へ切り替える幅を決めている */
-/* 1. 録る種類のチップを短い表記にし、チップ・画面録画・プレイバックの文字を小さくする */
-@container (max-width: 815px) {
-  .npr-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .npr-short { display: inline; }
-  .npr-chip { padding: 0 8px 0 7px; gap: 5px; font-size: 9.5px; }
+/* 1. 画面録画・プレイバックの文字を小さくする */
+@container (max-width: 680px) {
   .npr-screen-button { padding: 0 10px 0 8px; gap: 5px; font-size: 9.5px; }
   #playbackButton { padding: 0 8px; gap: 5px; font-size: 9.5px; }
 }
-/* 2. プレイバックをアイコンだけにする */
-@container (max-width: 735px) {
-  #playbackButton { width: 28px; padding: 0; justify-content: center; }
-  #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-/* 3. 録る種類のチップを、文字の代わりにアイコンにする（選んでいる種類は、その色のアイコン） */
-@container (max-width: 670px) {
-  .npr-chip { width: 30px; padding: 0; justify-content: center; }
-  .npr-chip .npr-chip-icon,
-  .npr-chip .npr-short { display: none; }
-  .npr-bar .npr-chip svg { display: block; }
-  .npr-chip[aria-pressed="true"] svg { color: rgb(var(--npr-kind-rgb)); }
-}
-/* 4. 録画開始・停止をアイコンだけにする */
-@container (max-width: 590px) {
+/* 2. 録画開始・停止をアイコンだけにする */
+@container (max-width: 660px) {
   .npr-bar .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-record { width: 28px; padding: 0; justify-content: center; }
 }
-/* 5. 録画時間を隠す */
-@container (max-width: 550px) {
+/* 3. 録画時間を隠す */
+@container (max-width: 625px) {
   .npr-time { display: none; }
 }
-/* 6. 録画の状態の文字を隠す（色の丸だけにする） */
-@container (max-width: 480px) {
+/* 4. 録画の状態の文字を隠す（色の丸だけにする） */
+@container (max-width: 555px) {
   .npr-bar .npr-status-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-kinds,
   .npr-screen { padding-left: 8px; }
 }
-/* 7. 録画一覧をアイコンだけにする */
-@container (max-width: 430px) {
+/* 5. 録画一覧をアイコンだけにする */
+@container (max-width: 505px) {
   #recordingsButton { width: 28px; padding: 0; justify-content: center; }
   #recordingsButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-/* 8. 画面録画をアイコンだけにする */
-@container (max-width: 375px) {
+/* 6. プレイバックをアイコンだけにする */
+@container (max-width: 445px) {
+  #playbackButton { width: 28px; padding: 0; justify-content: center; }
+  #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+/* 7. 画面録画をアイコンだけにする */
+@container (max-width: 380px) {
   .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
   .npr-screen-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 
 /* 幅ごとに詰めても入り切らない時（文字が想定より大きく表示される環境）は、最も詰めた表示にする（ui.ts の fitBar） */
-.npr-bar[data-tight] .npr-long,
 .npr-bar[data-tight] .npr-screen-label,
 .npr-bar[data-tight] .npr-label,
 .npr-bar[data-tight] .npr-status-label,
 .npr-bar[data-tight] .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.npr-bar[data-tight] .npr-time,
-.npr-bar[data-tight] .npr-chip .npr-chip-icon,
-.npr-bar[data-tight] .npr-chip .npr-short { display: none; }
-.npr-bar[data-tight] .npr-chip { width: 30px; padding: 0; justify-content: center; }
-.npr-bar[data-tight] .npr-chip svg { display: block; }
-.npr-bar[data-tight] .npr-chip[aria-pressed="true"] svg { color: rgb(var(--npr-kind-rgb)); }
+.npr-bar[data-tight] .npr-time { display: none; }
 .npr-bar[data-tight] .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
 .npr-bar[data-tight] :is(#playbackButton, #recordingsButton, .npr-record) { width: 28px; padding: 0; justify-content: center; }
 .npr-bar[data-tight] :is(.npr-kinds, .npr-screen) { padding-left: 8px; }
