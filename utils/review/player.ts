@@ -11,6 +11,9 @@ const READ_BATCH = 4
 const LIVE_CACHE_SIZE = 60
 // 録っていない短い間（区間の切り替わり など）は飛ばして再生を続ける
 const MAX_GAP_JUMP_SECONDS = 12
+// 録っていない間・止まっていないかを確かめる間隔と、止まったとみなすまでの回数（1秒）
+const GAP_CHECK_MS = 500
+const STUCK_CHECKS = 2
 // 断片の終わりのこれだけ手前からは、その後の録っていない間と同じに扱う（映像と音声の長さの違いで読み込まれない端数）
 const FRAGMENT_TAIL_SECONDS = 0.5
 // 録画の形式に codecs が書かれていない場合（以前のバージョンから移した録画など）
@@ -358,6 +361,35 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         }
     }
 
+    // 再生しているのに位置が進まない時は、少し先に読み込まれた部分へ飛ぶ
+    // （区間の切り替わりの小さな隙間の手前では、読み込んだ範囲の終わりより少し前で止まり、
+    //   jumpGap からは「まだ読み込まれた所にいる」と見えて飛ばないことがある）
+    let lastPosition = -1
+    let stuckChecks = 0
+    const jumpIfStuck = () => {
+        if (destroyed || video.paused || video.seeking || pendingSeek !== null) {
+            lastPosition = -1
+            stuckChecks = 0
+            return
+        }
+        const t = video.currentTime
+        if (Math.abs(t - lastPosition) > 0.01) {
+            lastPosition = t
+            stuckChecks = 0
+            return
+        }
+        if (++stuckChecks < STUCK_CHECKS) return
+        const ranges = video.buffered
+        for (let i = 0; i < ranges.length; i++) {
+            const start = ranges.start(i)
+            if (start > t && start - t < MAX_GAP_JUMP_SECONDS) {
+                stuckChecks = 0
+                video.currentTime = start + 0.01
+                return
+            }
+        }
+    }
+
     const onTimeUpdate = () => update()
     const onSeeking = () => restart()
     const onWaiting = () => { jumpGap(); update() }
@@ -373,7 +405,8 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
     const gapTimer = setInterval(() => {
         applyPendingSeek()
         jumpGap()
-    }, 500)
+        jumpIfStuck()
+    }, GAP_CHECK_MS)
 
     return {
         // 再生位置（秒）
