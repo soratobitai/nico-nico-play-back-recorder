@@ -301,31 +301,45 @@
 .npr-record.is-stop svg { width: 11px; height: 11px; color: var(--npr-rec); }
 .npr-record.is-stop:hover { background: rgba(var(--npr-rec-rgb), 0.22); color: #fff; }
 
-/* 幅が狭い時は、文字を短くし、アイコンだけにする（文字は読み上げには残す）。
+/* 幅が狭い時は、文字を小さく・短くし、アイコンだけにする（文字は読み上げには残す）。
+   「画面録画」と「録画一覧」の文字はできるだけ残し、録る種類のチップとプレイバックから先に詰める。
    はみ出さないように、各段階で中身が必要とする幅を測って、次の段階へ切り替える幅を決めている */
-@container (max-width: 880px) {
+/* 1. 録る種類のチップを短い表記にし、チップとプレイバックの文字を小さくする */
+@container (max-width: 860px) {
   .npr-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-short { display: inline; }
+  .npr-chip { padding: 0 8px 0 7px; gap: 5px; font-size: 9.5px; }
+  #playbackButton { padding: 0 8px; gap: 5px; font-size: 9.5px; }
 }
-@container (max-width: 830px) {
+/* 2. プレイバックをアイコンだけにする */
+@container (max-width: 780px) {
+  #playbackButton { width: 28px; padding: 0; justify-content: center; }
+  #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+/* 3. 録画開始・停止をアイコンだけにする */
+@container (max-width: 715px) {
+  .npr-bar .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .npr-record { width: 28px; padding: 0; justify-content: center; }
+}
+/* 4. 録画時間を隠す */
+@container (max-width: 675px) {
+  .npr-time { display: none; }
+}
+/* 5. 録画の状態の文字を隠す（色の丸だけにする） */
+@container (max-width: 605px) {
+  .npr-bar .npr-status-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .npr-kinds,
+  .npr-screen { padding-left: 8px; }
+}
+/* 6. 録画一覧をアイコンだけにする */
+@container (max-width: 550px) {
   #recordingsButton { width: 28px; padding: 0; justify-content: center; }
   #recordingsButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-@container (max-width: 770px) {
+/* 7. 画面録画をアイコンだけにする */
+@container (max-width: 490px) {
   .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
   .npr-screen-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-@container (max-width: 690px) {
-  #playbackButton { width: 28px; padding: 0; justify-content: center; }
-  #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .npr-time { display: none; }
-}
-@container (max-width: 535px) {
-  .npr-bar .npr-status-label,
-  .npr-bar .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .npr-record { width: 28px; padding: 0; justify-content: center; }
-  .npr-kinds,
-  .npr-screen { padding-left: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
