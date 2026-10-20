@@ -31,14 +31,19 @@ const getOutputSize = (videoHeight: number, area: { width: number, height: numbe
     return { width: even(height * aspect), height: even(height) }
 }
 
-// コマを表示領域に収まるように中央に描く（縦横比が違う場合はプレイヤーと同じく黒帯になる）
-const drawContain = (ctx: OffscreenCanvasRenderingContext2D, frame: VideoFrame, width: number, height: number) => {
+// コマの一部（コマの中の位置。コマの画素で）
+type FrameRegion = { x: number, y: number, width: number, height: number }
+
+// コマ（region を指定すれば、その部分）を表示領域に収まるように中央に描く（縦横比が違う場合はプレイヤーと同じく黒帯になる）
+const drawContain = (ctx: OffscreenCanvasRenderingContext2D, frame: VideoFrame, width: number, height: number, region?: FrameRegion) => {
     ctx.fillStyle = '#000'
     ctx.fillRect(0, 0, width, height)
-    const scale = Math.min(width / frame.displayWidth, height / frame.displayHeight)
-    const w = frame.displayWidth * scale
-    const h = frame.displayHeight * scale
-    ctx.drawImage(frame, (width - w) / 2, (height - h) / 2, w, h)
+    const source = region ?? { x: 0, y: 0, width: frame.displayWidth, height: frame.displayHeight }
+    if (source.width <= 0 || source.height <= 0) return
+    const scale = Math.min(width / source.width, height / source.height)
+    const w = source.width * scale
+    const h = source.height * scale
+    ctx.drawImage(frame, source.x, source.y, source.width, source.height, (width - w) / 2, (height - h) / 2, w, h)
 }
 
 // source のコマが届くたびに draw で描き直した映像を作る（isFramePipelineSupported() を確認してから呼ぶ）
@@ -84,4 +89,4 @@ const createFramePipeline = (
 }
 
 export { isFramePipelineSupported, getOutputSize, drawContain, createFramePipeline }
-export type { FramePipeline }
+export type { FramePipeline, FrameRegion }
