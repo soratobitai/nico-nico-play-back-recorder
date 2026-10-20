@@ -1,6 +1,7 @@
 // 設定（画面の中央に開くダイアログ。横に「録画する種類」「録画」「保存」を並べる）
-// 録る種類は、録画バーのチップでも切り替えられる（チップはここの設定のショートカット）
+// 録る種類は、ページを開いた時に録る種類（録画バーのチップでは、そのタブだけ切り替えられる）
 import {
+  LEGACY_RECORDINGS,
   MAX_STORAGE_SIZE,
   AUTO_START,
   AUTO_RELOAD_ON_FAILURE,
@@ -38,8 +39,10 @@ type SettingsModalOptions = {
   // 画面録画を、この環境で使えるか。画面録画は設定ではなく、録画バーのボタンで始める
   // （ブラウザの決まりで、ページを開くたびにクリックして画面共有を許可する必要があり、自動では始められないため）
   screenCaptureSupported?: boolean
-  // 録画する種類を変えた（ページを開いた時に録画する種類。開いているこのタブにもすぐ使う）
+  // 録画する種類を変えた（ページを開いた時に録画する種類。開いているこのタブにも使う）
   onRecordKindsChange?: (kinds: { video: boolean, comments: boolean }) => void
+  // 閉じた
+  onClose?: () => void
 }
 
 // 「1本の録画にそろえる」（一定の解像度で録る）時に選べる高さ（幅は 16:9。ニコ生は 720p 以下の番組が多い）
@@ -78,6 +81,7 @@ class SettingsModal {
   }
   private screenCaptureSupported: boolean
   private onRecordKindsChange?: SettingsModalOptions['onRecordKindsChange']
+  private onClose?: SettingsModalOptions['onClose']
   private currentStorageUsage: number | null = null
   private usageError = false // 使用量を読み込めなかった
   private storageQuota: number = 0
@@ -87,9 +91,10 @@ class SettingsModal {
   private pendingWheelSave: { timer: ReturnType<typeof setTimeout>, save: () => void } | null = null // ホイールで動かした値の、待っている保存
   private closedAt = -Infinity // 閉じた時刻（performance.now）
 
-  constructor({ screenCaptureSupported = false, onRecordKindsChange }: SettingsModalOptions = {}) {
+  constructor({ screenCaptureSupported = false, onRecordKindsChange, onClose }: SettingsModalOptions = {}) {
     this.screenCaptureSupported = screenCaptureSupported
     this.onRecordKindsChange = onRecordKindsChange
+    this.onClose = onClose
     this.loadSettings()
     this.watchSettings()
     // 使用量は全録画を読んで数えるので、ここでは取らずに設定画面を開いた時に取る
@@ -271,7 +276,7 @@ class SettingsModal {
                     : 'この環境では使えません'}</span>
                 </span>
               </div>
-              <p class="npr-option-desc npr-kinds-note">ページを開いた時に録画する種類です（ここで変えると、このタブにもすぐ使います）。選んだ種類は、別々の録画として同時に録ります。録画バーのボタンでは、そのタブだけ切り替えられます</p>
+              <p class="npr-option-desc npr-kinds-note">ページを開いた時に録画する種類です（ここで変えると、設定を閉じた時に、このタブにも使います）。選んだ種類は、別々の録画として同時に録ります。録画バーのボタンでは、そのタブだけ切り替えられます</p>
               <p class="npr-kinds-message" role="status"></p>
             </section>
 
@@ -495,6 +500,8 @@ class SettingsModal {
   private async clearStorage() {
     const kept = await clearAll()
     if (await hasLegacyDatabase()) await deleteLegacyDatabase()
+    // 以前の録画も消したので、録画一覧の取り込みのお知らせも消す
+    await LEGACY_RECORDINGS.setValue(null).catch(() => {})
     return kept ?? 0
   }
 
@@ -566,6 +573,7 @@ class SettingsModal {
   public close() {
     this.flushWheelSave() // 閉じた後に、古い値で保存しないように
     this.stopUsageUpdateInterval()
+    const wasVisible = this.isVisible
     if (this.isVisible) this.closedAt = performance.now()
     const modal = this.modal
     this.modal = null
@@ -576,6 +584,7 @@ class SettingsModal {
     }
     const settingsButton = document.getElementById('settingsButton')
     settingsButton?.setAttribute('aria-expanded', 'false')
+    if (wasVisible) this.onClose?.()
   }
 }
 

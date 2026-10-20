@@ -182,14 +182,15 @@ describe('以前のバージョンの録画を移す', () => {
             isCancelled: () => progress.some(p => p.done === 1),
         })
 
-        expect(result).toEqual({ migrated: 1, cancelled: true, busy: false })
+        expect(result).toEqual({ migrated: 1, cancelled: true, busy: false, remaining: { count: 2, bytes: fixtureBlob.size * 2 } })
         expect(progress[0]).toMatchObject({ done: 0, total: 3, bytesDone: 0, bytesTotal: fixtureBlob.size * 3 })
         expect(progress.at(-1)).toMatchObject({ done: 1, bytesDone: fixtureBlob.size })
         // 途中の進み具合（断片をまとめて送るたび）も知らせる
         expect(progress.some(p => p.done === 0 && p.bytesDone > 0)).toBe(true)
         // 残りは以前の保存先に残り、続きから取り込める
         expect(await summarizeLegacyRecordings()).toEqual({ count: 2, bytes: fixtureBlob.size * 2 })
-        expect(await importLegacyRecordings(call)).toEqual({ migrated: 2, cancelled: false, busy: false })
+        expect(await importLegacyRecordings(call)).toEqual({ migrated: 2, cancelled: false, busy: false, remaining: null })
+        expect(await hasLegacyDatabase()).toBe(false)
         expect(await listAllSegments()).toHaveLength(3)
         expect(await summarizeLegacyRecordings()).toBeNull()
     })

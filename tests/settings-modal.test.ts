@@ -359,6 +359,18 @@ describe('設定画面', () => {
             expect(onRecordKindsChange).toHaveBeenCalledTimes(2)
         })
 
+        it('閉じた時に知らせる（変えた種類を、閉じた時にタブの録画に反映する）', async () => {
+            modal.close()
+            const onClose = vi.fn()
+            modal = new SettingsModal({ onClose })
+            await flush()
+            modal.show()
+            expect(onClose).not.toHaveBeenCalled()
+            modal.close()
+            modal.close() // 閉じている時は知らせない
+            expect(onClose).toHaveBeenCalledTimes(1)
+        })
+
         it('画面録画はスイッチにせず、録画バーの「画面録画」で始めることだけ説明する', async () => {
             modal.close()
             modal = new SettingsModal({ screenCaptureSupported: true })

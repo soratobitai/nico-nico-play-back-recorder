@@ -19,12 +19,18 @@ type ChunkRecord = {
 // 接続は使い回す（操作のたびに開くと、閉じられないまま接続が増えていく）
 let dbPromise: Promise<IDBDatabase> | null = null
 
-const openDB = (): Promise<IDBDatabase> => {
+// create: なければ作る（テストで以前の録画を用意する時だけ）。それ以外は作らない
+// （消した直後に、待たされていた読み込みで空の保存先が作り直され、以前の録画があるように見え続けないように）
+const openDB = ({ create = false } = {}): Promise<IDBDatabase> => {
     if (dbPromise) return dbPromise
 
     dbPromise = new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION)
         request.onupgradeneeded = (event) => {
+            if (event.oldVersion === 0 && !create) {
+                request.transaction?.abort()
+                return
+            }
             const db = (event.target as IDBOpenDBRequest).result;
             STORE_NAMES.forEach((storeName) => {
                 if (!db.objectStoreNames.contains(storeName)) {
@@ -69,7 +75,7 @@ const saveChunk = async (
     userName: string | null = null,
     title: string | null = null,
 ): Promise<void> => {
-    const db = await openDB()
+    const db = await openDB({ create: true })
     const tx = db.transaction(storeName, "readwrite")
     tx.objectStore(storeName).put({ sessionId, chunkIndex, blob, imgUrl, createdAt: createdAt || Date.now(), userName, title })
 
@@ -113,6 +119,13 @@ const deleteChunkByKeys = async (storeName: string, keys: IDBValidKey[]): Promis
     })
 }
 
+// 接続を閉じる（数えただけのタブが接続を持ち続けると、他のタブで保存先を消す時に待たされるので）
+const closeLegacyDatabase = async () => {
+    const opened = dbPromise
+    dbPromise = null
+    ;(await opened?.catch(() => null))?.close()
+}
+
 // 以前のバージョンの保存先をまるごと消す
 const deleteLegacyDatabase = async (): Promise<void> => {
     if (dbPromise) {
@@ -138,5 +151,6 @@ export {
     getAllChunks,
     deleteChunkByKeys,
     deleteLegacyDatabase,
+    closeLegacyDatabase,
 }
 export type { ChunkRecord }

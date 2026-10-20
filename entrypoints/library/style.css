@@ -226,6 +226,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .side-foot span, .select-bar span { flex: 1; min-width: 0; }
 .select-bar { background: #1f1416; color: #f1c9cd; }
 
+/* 読み上げだけに使う文字 */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
 /* 以前のバージョンの録画の取り込み（番組の一覧の上） */
 .legacy-notice {
   margin: 10px 12px 0;
@@ -512,7 +515,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   .program-head { height: auto; flex-direction: column; align-items: stretch; }
   .program-heading h2 { white-space: normal; }
   .meta { flex-wrap: wrap; row-gap: 2px; }
-  /* 番組の一覧・選んで削除の行と見出しが上にあるので、その分を除いた高さに収める（低すぎる時はスクロール） */
-  .stage { max-height: max(380px, calc(100svh - var(--topbar-h) - 390px)); }
+  /* 番組の一覧・選んで削除の行と見出しが上にあるので、その分を除いた高さに収める（main.ts の fitStage が測る。低すぎる時はスクロール） */
+  .stage { max-height: var(--stage-max, none); }
   .usage-bar { width: 100px; }
 }

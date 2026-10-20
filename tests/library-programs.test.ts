@@ -135,6 +135,11 @@ describe('録画一覧のページに出す形', () => {
 
         expect(files.map(f => f.segments.map(s => s.segmentId))).toEqual([['a1', 'a2'], ['b1', 'b2']])
         expect(files.map(f => f.splitBySettings)).toEqual([false, false])
+
+        // 2つのタブで違う画質で録っていても、別のタブのファイルとは比べない（「ここで画質が変わりました」を付けない）
+        const otherQuality = filesOf(segments, 'video', new Map([['a1', '720p'], ['a2', '720p'], ['b1', '1080p'], ['b2', '1080p']]), 700_000)
+        expect(otherQuality.map(f => f.segments.map(s => s.segmentId))).toEqual([['a1', 'a2'], ['b1', 'b2']])
+        expect(otherQuality.map(f => f.splitBySettings)).toEqual([false, false])
     })
 
     it('「ここで画質が変わりました」は、前とこのファイルの設定が両方分かっていて違う時だけ（webm や設定がまだ分からない区間では出さない）', () => {

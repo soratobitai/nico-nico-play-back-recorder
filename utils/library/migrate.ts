@@ -1,6 +1,6 @@
 // 以前のバージョンの録画（ニコ生のサイトデータに保存していたもの）を、拡張機能側の保存先へ移す
 // 自動では移さない（移した録画が容量の上限で消えないよう、録画一覧で上限を確かめてから、手動で取り込む）
-import { hasLegacyDatabase, getAllChunks, deleteChunkByKeys, deleteLegacyDatabase, type ChunkRecord } from '../../hooks/indexedDB/recordingDB'
+import { hasLegacyDatabase, getAllChunks, deleteChunkByKeys, deleteLegacyDatabase, closeLegacyDatabase, type ChunkRecord } from '../../hooks/indexedDB/recordingDB'
 import { splitFmp4Blob, isMp4MimeType } from '../fmp4'
 import type { BridgeRequestOf, BridgeRequestType, BridgeResults } from './protocol'
 
@@ -114,11 +114,19 @@ const planLegacyItems = async () => {
     return { items, activeTempsLeft }
 }
 
-// 以前の保存先にある録画の数と大きさ（以前の保存先がなければ null）
-const summarizeLegacyRecordings = async (): Promise<{ count: number, bytes: number } | null> => {
+type LegacySummary = { count: number, bytes: number }
+const summarize = (items: LegacyItem[]): LegacySummary | null =>
+    items.length > 0 ? { count: items.length, bytes: items.reduce((sum, item) => sum + item.bytes, 0) } : null
+
+// 以前の保存先にある録画の数と大きさ（なければ null）。数えたら接続を閉じる
+// （ニコ生のどのタブでも数えるので、接続を持ち続けると、取り込んだ後に保存先を消す時に待たされる）
+const summarizeLegacyRecordings = async (): Promise<LegacySummary | null> => {
     if (!(await hasLegacyDatabase())) return null
-    const { items } = await planLegacyItems()
-    return { count: items.length, bytes: items.reduce((sum, item) => sum + item.bytes, 0) }
+    try {
+        return summarize((await planLegacyItems()).items)
+    } finally {
+        await closeLegacyDatabase()
+    }
 }
 
 type LegacyImportProgress = {
@@ -133,7 +141,8 @@ type LegacyImportOptions = {
     // やめるように言われた（移している1本を移し終えてから、やめる）
     isCancelled?: () => boolean
 }
-type LegacyImportResult = { migrated: number, cancelled: boolean, busy: boolean }
+// remaining: 取り込まずに残った録画（取り込み終えた後に数え直したもの。なければ null）
+type LegacyImportResult = { migrated: number, cancelled: boolean, busy: boolean, remaining: LegacySummary | null }
 
 const migrate = async (call: Call, { onProgress, isCancelled }: LegacyImportOptions): Promise<LegacyImportResult> => {
     const { items, activeTempsLeft } = await planLegacyItems()
@@ -141,8 +150,12 @@ const migrate = async (call: Call, { onProgress, isCancelled }: LegacyImportOpti
         done: 0, total: items.length, bytesDone: 0, bytesTotal: items.reduce((sum, item) => sum + item.bytes, 0), title: '',
     }
     onProgress?.({ ...progress })
+    let cancelled = false
     for (const item of items) {
-        if (isCancelled?.()) return { migrated: progress.done, cancelled: true, busy: false }
+        if (isCancelled?.()) {
+            cancelled = true
+            break
+        }
         progress.title = item.recording.title
         onProgress?.({ ...progress })
         const before = progress.bytesDone
@@ -156,23 +169,27 @@ const migrate = async (call: Call, { onProgress, isCancelled }: LegacyImportOpti
         onProgress?.({ ...progress })
     }
 
-    // すべて移せたら、以前の保存先を消す
-    if (!activeTempsLeft) await deleteLegacyDatabase()
-    return { migrated: progress.done, cancelled: false, busy: false }
+    // 残っているものを数え直す（取り込んでいる間に、古いバージョンが書き足した録画も残す）。
+    // 何も残っていなければ、以前の保存先を消す（消した後に開き直すと、他のタブの接続で待たされることがあるので、残りはここで返す）
+    const left = await planLegacyItems()
+    const remaining = summarize(left.items)
+    if (!cancelled && !remaining && !left.activeTempsLeft && !activeTempsLeft) await deleteLegacyDatabase()
+    else await closeLegacyDatabase()
+    return { migrated: progress.done, cancelled, busy: false, remaining }
 }
 
 // 以前の録画を移す。移すものがなければ何もしない。他のタブで移している最中なら busy
 // call は拡張機能側に直接保存するもの（一時保存に回すと、移したつもりで消してしまうため）
 const importLegacyRecordings = async (call: Call, options: LegacyImportOptions = {}): Promise<LegacyImportResult> => {
-    if (!(await hasLegacyDatabase())) return { migrated: 0, cancelled: false, busy: false }
+    if (!(await hasLegacyDatabase())) return { migrated: 0, cancelled: false, busy: false, remaining: null }
     // 複数のタブで同時に移さない（同じ録画が2本になる）
     if (!navigator.locks) return migrate(call, options)
     return navigator.locks.request('playback-legacy-migration', { ifAvailable: true },
-        lock => lock ? migrate(call, options) : { migrated: 0, cancelled: false, busy: true })
+        lock => lock ? migrate(call, options) : { migrated: 0, cancelled: false, busy: true, remaining: null })
 }
 
 // 以前の録画を移して、移した数を返す
 const migrateLegacyRecordings = async (call: Call, options: LegacyImportOptions = {}) => (await importLegacyRecordings(call, options)).migrated
 
 export { migrateLegacyRecordings, importLegacyRecordings, summarizeLegacyRecordings }
-export type { LegacyImportProgress, LegacyImportResult }
+export type { LegacyImportProgress, LegacyImportResult, LegacySummary }

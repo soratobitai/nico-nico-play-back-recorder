@@ -11,6 +11,8 @@ const checkLiveStatus = async () => {
             signal: AbortSignal.timeout(10 * 1000),
         })
 
+        // 番組がない（削除された・URL が違う）。取り直しても変わらないので、取得の失敗とは分ける
+        if (res.status === 404 || res.status === 410) return 'NOT_FOUND'
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
         const html = await res.text()

@@ -119,12 +119,14 @@ const MAX_OVERLAP_MS = 2000
 // 同じなら1本のファイルにつなぎ、設定が変わった所では分ける。設定が分からない区間（webm・初期化セグメントがまだない）は、それだけで1本。
 // 同じ番組を2つのタブで録った時など、時刻が重なる区間は同じファイルにつながない（同じ場面が2回入らないように）。
 // 重ならない前のファイルのうち、終わりが区間の始まりにいちばん近いものの続きとする
+// previous: 新しいファイルを始めた時の、続く前のファイル（設定が変わった所などで分かれた。なければ null）
 type FileKey = { kind: RecordingKind, signature: string | null, startedAt: number, endedAt: number }
-const groupIntoFiles = <T>(items: T[], keyOf: (item: T) => FileKey): T[][] => {
-    const groups: { kind: RecordingKind, signature: string | null, endedAt: number, items: T[] }[] = []
+type FileGroup<T> = { kind: RecordingKind, signature: string | null, endedAt: number, items: T[], previous: FileGroup<T> | null }
+const chainIntoFiles = <T>(items: T[], keyOf: (item: T) => FileKey): FileGroup<T>[] => {
+    const groups: FileGroup<T>[] = []
     for (const item of items) {
         const { kind, signature, startedAt, endedAt } = keyOf(item)
-        let previous: (typeof groups)[number] | null = null
+        let previous: FileGroup<T> | null = null
         for (const group of groups) {
             if (group.kind !== kind || group.endedAt > startedAt + MAX_OVERLAP_MS) continue
             if (!previous || Math.abs(startedAt - group.endedAt) < Math.abs(startedAt - previous.endedAt)) previous = group
@@ -133,11 +135,12 @@ const groupIntoFiles = <T>(items: T[], keyOf: (item: T) => FileKey): T[][] => {
             previous.items.push(item)
             previous.endedAt = Math.max(previous.endedAt, endedAt)
         } else {
-            groups.push({ kind, signature, endedAt, items: [item] })
+            groups.push({ kind, signature, endedAt, items: [item], previous })
         }
     }
-    return groups.map(group => group.items)
+    return groups
 }
+const groupIntoFiles = <T>(items: T[], keyOf: (item: T) => FileKey): T[][] => chainIntoFiles(items, keyOf).map(group => group.items)
 
 // 録画一覧のページで1行に出す録画（保存した時の1本のファイル）
 type RecordingFile = {
@@ -163,9 +166,8 @@ const CONTINUOUS_GAP_MS = 3000
 const filesOf = (segments: SegmentSummary[], kind: RecordingKind, signatures: ReadonlyMap<string, string | null>, now = Date.now()): RecordingFile[] => {
     const ofKind = segments.filter(segment => segment.kind === kind).sort((a, b) => a.startedAt - b.startedAt)
     const signatureOf = (segment: SegmentSummary) => segment.format === 'fmp4' ? signatures.get(segment.segmentId) ?? null : null
-    const groups = groupIntoFiles(ofKind, segment => ({ kind, signature: signatureOf(segment), startedAt: segment.startedAt, endedAt: segmentEnd(segment) }))
-    let previous: { endedAt: number, signature: string | null } | null = null
-    return groups.map((group) => {
+    const groups = chainIntoFiles(ofKind, segment => ({ kind, signature: signatureOf(segment), startedAt: segment.startedAt, endedAt: segmentEnd(segment) }))
+    return groups.map(({ items: group, signature, previous }) => {
         const blocks: RecordingFile['blocks'] = []
         for (const segment of group) {
             const last = blocks[blocks.length - 1]
@@ -182,12 +184,12 @@ const filesOf = (segments: SegmentSummary[], kind: RecordingKind, signatures: Re
             seconds: recordedSeconds(group),
             bytes: group.reduce((sum, segment) => sum + segment.bytes, 0),
             thumbnail: group.find(segment => segment.thumbnail)?.thumbnail ?? null,
-            // 前のファイルとこのファイルの設定が両方分かっていて、違っている時だけ（webm の区切りなどは、設定が変わったわけではない）
-            splitBySettings: previous !== null && previous.signature !== null && signatureOf(group[0]) !== null
-                && previous.signature !== signatureOf(group[0]) && startedAt - previous.endedAt <= CONTINUOUS_GAP_MS * 5,
+            // 続く前のファイル（同じタブで録っていたもの）とこのファイルの設定が両方分かっていて、違っている時だけ
+            // （webm の区切りなどは、設定が変わったわけではない。別のタブで録っていたファイルとは比べない）
+            splitBySettings: previous !== null && previous.signature !== null && signature !== null
+                && previous.signature !== signature && startedAt - previous.endedAt <= CONTINUOUS_GAP_MS * 5,
             blocks,
         }
-        previous = { endedAt: file.endedAt, signature: signatureOf(group[group.length - 1]) }
         return file
     })
 }

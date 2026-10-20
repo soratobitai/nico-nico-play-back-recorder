@@ -210,7 +210,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     // しばらく続きが届かなければ止める（止めないと、再生中のまま固まって見える）
     const FINISHED_WAIT_MS = 10 * 1000
     let waitingAtEndSince: number | null = null
-    let stoppedAtEnd = false
+    // 止めた時の時間軸の終わり（続きが届いて、これより延びたら再生を続ける。null: 止めていない）
+    let stoppedAtEnd: number | null = null
     const stopIfFinished = () => {
         const finished = mode === 'live' && !video.paused && !timeline.isEmpty && player.position >= timeline.end - 0.3
             && !timeline.placedSegments.some(s => s.endedAt === null)
@@ -221,14 +222,16 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         waitingAtEndSince ??= Date.now()
         if (Date.now() - waitingAtEndSince < FINISHED_WAIT_MS) return
         waitingAtEndSince = null
-        stoppedAtEnd = true
+        stoppedAtEnd = timeline.end
         video.pause()
     }
-    video.addEventListener('play', () => { stoppedAtEnd = false })
+    // 再生した・他の所へ移った（止めたまま戻した時などに、続きが届いても勝手に再生しない）
+    video.addEventListener('play', () => { stoppedAtEnd = null })
+    video.addEventListener('seeking', () => { stoppedAtEnd = null })
     // 最後まで再生して止まっている間に続きが届いたら、続けて再生する
     const resumeIfEnded = () => {
         if (wantsPlaying && video.ended && timeline.end > video.currentTime + 0.5) playVideo()
-        if (stoppedAtEnd && timeline.end > player.position + 0.5) playVideo()
+        if (stoppedAtEnd !== null && timeline.end > stoppedAtEnd + 0.5) playVideo()
     }
 
     // ---- 再生できない所を飛ばす ----
@@ -315,7 +318,11 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         video.pause()
         player.destroy()
         player = createPlayer(timeline)
-        if (timeline.isEmpty) return
+        if (timeline.isEmpty) {
+            // 見られる録画がなくなった。次に録画が届いたら、そこから見始める
+            started = false
+            return
+        }
         player.seek(wallClock === null ? timeline.start : timeline.timeAtWallClock(wallClock) ?? timeline.start)
         if (play) playVideo()
     }
@@ -617,7 +624,14 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             removeBroken()
             applyQueued()
             if (watching?.segmentId && !timeline.segment(watching.segmentId)) reopenAfterRemoved(watching.wallClock)
-            if (availableKinds().length === 0) showMessage(messages.empty)
+            if (availableKinds().length === 0) {
+                showMessage(messages.empty)
+                // 見ていた録画が全部消された（次に録画が届いたら、そこから見始める）
+                if (started) {
+                    started = false
+                    video.pause()
+                }
+            }
             startIfReady()
             player.update()
             resumeIfEnded()

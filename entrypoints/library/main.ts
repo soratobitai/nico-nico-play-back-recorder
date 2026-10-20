@@ -916,9 +916,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse(true)
 })
 
+// 狭い画面（番組の一覧が上にある時）は、プレイヤーとタイムラインの上にある部分（番組の一覧・見出し）の実際の高さを測って、
+// 画面の残りの高さに収める（見出しの高さは、タイトルの長さや折り返しで変わる）。
+// 収まらないほど低い時は、プレイヤーを最小の高さより小さくせずに、ページをスクロールする
+const PLAYER_MIN_HEIGHT = 220 // style.css の .player の min-height
+const stageElement = document.querySelector<HTMLElement>('.stage')!
+const timelinePanel = document.querySelector<HTMLElement>('.timeline-panel')!
+const fitStage = () => {
+    const top = stageElement.getBoundingClientRect().top + window.scrollY
+    const fit = window.innerHeight - top - 16 // .main の下の余白
+    const least = PLAYER_MIN_HEIGHT + 12 + timelinePanel.offsetHeight // プレイヤーの最小の高さ・間・タイムライン
+    document.documentElement.style.setProperty('--stage-max', `${Math.round(Math.max(least, fit))}px`)
+}
+const stageObserver = new ResizeObserver(fitStage)
+for (const selector of ['.side', '.program-head', '.timeline-panel']) {
+    const target = document.querySelector(selector)
+    if (target) stageObserver.observe(target)
+}
+window.addEventListener('resize', fitStage)
+
 // 以前のバージョンの録画の取り込み（手動。進み具合を番組の一覧の上に出す）
 setupLegacyImport({
     notice: $<HTMLDivElement>('legacyNotice'),
+    status: $<HTMLSpanElement>('legacyStatus'),
     dialog: $<HTMLDialogElement>('legacyDialog'),
     usageBytes: () => programs.reduce((sum, program) => sum + program.bytes, 0),
     formatBytes,

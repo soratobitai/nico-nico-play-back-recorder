@@ -60,7 +60,9 @@ const createRowFitter = (container: HTMLElement) => {
             container.dataset.hide = hidden.join(' ')
         }
         // フォーカスのあるボタンを隠したら、シークバーへ移す（ページの先頭へ外れないように）
-        if (focused instanceof HTMLElement && focused !== container && container.contains(focused) && focused.getBoundingClientRect().width === 0) {
+        // （プレイバックのウィンドウの要素は、そのウィンドウの HTMLElement で見分ける）
+        const OwnHTMLElement = container.ownerDocument.defaultView?.HTMLElement ?? HTMLElement
+        if (focused instanceof OwnHTMLElement && focused !== container && container.contains(focused) && focused.getBoundingClientRect().width === 0) {
             $('.seek').focus({ preventScroll: true })
         }
     }

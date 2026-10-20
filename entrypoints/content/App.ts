@@ -67,13 +67,23 @@ const saveTabKinds = (kinds: TabKinds) => {
         // 覚えておけなくても、このページでは切り替えたまま録画する
     }
 }
+// このタブで選んだ種類を忘れる（設定の種類に従う）
+const clearTabKinds = () => {
+    try {
+        sessionStorage.removeItem(TAB_KINDS_KEY)
+    } catch {
+        // 読めないなら、覚えてもいない
+    }
+}
+
 
 export default async () => {
 
     // ステータスを確認（取得できなかった時は、通信の失敗などかもしれないので、間を伸ばしながら確かめ直す。
-    // セッションの復元で多くのタブを同時に開いた時などに、そのページでは何もしないまま終わらないように）
+    // セッションの復元で多くのタブを同時に開いた時などに、そのページでは何もしないまま終わらないように。
+    // 番組がないページ（NOT_FOUND）や、ずっと取得できない時（20回、約17分）は、あきらめる）
     let liveStatus = await checkLiveStatus()
-    for (let retry = 0; liveStatus === 'ERROR'; retry++) {
+    for (let retry = 0; liveStatus === 'ERROR' && retry < 20; retry++) {
         await new Promise(resolve => setTimeout(resolve, Math.min(5000 * 2 ** retry, 60 * 1000)))
         liveStatus = await checkLiveStatus()
     }
@@ -373,6 +383,22 @@ export default async () => {
         setKindChips(kinds)
         applyKinds()
     }
+    // 設定画面で録画する種類を変えた: このタブも設定の種類に従う（チップで選んだ種類は忘れる）。
+    // 録画に反映するのは、設定画面を閉じた時（「少なくとも1つ」のために、切り替える途中で両方を選んだ状態を通ることがあり、
+    // その間の短い録画を作らないように）
+    let settingsKindsChanged = false
+    const useSettingsKinds = (kinds: TabKinds) => {
+        clearTabKinds()
+        recordVideo = kinds.video
+        recordWithComments = kinds.comments
+        setKindChips(kinds)
+        settingsKindsChanged = true
+    }
+    const applySettingsKinds = () => {
+        if (!settingsKindsChanged) return
+        settingsKindsChanged = false
+        applyKinds()
+    }
 
     // 拡張機能が更新された後の古いページでは、設定の保存や録画一覧などの拡張機能の機能を使えない。
     // 黙って効かないままにせず、ページを開き直すように知らせる
@@ -615,8 +641,8 @@ export default async () => {
     }
 
     // 設定モーダルを初期化
-    // 設定で録画する種類を変えた時は、このタブにもすぐ使う（他のタブは、そのタブで選んだ種類のまま）
-    const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported(), onRecordKindsChange: setTabKinds })
+    // 設定で録画する種類を変えた時は、このタブにも使う（他のタブは、そのタブの種類のまま）
+    const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported(), onRecordKindsChange: useSettingsKinds, onClose: applySettingsKinds })
 
     // 動画の解像度の変更・読み込み直しを見張る（録画バーのボタンで録画を始められるようになる前から。
     // ページを開いてすぐ「画面録画」を押した直後に画質が上がった時も、録り直せるように）
