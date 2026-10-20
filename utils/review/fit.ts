@@ -51,12 +51,17 @@ const createRowFitter = (container: HTMLElement) => {
     // いったん全部出してから、入りきるまで順に隠す（描く前に行うので、ちらつかない）
     const fit = () => {
         if (container.getBoundingClientRect().width === 0) return
+        const focused = container.ownerDocument.activeElement
         const hidden: string[] = []
         container.dataset.hide = ''
         for (const name of HIDE_ORDER) {
             if (fits(hidden)) break
             hidden.push(name)
             container.dataset.hide = hidden.join(' ')
+        }
+        // フォーカスのあるボタンを隠したら、シークバーへ移す（ページの先頭へ外れないように）
+        if (focused instanceof HTMLElement && focused !== container && container.contains(focused) && focused.getBoundingClientRect().width === 0) {
+            $('.seek').focus({ preventScroll: true })
         }
     }
 

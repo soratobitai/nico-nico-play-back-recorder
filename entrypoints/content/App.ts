@@ -1,4 +1,4 @@
-import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments, setPendingLimit } from "../../utils/library/api"
+import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments, setPendingLimit, isPendingSegment } from "../../utils/library/api"
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds } from "../../utils/recording"
 import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
@@ -10,6 +10,7 @@ import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen
 import { checkLiveStatus } from '../../services/api'
 import { isPlaybackSupported, isPlaybackOpen, togglePlaybackWindow } from '../../utils/review/window'
 import { requestOpenLibrary } from '../../utils/library/open-library'
+import { isExtensionContextValid } from '../../utils/library/client'
 import type { RecordingKind } from '../../utils/library/db'
 import SettingsModal from './settings-modal'
 import './settings-modal.css'
@@ -48,8 +49,13 @@ type VideoKind = typeof VIDEO_KINDS[number]
 
 export default async () => {
 
-    // ステータスを確認
-    const liveStatus = await checkLiveStatus()
+    // ステータスを確認（取得できなかった時は、通信の失敗などかもしれないので、間を伸ばしながら確かめ直す。
+    // セッションの復元で多くのタブを同時に開いた時などに、そのページでは何もしないまま終わらないように）
+    let liveStatus = await checkLiveStatus()
+    for (let retry = 0; liveStatus === 'ERROR'; retry++) {
+        await new Promise(resolve => setTimeout(resolve, Math.min(5000 * 2 ** retry, 60 * 1000)))
+        liveStatus = await checkLiveStatus()
+    }
     if (liveStatus !== 'ON_AIR') return
 
     let maxStorageSize = 1 * 1024 * 1024 * 1024
@@ -71,8 +77,7 @@ export default async () => {
         FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
 
-    const { userName, title, beginAt } = getProgramData() // 番組情報を取得
-    const programId = location.pathname.match(/lv\d+/)?.[0] ?? location.pathname
+    const { programId, userName, title, beginAt } = getProgramData() // 番組情報を取得
     const video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
     // 動画の取り込み（コメントなし・コメントありで共有する）
     const videoCapture = createVideoCapture(video)
@@ -290,25 +295,29 @@ export default async () => {
     }
 
     // 設定で選んだ種類に合わせて、録画中の種類を始める・止める
+    // 選んだ種類を先に始めてから、外した種類を止める（外した種類が最後に録っていた種類だと、
+    // 止めた時に録画全体が終わり、その後で選んだ種類だけが録画の外で始まってしまうので）
     const applyKinds = () => {
         if (!sessionActive) return
+        const enabled = enabledKinds()
+        for (const kind of enabled) {
+            if (!restartPending.has(kind)) startKind(kind, () => createSourceFor(kind))
+        }
         for (const kind of VIDEO_KINDS) {
-            if (enabledKinds().includes(kind)) {
-                if (!restartPending.has(kind)) startKind(kind, () => createSourceFor(kind))
-            } else {
-                restartPending.delete(kind)
-                discardPending.delete(kind)
-                stopKind(kind)
-            }
+            if (enabled.includes(kind)) continue
+            restartPending.delete(kind)
+            discardPending.delete(kind)
+            stopKind(kind)
         }
         refreshRecordingIndicators()
     }
 
     // ページを閉じる・他の番組へ移る時は、録画を終える処理を最後まで行えないので、まだ確定していない区間を
     // background に、最後に書き込んだ所で確定してもらう（録画一覧で、閉じた番組が「録画中」のまま残らないように）。
-    // 戻る・進むで後から表示し直されるページ（persisted）は、録画が続くので確定しない
+    // 戻る・進むで後から表示し直されるページ（persisted）は、録画が続くので確定しない。
+    // 一時保存したまま移せていない区間も頼まない（拡張機能側では断片のない区間として消されてしまう。次に開いた時に移してから確定する）
     window.addEventListener('pagehide', (event) => {
-        const segmentIds = getOpenSegmentIds()
+        const segmentIds = getOpenSegmentIds().filter(segmentId => !isPendingSegment(segmentId))
         if (event.persisted || segmentIds.length === 0) return
         try {
             chrome.runtime.sendMessage({ type: CLOSE_SEGMENTS_MESSAGE, segmentIds }).catch(() => {})
@@ -340,8 +349,17 @@ export default async () => {
         applyKinds()
     })
 
+    // 拡張機能が更新された後の古いページでは、設定の保存や録画一覧などの拡張機能の機能を使えない。
+    // 黙って効かないままにせず、ページを開き直すように知らせる
+    const extensionAvailable = () => {
+        if (isExtensionContextValid()) return true
+        showBarHint('拡張機能が更新されました。ページを開き直してください')
+        return false
+    }
+
     // 録画バーのチップで、録る種類を切り替える（少なくとも1つは録る）
     const toggleKind = (kind: VideoKind) => {
+        if (!extensionAvailable()) return
         const next = { video: recordVideo, comments: recordWithComments }
         next[kind] = !next[kind]
         if (!next.video && !next.comments) {
@@ -577,17 +595,24 @@ export default async () => {
     // 設定モーダルを初期化
     const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported() })
 
+    // 動画の解像度の変更・読み込み直しを見張る（録画バーのボタンで録画を始められるようになる前から。
+    // ページを開いてすぐ「画面録画」を押した直後に画質が上がった時も、録り直せるように）
+    observeVideoResize()
+
     // 録画バーを作る
     insertRecorderBar({
         start,
         stop,
-        showSettings: (event) => settingsModal.show(event),
+        showSettings: (event) => {
+            if (extensionAvailable()) settingsModal.show(event)
+        },
         toggleKind,
         toggleScreenCapture: isScreenCaptureSupported() ? toggleScreenCapture : null,
         // プレイバックは mp4 の録画だけ（webm でしか録画できない環境では使えない）
         togglePlayback: isPlaybackSupported() && segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? togglePlayback : null,
         // 録画一覧のページを、この番組を選んだ状態で開く
         openRecordings: () => {
+            if (!extensionAvailable()) return
             requestOpenLibrary(programId).catch((error) => console.log("録画一覧を開けませんでした:", error))
         },
     })
@@ -616,16 +641,20 @@ export default async () => {
                     // （動画が一時停止中だと準備完了を検知できず、準備中のまま固まっていた）
                     stateManager.setState('stopped')
                 }
-                observeVideoResize() // 動画の解像度の変更・読み込み直しを監視
-
                 await new Promise(resolve => setTimeout(resolve, 1000))
 
                 // 以下は時間がかかることがあるので、録画を始めてから
                 executeWhenIdle(async () => {
                     // 拡張機能が更新された直後などに一時保存した録画を、拡張機能側へ移す
-                    await flushPending().catch((error) => console.log("一時保存した録画を移せませんでした:", error))
+                    const flushed = await flushPending().catch((error) => {
+                        console.log("一時保存した録画を移せませんでした:", error)
+                        return null
+                    })
                     // 録画中にタブが閉じられるなどして、終えられないまま残った録画を確定する
-                    await closeStaleSegments(STALE_SEGMENT_IDLE_MS).catch((error) => console.log("残っていた録画を確定できませんでした:", error))
+                    // （一時保存した分を移し切れていない時は、まだ断片が届いていない区間を空の区間として消してしまうので、次の機会に）
+                    if (flushed?.complete) {
+                        await closeStaleSegments(STALE_SEGMENT_IDLE_MS).catch((error) => console.log("残っていた録画を確定できませんでした:", error))
+                    }
                     // 移した分で容量の上限を超えていれば、古いものから消す
                     await enforceStorageLimit()
 

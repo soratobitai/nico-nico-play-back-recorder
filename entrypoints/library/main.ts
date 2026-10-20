@@ -61,7 +61,15 @@ let programs: ProgramSummary[] = []
 let query = ''
 let kindFilter: RecordingKind | null = null
 let order: ProgramOrder = 'recent'
-let selectedKey: string | null = decodeURIComponent(location.hash.slice(1)) || null
+// URL の # の番組（壊れた # でもページは開けるように）
+const programKeyFromHash = () => {
+    try {
+        return decodeURIComponent(location.hash.slice(1)) || null
+    } catch {
+        return null
+    }
+}
+let selectedKey: string | null = programKeyFromHash()
 let view: ReviewView | null = null
 let viewKey: string | null = null
 let viewState: ReviewViewState | null = null
@@ -105,7 +113,7 @@ const formatDuration = (seconds: number) => {
 const formatBytes = (bytes: number) => {
     if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
     if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`
+    return bytes === 0 ? '0 KB' : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 const programName = (program: ProgramSummary) => program.title || '（タイトルなし）'
 // その時刻の、録画を始めてからの時間・番組の経過時間・時刻（例: 12:34（番組 1:02:03）午後5:20時点）
@@ -389,10 +397,12 @@ const renderProgram = () => {
     programTitle.textContent = name
     programTitle.title = name
     const period = `${formatDate(program.startedAt)} ${formatTime(program.startedAt)}〜${program.recording ? '' : formatEnd(program.startedAt, program.endedAt)}`
-    const meta: (string | HTMLElement)[] = [program.userName, period].filter(Boolean)
+    // 配信者の名前が長い時は、名前の方を … で切る（録画中・長さ・容量が隠れないように）
+    const meta: HTMLElement[] = program.userName ? [element('span', 'meta-user', program.userName)] : []
+    meta.push(element('span', undefined, period))
     if (program.recording) meta.push(element('span', 'recording', '録画中'))
-    meta.push(formatDuration(recordedSeconds(program.segments)), formatBytes(program.bytes))
-    programMeta.replaceChildren(...meta.map(part => typeof part === 'string' ? element('span', undefined, part) : part))
+    meta.push(element('span', undefined, formatDuration(recordedSeconds(program.segments))), element('span', undefined, formatBytes(program.bytes)))
+    programMeta.replaceChildren(...meta)
 
     // 番組のページ（以前のバージョンから移した録画は、番組が分からない）
     openWatch.hidden = !/^lv\d+$/.test(program.programId)
@@ -412,6 +422,9 @@ const renderProgram = () => {
             onChange: onViewChange,
         })
         viewKey = key
+    } else {
+        // 録画を消した後などで、最初に録った時刻が変わることがある（録画の一覧・タイムラインと同じ所から数える）
+        view?.setTimeBases({ programBeginAt: program.beginAt, recordingStartedAt: program.startedAt })
     }
     if (!timelineDragging) renderTimeline(program)
     renderFiles(program)
@@ -425,7 +438,7 @@ const onViewChange = (state: ReviewViewState) => {
     if (!program) return
     if (kindChanged) {
         markCurrentLane(program)
-        renderFiles(program)
+        keepFocus(() => renderFiles(program))
         renderDownloadButton(program)
     }
     updatePlayhead(program)
@@ -636,19 +649,23 @@ const attachTrackPointer = (track: HTMLElement, kind: RecordingKind, program: Pr
         track.setPointerCapture(event.pointerId)
         timelineDragging = true
         const startX = event.clientX
+        let lastX = startX
         let dragged = false
         const move = (e: PointerEvent) => {
+            lastX = e.clientX
             showHover(program, e.clientX)
             if (!dragged && Math.abs(e.clientX - startX) < DRAG_THRESHOLD_PX) return
             dragged = true
             view?.scrub(kind, wallClockAtX(program, e.clientX))
         }
+        // 離した時のほか、掴んでいるのが外れた時（pointerup も pointercancel も来ない時）にも終える
         const end = (e: PointerEvent) => {
             track.removeEventListener('pointermove', move)
             track.removeEventListener('pointerup', end)
             track.removeEventListener('pointercancel', end)
+            track.removeEventListener('lostpointercapture', end)
             timelineDragging = false
-            view?.endScrub(kind, wallClockAtX(program, e.clientX), true)
+            view?.endScrub(kind, wallClockAtX(program, e.type === 'lostpointercapture' ? lastX : e.clientX), true)
             // 掴んでいる間に読み直した分を出す
             const current = selectedProgram()
             if (current && lanes.dataset.program === current.key) renderTimeline(current)
@@ -656,6 +673,7 @@ const attachTrackPointer = (track: HTMLElement, kind: RecordingKind, program: Pr
         track.addEventListener('pointermove', move)
         track.addEventListener('pointerup', end)
         track.addEventListener('pointercancel', end)
+        track.addEventListener('lostpointercapture', end)
     })
 }
 
@@ -671,9 +689,13 @@ const showHover = (program: ProgramSummary, x: number) => {
     }
     line.hidden = false
     line.style.left = `${((x - rect.left) / rect.width) * 100}%`
-    const tip = line.firstElementChild ?? line.appendChild(element('span'))
+    const tip = (line.firstElementChild ?? line.appendChild(element('span'))) as HTMLElement
     const wallClock = wallClockAtX(program, x)
     tip.textContent = `${describeTime(program, wallClock)}${timelineDragging ? '' : '・クリックで再生'}`
+    // 線の真ん中に出し、帯の端では帯の中に収まるように寄せる
+    const lineX = x - rect.left
+    const width = tip.offsetWidth
+    tip.style.left = `${Math.max(-lineX, Math.min(-width / 2, rect.width - lineX - width))}px`
 }
 const hideHover = () => {
     const line = lanes.querySelector<HTMLElement>('.hoverline')
@@ -774,7 +796,11 @@ const fileRow = (program: ProgramSummary, file: RecordingFile, position: number)
         overlay.append(ICONS.play())
         play.append(overlay)
         play.setAttribute('aria-label', `${when}の録画を再生`)
-        play.addEventListener('click', () => view?.show(file.kind, file.startedAt, true))
+        play.addEventListener('click', (event) => {
+            // マウスで押した時は、ボタンにフォーカスを残さない（続けてスペースを押すと、一時停止ではなく頭から再生し直すので）
+            if (event.detail > 0) play.blur()
+            view?.show(file.kind, file.startedAt, true)
+        })
     } else {
         play.disabled = true
         play.title = 'この形式の録画は、ここでは再生できません（保存して見てください）'

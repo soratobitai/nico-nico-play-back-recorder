@@ -357,3 +357,88 @@ describe('キー操作', () => {
         view.destroy()
     })
 })
+
+describe('見ている録画が消された時', () => {
+    it('見ている種類の録画が全部消されたら、残っている種類へ移る', async () => {
+        const root = document.getElementById('root')!
+        const comments = () => recordings().map(s => ({ ...s, segmentId: `c${s.segmentId}`, kind: 'comments' as const }))
+        let stored = [...recordings(), ...comments()]
+        const onChange = vi.fn()
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => stored, readFragments: async () => [], onChange })
+        await flush()
+        view.show('comments', 101_000, false)
+        expect(onChange.mock.lastCall![0].kind).toBe('comments')
+
+        stored = recordings()
+        await view.refresh()
+        expect(onChange.mock.lastCall![0]).toMatchObject({ kind: 'video', kinds: ['video'] })
+        expect(current().timeline.fragments.every(f => f.segmentId === 'A' || f.segmentId === 'B')).toBe(true)
+        view.destroy()
+    })
+
+    it('見ている区間が消されたら、再生を作り直して、残っている次の所から見る', async () => {
+        const root = document.getElementById('root')!
+        let stored = recordings()
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => stored, readFragments: async () => [] })
+        await flush()
+        current().seek(1) // A の中
+        const created = players.length
+
+        stored = recordings().filter(s => s.segmentId !== 'A')
+        await view.refresh()
+        expect(players.length).toBe(created + 1)
+        expect(current().position).toBeCloseTo(9.5) // B の始め
+        view.destroy()
+    })
+
+    it('見ていない区間が消されただけなら、再生を作り直さない', async () => {
+        const root = document.getElementById('root')!
+        let stored = recordings()
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => stored, readFragments: async () => [] })
+        await flush()
+        current().seek(10) // B の中
+        const created = players.length
+
+        stored = recordings().filter(s => s.segmentId !== 'A')
+        await view.refresh()
+        expect(players.length).toBe(created)
+        view.destroy()
+    })
+})
+
+describe('プレイバックのウィンドウで見る種類', () => {
+    it('今録っている（最も新しい所まである）種類で開き、ライブに戻る時も今録っている種類へ', async () => {
+        const root = document.getElementById('root')!
+        // コメントなしは前に録り終えていて、今はコメントありだけを録っている
+        const stored = [...recordings(), { ...segment('C', 700_000, 3), kind: 'comments' as const, endedAt: null }]
+        const onChange = vi.fn()
+        const view = mountReviewView({ root, mode: 'live', readTimeline: async () => stored, readFragments: async () => [], onChange })
+        await flush()
+        expect(onChange.mock.lastCall![0].kind).toBe('comments')
+
+        root.querySelector<HTMLButtonElement>('.kind-video')!.click()
+        expect(onChange.mock.lastCall![0].kind).toBe('video')
+        root.querySelector<HTMLButtonElement>('.live')!.click()
+        expect(onChange.mock.lastCall![0].kind).toBe('comments')
+        view.destroy()
+    })
+})
+
+describe('録画の時間の基準', () => {
+    it('容量の上限で古い断片が消されても、区間が残っている間は同じ場面の時間が変わらない（録画一覧と同じ、区間の始まりから数える）', async () => {
+        const root = document.getElementById('root')!
+        let stored = recordings()
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => stored, readFragments: async () => [] })
+        await flush()
+        current().seek(10) // B の中（録り始めてから 10 秒）
+        view.refresh()
+        await flush()
+        const clock = () => root.querySelector('.clock')!.textContent
+        expect(clock()).toBe('0:10')
+
+        stored = [{ ...segment('A', 100_000, 3), fragments: fragments(3).slice(2) }, segment('B', 109_500, 2)]
+        await view.refresh()
+        expect(clock()).toBe('0:10')
+        view.destroy()
+    })
+})

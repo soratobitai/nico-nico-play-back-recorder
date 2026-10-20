@@ -120,6 +120,36 @@ describe('録画一覧のページに出す形', () => {
         expect(files[1].blocks).toEqual([{ start: 600_800, end: 700_000 }, { start: 4_000_000, end: 4_060_000 }])
         expect(files[1]).toMatchObject({ recording: true, seconds: 99.2 + 60 })
     })
+
+    it('同じ番組を2つのタブで録った時など、時刻が重なる区間は同じファイルにつながない', () => {
+        // タブ1: a1, a2 / タブ2: b1, b2（同じ設定。録った時刻が重なる）
+        const segments = [
+            summary({ segmentId: 'a1', startedAt: 0, endedAt: 300_000 }),
+            summary({ segmentId: 'b1', startedAt: 10_000, endedAt: 310_000 }),
+            summary({ segmentId: 'a2', startedAt: 300_000, endedAt: 600_000 }),
+            summary({ segmentId: 'b2', startedAt: 310_000, endedAt: 610_000 }),
+        ]
+        const signatures = new Map(segments.map(s => [s.segmentId, '720p']))
+
+        const files = filesOf(segments, 'video', signatures, 700_000)
+
+        expect(files.map(f => f.segments.map(s => s.segmentId))).toEqual([['a1', 'a2'], ['b1', 'b2']])
+        expect(files.map(f => f.splitBySettings)).toEqual([false, false])
+    })
+
+    it('「ここで画質が変わりました」は、前とこのファイルの設定が両方分かっていて違う時だけ（webm や設定がまだ分からない区間では出さない）', () => {
+        const webm = [
+            summary({ segmentId: 'w1', format: 'opaque', startedAt: 0, endedAt: 300_000 }),
+            summary({ segmentId: 'w2', format: 'opaque', startedAt: 300_500, endedAt: 600_000 }),
+        ]
+        expect(filesOf(webm, 'video', new Map(), 700_000).map(f => f.splitBySettings)).toEqual([false, false])
+
+        const unknown = [
+            summary({ segmentId: 'm1', startedAt: 0, endedAt: 300_000 }),
+            summary({ segmentId: 'm2', startedAt: 300_500, endedAt: 600_000 }),
+        ]
+        expect(filesOf(unknown, 'video', new Map([['m1', '720p'], ['m2', null]]), 700_000).map(f => f.splitBySettings)).toEqual([false, false])
+    })
 })
 
 describe('まとめて保存（buildDownloadFiles）', () => {

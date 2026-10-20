@@ -57,6 +57,30 @@ describe('録画バー', () => {
         expect(stop).toHaveBeenCalledTimes(1)
     })
 
+    it('ダブルクリックの2回目は無視する（止めた録画をすぐにまた始めない）', () => {
+        const start = vi.fn()
+        const stop = vi.fn()
+        insertRecorderBar(options({ start, stop }))
+        const button = $<HTMLButtonElement>('#recordButton')
+        setRecorderState('recording')
+
+        button.dispatchEvent(new MouseEvent('click', { detail: 1, bubbles: true }))
+        setRecorderState('stopped')
+        button.dispatchEvent(new MouseEvent('click', { detail: 2, bubbles: true }))
+        expect(stop).toHaveBeenCalledTimes(1)
+        expect(start).not.toHaveBeenCalled()
+    })
+
+    it('バーのボタンの上で押したスペースは、ニコ生のショートカット（再生・一時停止）に届けない', () => {
+        insertRecorderBar(options())
+        const onWindow = vi.fn()
+        window.addEventListener('keydown', onWindow)
+        $<HTMLButtonElement>('#settingsButton').dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+        $<HTMLButtonElement>('#settingsButton').dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+        window.removeEventListener('keydown', onWindow)
+        expect(onWindow.mock.calls.map(([event]) => event.key)).toEqual(['a'])
+    })
+
     it('保存エラーの時は、バーを赤くして理由を出す（録る種類のチップは隠す）', () => {
         insertRecorderBar(options())
 
@@ -204,7 +228,17 @@ describe('getProgramData', () => {
             <script type="application/ld+json">{"author": {"name": "user/name"}}</script>
             <meta property="og:title" content="title:1">`
 
-        expect(getProgramData()).toEqual({ userName: 'username', title: 'title1', beginAt: null })
+        expect(getProgramData()).toMatchObject({ userName: 'username', title: 'title1', beginAt: null })
+    })
+
+    it('番組 ID は、埋め込みデータの今の放送の番組 ID（チャンネルの URL で開いた時も lv…）。なければ URL から', () => {
+        document.body.innerHTML = '<script id="embedded-data" data-props="{&quot;program&quot;:{&quot;nicoliveProgramId&quot;:&quot;lv351605487&quot;}}"></script>'
+        history.replaceState(null, '', '/watch/ch2646230')
+        expect(getProgramData().programId).toBe('lv351605487')
+
+        document.body.innerHTML = ''
+        history.replaceState(null, '', '/watch/lv123')
+        expect(getProgramData().programId).toBe('lv123')
     })
 
     it('番組が始まった時刻を、埋め込みデータ（なければ番組情報の開始日時）から読む', () => {

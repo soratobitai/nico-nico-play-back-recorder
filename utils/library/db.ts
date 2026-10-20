@@ -227,7 +227,12 @@ const buildDownloadFiles = async (segmentIds: string[]): Promise<DownloadFile[]>
 
     // 録画一覧のページで出すファイルの単位（groupIntoFiles）と同じにまとめる
     const signatures = new Map(await Promise.all(items.map(async item => [item, await signatureOf(item.segment)] as const)))
-    const groups = groupIntoFiles(items, item => ({ kind: item.segment.kind, signature: signatures.get(item) ?? null }))
+    const groups = groupIntoFiles(items, item => ({
+        kind: item.segment.kind,
+        signature: signatures.get(item) ?? null,
+        startedAt: item.segment.startedAt,
+        endedAt: item.segment.endedAt ?? item.segment.startedAt + Math.max(...item.fragments.map(f => f.startTime + f.duration)) * 1000,
+    }))
 
     return Promise.all(groups.map(async (group): Promise<DownloadFile> => {
         const kind = group[0].segment.kind

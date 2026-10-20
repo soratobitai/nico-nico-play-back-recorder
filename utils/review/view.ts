@@ -126,7 +126,11 @@ type ReviewViewOptions = {
     onChange?: (state: ReviewViewState) => void
 }
 
-const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, programBeginAt, recordingStartedAt, onChange }: ReviewViewOptions) => {
+type TimeBases = Pick<ReviewViewOptions, 'programBeginAt' | 'recordingStartedAt'>
+
+const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, onChange, ...options }: ReviewViewOptions) => {
+    // 時間を数える基準（録画を消した後などに、setTimeBases で差し替える）
+    let bases: TimeBases = { programBeginAt: options.programBeginAt, recordingStartedAt: options.recordingStartedAt }
     const doc = root.ownerDocument
     const messages = MESSAGES[mode]
     const container = doc.createElement('div')
@@ -202,9 +206,29 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         if (video.ended && timeline.end > video.currentTime + 0.5) player.seek(video.currentTime)
         video.play().catch(() => {})
     }
+    // live は動画の終わりにしない（録画中の番組を追いかけるので）。録り終えた録画（録画中の区間がない）を最後まで見て、
+    // しばらく続きが届かなければ止める（止めないと、再生中のまま固まって見える）
+    const FINISHED_WAIT_MS = 10 * 1000
+    let waitingAtEndSince: number | null = null
+    let stoppedAtEnd = false
+    const stopIfFinished = () => {
+        const finished = mode === 'live' && !video.paused && !timeline.isEmpty && player.position >= timeline.end - 0.3
+            && !timeline.placedSegments.some(s => s.endedAt === null)
+        if (!finished) {
+            waitingAtEndSince = null
+            return
+        }
+        waitingAtEndSince ??= Date.now()
+        if (Date.now() - waitingAtEndSince < FINISHED_WAIT_MS) return
+        waitingAtEndSince = null
+        stoppedAtEnd = true
+        video.pause()
+    }
+    video.addEventListener('play', () => { stoppedAtEnd = false })
     // 最後まで再生して止まっている間に続きが届いたら、続けて再生する
     const resumeIfEnded = () => {
         if (wantsPlaying && video.ended && timeline.end > video.currentTime + 0.5) playVideo()
+        if (stoppedAtEnd && timeline.end > player.position + 0.5) playVideo()
     }
 
     // ---- 再生できない所を飛ばす ----
@@ -279,6 +303,23 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         render()
     }
 
+    // 見ていた録画（区間）が消された（録画一覧で削除した・容量の上限を超えて消された）。
+    // 読み込み済みの消した録画を再生し続けないように作り直し、残っている所から見る。見ていた種類が全部消されたら、残っている種類へ
+    const reopenAfterRemoved = (wallClock: number | null) => {
+        const play = !video.paused
+        const kinds = availableKinds()
+        if (timeline.isEmpty && kinds.length > 0) {
+            moveTo(kinds[0], wallClock, play)
+            return
+        }
+        video.pause()
+        player.destroy()
+        player = createPlayer(timeline)
+        if (timeline.isEmpty) return
+        player.seek(wallClock === null ? timeline.start : timeline.timeAtWallClock(wallClock) ?? timeline.start)
+        if (play) playVideo()
+    }
+
     // 見る種類を切り替える（同じ場面から続けて見る）
     const selectKind = (kind: RecordingKind) => {
         if (kind === selectedKind) return
@@ -286,7 +327,20 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         moveTo(kind, wallClock, !video.paused || (!started && mode === 'live'))
     }
 
-    // 初めて録画が読めた時に見始める（初めは「コメントなし」、なければ録ってある種類）
+    // 録った所の終わりの時刻
+    const endWallClockOf = (kind: RecordingKind) => {
+        const t = timelines.get(kind)
+        return t && !t.isEmpty ? t.wallClockAt(t.end) ?? -Infinity : -Infinity
+    }
+    // 最も新しい所まで録ってある種類（録画中に種類を切り替えた後などに、今録っている種類を見られるように）。
+    // 種類ごとに少しずつずれて届くので、preferred より LIVE_THRESHOLD_SECONDS 以上新しい時だけ他の種類にする
+    const latestKind = (kinds: RecordingKind[], preferred: RecordingKind) => kinds.reduce(
+        (best, kind) => endWallClockOf(kind) > endWallClockOf(best) + LIVE_THRESHOLD_SECONDS * 1000 ? kind : best,
+        kinds.includes(preferred) ? preferred : kinds[0],
+    )
+
+    // 初めて録画が読めた時に見始める（初めは「コメントなし」、なければ録ってある種類。
+    // プレイバックのウィンドウでは、今録っている（最も新しい所まである）種類）
     const startIfReady = () => {
         if (started || destroyed) return
         const kinds = availableKinds()
@@ -297,15 +351,15 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             moveTo(kind && kinds.includes(kind) ? kind : kinds[0], wallClock ?? null, play)
             return
         }
-        moveTo(kinds[0], null, mode === 'live')
+        moveTo(mode === 'live' ? latestKind(kinds, kinds[0]) : kinds[0], null, mode === 'live')
     }
 
-    // 最初に録った所の時刻（録画を始めた時刻を指定されていない時に、録画の時間を数える基準）
+    // 最初に録り始めた時刻（録画を始めた時刻を指定されていない時に、録画の時間を数える基準）。
+    // 残っている区間の始まりで数える（録画一覧と同じ。容量の上限で古い断片が消されても、区間が残っている間は変わらない）
     const firstRecordedAt = () => {
         let first: number | null = null
         for (const t of timelines.values()) {
-            const wallClock = t.isEmpty ? null : t.wallClockAt(t.start)
-            if (wallClock !== null && (first === null || wallClock < first)) first = wallClock
+            for (const segment of t.placedSegments) if (first === null || segment.startedAt < first) first = segment.startedAt
         }
         return first
     }
@@ -316,6 +370,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
 
     const render = () => {
         if (destroyed) return
+        stopIfFinished()
         const empty = timeline.isEmpty
         for (const element of [seek, playButton, backButton, forwardButton]) element.disabled = empty
         if (!dragging) {
@@ -329,6 +384,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         seek.style.setProperty('--progress', `${length > 0 ? Math.min(100, Math.max(0, ((t - timeline.start) / length) * 100)) : 0}%`)
         const wallClock = empty ? null : timeline.wallClockAt(t)
         // 大きく出すのは、録画を始めてからの時間。横に番組の経過時間（ニコ生のプレイヤーの表示と同じ）
+        const { programBeginAt, recordingStartedAt } = bases
         const recordedBase = recordingStartedAt ?? firstRecordedAt()
         clock.textContent = wallClock === null || recordedBase === null ? '--:--' : formatRecorded(wallClock - recordedBase)
         programTime.textContent = wallClock === null || !programBeginAt ? '' : `（番組 ${formatElapsed(wallClock - programBeginAt)}）`
@@ -397,6 +453,9 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const toggleMute = () => { video.muted = !video.muted }
     const goLive = () => {
         if (mode !== 'live') return
+        // 見ている種類を今は録っていなければ、今録っている種類のライブへ
+        const kind = latestKind(availableKinds(), selectedKind)
+        if (kind !== selectedKind) moveTo(kind, null, false)
         player.seek(timeline.end - LIVE_EDGE_SECONDS)
         playVideo()
     }
@@ -521,6 +580,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         }
         startIfReady()
         player.update()
+        resumeIfEnded()
         render()
     }
 
@@ -544,6 +604,11 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             const segments = await readTimeline()
             // 読んでいる間に閉じられた
             if (destroyed) return
+            // 見ている所（読み直す前）
+            const position = player.position
+            const watching = started && !timeline.isEmpty
+                ? { wallClock: timeline.wallClockAt(position), segmentId: timeline.fragments[timeline.indexAt(position)]?.segmentId }
+                : null
             const byKind = new Map<RecordingKind, TimelineSegment[]>(KIND_ORDER.map(kind => [kind, []]))
             for (const segment of segments) byKind.get(segment.kind)?.push(segment)
             for (const [kind, list] of byKind) {
@@ -551,6 +616,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             }
             removeBroken()
             applyQueued()
+            if (watching?.segmentId && !timeline.segment(watching.segmentId)) reopenAfterRemoved(watching.wallClock)
             if (availableKinds().length === 0) showMessage(messages.empty)
             startIfReady()
             player.update()
@@ -614,6 +680,13 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
 
         // 保存先から読み直す（区間を消した後など）
         refresh: sync,
+
+        // 時間を数える基準を差し替える（録画を消して、最初に録った時刻が変わった時など）
+        setTimeBases(next: TimeBases) {
+            if (next.programBeginAt === bases.programBeginAt && next.recordingStartedAt === bases.recordingStartedAt) return
+            bases = { ...next }
+            render()
+        },
 
         destroy() {
             destroyed = true

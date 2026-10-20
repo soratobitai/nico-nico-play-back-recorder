@@ -19,20 +19,31 @@ const getProgramData = () => {
     if (meta) title_ = meta.content
     const title = (title_ || '').replace(/[\\/:*?"<>|]/g, '')
 
+    // ページに埋め込まれた番組の情報
+    let program: { beginTime?: unknown, nicoliveProgramId?: unknown } | undefined
+    try {
+        program = JSON.parse(document.getElementById('embedded-data')?.dataset.props || '{}')?.program
+    } catch {
+        // 読めなければ、URL と番組情報（ld+json）から
+    }
+
+    // 番組 ID（lv…）。チャンネルやコミュニティの URL（/watch/ch…）で開いた時も、今の放送の番組 ID にする
+    // （URL のままだと、同じ URL で録った別の日の放送が1つの番組にまとまってしまう）
+    const embeddedId = program?.nicoliveProgramId
+    const programId = typeof embeddedId === 'string' && /^lv\d+$/.test(embeddedId)
+        ? embeddedId
+        : location.pathname.match(/lv\d+/)?.[0] ?? location.pathname
+
     // 番組が始まった時刻（ミリ秒。プレイバックと録画一覧で、番組の経過時間を出すのに使う。読めなければ null）
     let beginAt: number | null = null
-    try {
-        const seconds = JSON.parse(document.getElementById('embedded-data')?.dataset.props || '{}')?.program?.beginTime
-        if (typeof seconds === 'number' && seconds > 0) beginAt = seconds * 1000
-    } catch {
-        // 読めなければ、番組情報の開始日時を使う
-    }
+    const seconds = program?.beginTime
+    if (typeof seconds === 'number' && seconds > 0) beginAt = seconds * 1000
     if (beginAt === null && typeof ldStartDate === 'string') {
         const parsed = Date.parse(ldStartDate)
         if (!Number.isNaN(parsed)) beginAt = parsed
     }
 
-    return { userName, title, beginAt }
+    return { programId, userName, title, beginAt }
 }
 
 // ライブ映像の今のコマを、録画リスト用の小さなサムネイル（JPEG の data URL）にする

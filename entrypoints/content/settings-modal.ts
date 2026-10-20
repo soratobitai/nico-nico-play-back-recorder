@@ -462,9 +462,13 @@ class SettingsModal {
     const previous = this.settings.MAX_STORAGE_SIZE
     if (next === previous) return
     const usage = this.currentStorageUsage
-    if (usage !== null && next < usage && next < previous
-      && !confirm(`上限を ${toGB(next)} GB にすると、超えた分の古い録画（約 ${formatUsage(usage - next)}）が削除されます。
-よろしいですか？`)) {
+    // 使用量が分からない間（読み込み中・読み込めなかった）は、量を書かずに確かめる
+    const message = usage === null
+      ? `上限を ${toGB(next)} GB に下げると、超えた分の古い録画が削除されることがあります。
+よろしいですか？`
+      : `上限を ${toGB(next)} GB にすると、超えた分の古い録画（約 ${formatUsage(usage - next)}）が削除されます。
+よろしいですか？`
+    if (next < previous && (usage === null || next < usage) && !confirm(message)) {
       const storageRange = this.modal?.querySelector<HTMLInputElement>('#storageRange')
       if (storageRange) storageRange.value = String(previous)
       this.updateStorageLabel(previous)

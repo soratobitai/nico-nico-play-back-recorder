@@ -132,6 +132,22 @@ describe('設定画面', () => {
         })
     })
 
+    it('使用量が分からない間（読み込めなかった）に上限を下げる時も、量を書かずに確かめる', async () => {
+        vi.mocked(getUsage).mockRejectedValueOnce(new Error('unavailable'))
+        await MAX_STORAGE_SIZE.setValue(10 * GB)
+        await flush()
+        modal.show()
+        await flush()
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
+
+        moveSlider('storageRange', 1 * GB, 'change')
+        await flush()
+
+        expect(confirm).toHaveBeenCalledWith(expect.stringContaining('削除されることがあります'))
+        expect(await MAX_STORAGE_SIZE.getValue()).toBe(10 * GB)
+        confirm.mockRestore()
+    })
+
     describe('容量の上限のスライダーのホイール（上限を下げると古い録画が消えるので、うっかり動かさない）', () => {
         beforeEach(async () => {
             await MAX_STORAGE_SIZE.setValue(30 * GB)

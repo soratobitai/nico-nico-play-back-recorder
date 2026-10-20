@@ -77,6 +77,24 @@ describe('Timeline（見直し用の時間軸）', () => {
         expect(timeline.fragments.map(f => f.index)).toEqual([0, 1, 2])
     })
 
+    it('保存先から消された録画中の区間・断片は、読み直したら外す（「すべて消す」で録画中の区間の中身だけ消した・録画一覧で削除した）', () => {
+        const timeline = new Timeline()
+        timeline.sync([segment('A', 100_000, fragments(3), null), segment('B', 200_000, fragments(2), null)])
+
+        // A は中身だけ消された（区間は残る）、B は区間ごと消された
+        timeline.sync([segment('A', 100_000, [], null)])
+        expect(timeline.isEmpty).toBe(true)
+        expect(timeline.segment('B')).toBeUndefined()
+
+        // 読み直した後に録画中の知らせで届いたもの（まだ保存先にない）は残す
+        timeline.addFragments('A', fragments(1, 9, 3))
+        timeline.sync([segment('A', 100_000, [], null)])
+        expect(timeline.fragments.map(f => f.index)).toEqual([3])
+        // その次に読み直した時も保存先になければ、消されたもの
+        timeline.sync([segment('A', 100_000, [], null)])
+        expect(timeline.isEmpty).toBe(true)
+    })
+
     it('録画を終えたと届いた区間は、それより前に読んだ内容で読み直しても録画中に戻さない（消された区間が残り続けないように）', () => {
         const timeline = new Timeline()
         timeline.sync([segment('A', 100_000, fragments(2), null)])

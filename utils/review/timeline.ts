@@ -41,6 +41,9 @@ const wallEndOf = (segment: PlacedSegment) => {
 class Timeline {
     private segments: PlacedSegment[] = []
     private flat: PlacedFragment[] = [] // 時間軸の順に並べた断片
+    // 前に保存先から読み直してから、録画中の知らせで足した区間（segment:…）と断片。
+    // 保存先にまだないものは、これだけ残す（それ以外の保存先にないものは、消されたもの）
+    private fresh = new Set<string>()
 
     // 並べた区間（再生に使う）
     get placedSegments(): readonly PlacedSegment[] {
@@ -68,28 +71,35 @@ class Timeline {
     }
 
     // 保存先から読んだ番組の録画で更新する。新しい区間は後ろに足し、消された断片・区間は外す
+    // （保存先にない区間・断片は、前に読み直してから録画中の知らせで届いたもの（まだ保存先に書き込まれていない）だけ残す。
+    //   録画中の区間を録画一覧で削除した・「すべて消す」で録画中の区間の中身だけ消した、などの場合に残らないように）
     sync(inputs: TimelineSegment[]) {
         const ids = new Set(inputs.map(s => s.segmentId))
-        this.segments = this.segments.filter(s => ids.has(s.segmentId) || s.endedAt === null)
+        this.segments = this.segments.filter(s => ids.has(s.segmentId) || this.fresh.has(`segment:${s.segmentId}`))
         for (const input of [...inputs].sort((a, b) => a.startedAt - b.startedAt)) {
             const existing = this.segment(input.segmentId)
             if (!existing) {
-                this.addSegment(input)
+                this.insertSegment(input)
                 continue
             }
             // 録画を終えた区間が録画中に戻ることはない（終えたと届いた後に、それより前に読んだ内容で戻さない）
             existing.endedAt = input.endedAt ?? existing.endedAt
-            // 保存先にない古い断片は消されたもの。保存先にまだない新しい断片（録画中に届いたもの）は残す
-            const stored = new Map(input.fragments.map(f => [f.index, f]))
-            const maxStored = Math.max(-1, ...stored.keys())
-            existing.fragments = existing.fragments.filter(f => stored.has(f.index) || f.index > maxStored)
+            const stored = new Set(input.fragments.map(f => f.index))
+            existing.fragments = existing.fragments.filter(f => stored.has(f.index) || this.fresh.has(fragmentKey(f)))
             this.appendFragments(existing, input.fragments.filter(f => !existing.fragments.some(e => e.index === f.index)))
         }
+        this.fresh.clear()
         this.rebuild()
     }
 
-    // 区間を足す（録画を始めた順に足すこと。それより前に始まった区間は並べられないので足さない）
+    // 録画中の知らせで、区間を足す（録画を始めた順に足すこと。それより前に始まった区間は並べられないので足さない）
     addSegment(input: SegmentInput) {
+        this.fresh.add(`segment:${input.segmentId}`)
+        for (const fragment of input.fragments ?? []) this.fresh.add(fragmentKey({ segmentId: input.segmentId, index: fragment.index }))
+        this.insertSegment(input)
+    }
+
+    private insertSegment(input: SegmentInput) {
         if (this.segment(input.segmentId)) return
         const last = this.segments[this.segments.length - 1]
         if (last && input.startedAt < last.startedAt) return
@@ -102,9 +112,11 @@ class Timeline {
         this.rebuild()
     }
 
+    // 録画中の知らせで、断片を足す
     addFragments(segmentId: string, fragments: TimelineFragment[]) {
         const segment = this.segment(segmentId)
         if (!segment) return
+        for (const fragment of fragments) this.fresh.add(fragmentKey({ segmentId, index: fragment.index }))
         this.appendFragments(segment, fragments.filter(f => !segment.fragments.some(e => e.index === f.index)))
         this.rebuild()
     }

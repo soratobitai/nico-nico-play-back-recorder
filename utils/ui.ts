@@ -99,6 +99,11 @@ let hintTimer: ReturnType<typeof setTimeout> | undefined
 let isCollapsed = false
 let toggleButton: HTMLButtonElement | null = null
 
+// ボタンの上で押したスペースを、ニコ生のショートカット（window で受けて再生・一時停止する）に届けない
+const stopSpaceOnButton = (event: KeyboardEvent) => {
+    if (event.key === ' ' && event.target instanceof HTMLButtonElement) event.stopPropagation()
+}
+
 // 録画バーをプレイヤーの下に作る
 const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreenCapture, togglePlayback, openRecordings }: RecorderBarOptions) => {
     const controlArea = document.querySelector('[class*="_control-area_"]')
@@ -106,16 +111,24 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     controlArea.insertAdjacentHTML("afterend", BAR_HTML)
 
     bar = document.getElementById(BAR_ID)!
+    // 隠していた場合は、すぐに隠す（折りたたみボタンを置くのは後なので、それまで出たままにならないように）
+    void UI_COLLAPSED.getValue().then((collapsed) => {
+        if (collapsed && bar && !toggleButton) bar.hidden = true
+    }).catch(() => {})
     const $ = <T extends HTMLElement>(selector: string) => bar!.querySelector<T>(selector)!
     recordButton = $<HTMLButtonElement>('#recordButton')
     screenCaptureButton = $<HTMLButtonElement>('#screenCaptureButton')
     playbackButton = $<HTMLButtonElement>('#playbackButton')
 
-    // 録画開始・停止（1つのボタンで切り替える）
-    recordButton.addEventListener('click', () => {
+    // 録画開始・停止（1つのボタンで切り替える。ダブルクリックの2回目で、止めた録画をまた始めないように、続けて押した分は無視する）
+    recordButton.addEventListener('click', (event) => {
+        if (event.detail > 1) return
         if (state === 'recording') stop()
         else start()
     })
+
+    // バーのボタンの上でのスペースは、ボタンを押すのに使う（ニコ生のショートカットの再生・一時停止に届かないように）
+    bar.addEventListener('keydown', stopSpaceOnButton)
 
     for (const chip of bar.querySelectorAll<HTMLButtonElement>('.npr-chip[data-kind]')) {
         chip.addEventListener('click', () => toggleKind(chip.dataset.kind as VideoKind))
@@ -123,7 +136,10 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
 
     if (toggleScreenCapture) {
         screenCaptureButton.hidden = false
-        screenCaptureButton.addEventListener('click', toggleScreenCapture)
+        screenCaptureButton.addEventListener('click', (event) => {
+            if (event.detail > 1) return // ダブルクリックの2回目で、止めた画面録画をまた始めない
+            toggleScreenCapture()
+        })
         setScreenCaptureButton(false)
     }
 
@@ -276,14 +292,16 @@ const insertToggleButton = async () => {
     toggleButton.id = 'recording-toggle-button'
     toggleButton.className = 'recording-toggle-button'
     toggleButton.type = 'button'
-    toggleButton.setAttribute('aria-label', '録画バーを表示（ニコ生プレイバックレコーダー）')
     toggleButton.setAttribute('aria-controls', BAR_ID)
     toggleButton.innerHTML = '<span class="recording-toggle-mark" aria-hidden="true"></span>'
+    toggleButton.addEventListener('keydown', stopSpaceOnButton)
 
     const apply = () => {
         const target = document.getElementById(BAR_ID)
         if (target) target.hidden = isCollapsed
         toggleButton!.setAttribute('aria-expanded', String(!isCollapsed))
+        // 説明（マウスを乗せた時にも出る）は、押した時にすることにする
+        toggleButton!.setAttribute('aria-label', `録画バーを${isCollapsed ? '表示' : '隠す'}（ニコ生プレイバックレコーダー）`)
     }
     apply()
 

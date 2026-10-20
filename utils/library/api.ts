@@ -22,6 +22,11 @@ const setPendingLimit = (bytes: number) => {
     pendingLimit = bytes
 }
 
+// このページで一時保存していて、まだ拡張機能側へ移していない区間か
+// （ページを閉じる時に、background に確定を頼まない。拡張機能側では断片のない区間として消されてしまい、
+//   次に一時保存を移す時に、区間が見つからずに捨てられるため）
+const isPendingSegment = (segmentId: string) => pendingSegments.has(segmentId)
+
 const segmentIdsOf = (request: BridgeRequest): string[] => {
     switch (request.type) {
         case 'createSegment': return [request.segment.segmentId]
@@ -98,13 +103,14 @@ const clearAll = async () => {
     return kept
 }
 
-// 一時保存した書き込みを拡張機能側へ移す（同時には1つだけ。移した数を返す）
+// 一時保存した書き込みを拡張機能側へ移す（同時には1つだけ）。移した数と、残さず移し切れたか（complete）を返す
+// （他のタブが移している間・拡張機能側に保存できない間は、移し切れていない）
 // すべて移せたら、一時保存していた区間の続きは直接保存できる
-let flushing: Promise<number> | null = null
-const flushPending = (): Promise<number> => flushing ??= (async () => {
+let flushing: Promise<{ sent: number, complete: boolean }> | null = null
+const flushPending = (): Promise<{ sent: number, complete: boolean }> => flushing ??= (async () => {
     try {
         // 拡張機能が更新された後は移せない（この後も一時保存を続ける）
-        if (!isExtensionContextValid()) return 0
+        if (!isExtensionContextValid()) return { sent: 0, complete: false }
         const savesBefore = pendingSaves
         const replay = () => flushPendingRequests(
             async (request) => (await getBridge()).call(request),
@@ -121,7 +127,7 @@ const flushPending = (): Promise<number> => flushing ??= (async () => {
             pendingSegments.clear()
             pendingBytes = 0
         }
-        return sent
+        return { sent, complete }
     } finally {
         flushing = null
     }
@@ -132,6 +138,7 @@ const flushPending = (): Promise<number> => flushing ??= (async () => {
 const migrateLegacy = () => migrateLegacyRecordings(async (request) => (await getBridge()).call(request))
 
 export {
+    isPendingSegment,
     createSegment, setSegmentInit, appendFragments, finishSegment,
     getTimeline, getFragmentBlobs,
     getUsage, enforceLimit, freeSpace, closeStaleSegments, deleteSegments, clearAll, estimateStorage, flushPending, migrateLegacy,
