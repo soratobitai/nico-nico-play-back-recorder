@@ -63,6 +63,11 @@ const REVIEW_STYLE = `
 }
 .review .row > * { flex-shrink: 0; }
 .review .spacer { flex: 1 0 4px; }
+/* 録画一覧: 再生の操作を真ん中に、種類と音を左端、時間を右端に（入りきらない時は、真ん中が少しずれる） */
+.review .row:has(.row-center) { display: grid; grid-template-columns: 1fr auto 1fr; column-gap: 8px; }
+.review :is(.row-start, .row-center, .row-end) { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.review .row-end { justify-content: flex-end; }
+.review .row-end .time { margin-right: 0; }
 
 /* シークバー（細い線。再生した所まで色をつける） */
 /* 下の操作の行（枠のための余白）より手前にして、シークバーの下の端も押せるようにする */
@@ -190,7 +195,7 @@ const REVIEW_STYLE = `
 /* とても狭い: ボタンを小さく、ライブはラベルなしの丸に */
 @container (max-width: 460px) {
   .review .bar { --control: 28px; font-size: 11px; padding: 0 6px 6px; }
-  .review .row { gap: 2px; }
+  .review .row, .review :is(.row-start, .row-center, .row-end) { gap: 2px; }
   .review button svg { width: 16px; height: 16px; }
   .review .play svg { width: 14px; height: 14px; }
   .review .time-main { font-size: 12px; }

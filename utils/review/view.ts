@@ -53,25 +53,36 @@ const ICONS = {
     sound: icon('<path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"></path>'),
 }
 
-const TEMPLATE = `
+const TRANSPORT = `
+    <button type="button" class="back" aria-label="${SKIP_SECONDS}秒戻る" title="${SKIP_SECONDS}秒戻る（←）">${ICONS.back}<span class="label">${SKIP_SECONDS}秒</span></button>
+    <button type="button" class="play" aria-label="再生" title="再生・一時停止（スペース）">${ICONS.play}</button>
+    <button type="button" class="forward" aria-label="${SKIP_SECONDS}秒進む" title="${SKIP_SECONDS}秒進む（→）"><span class="label">${SKIP_SECONDS}秒</span>${ICONS.forward}</button>`
+const TIME = `
+    <div class="time"><span class="time-main"><span class="clock">--:--</span><span class="program-time" title="番組が始まってからの時間（ニコ生のプレイヤーの表示と同じ）"></span></span><span class="behind" hidden><span class="scene-time"></span><span class="ago"></span></span></div>`
+const OPTIONS = `
+    <div class="kinds" role="group" aria-label="録画の種類" hidden>
+      ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}" hidden><span class="kind-dot" aria-hidden="true"></span><span class="kind-label">${KIND_LABELS[kind]}</span></button>`).join('')}
+    </div>
+    <button type="button" class="mute" title="音（M）"></button>`
+const LIVE = `
+    <button type="button" class="live" title="最新の録画へ戻る（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブ</span></button>`
+
+// 操作の行
+// - live（プレイバックのウィンドウ）: 再生の操作と時間を左に寄せ、種類・音・ライブを右に
+// - library（録画一覧）: 再生の操作を真ん中に、種類と音を左に、時間を右に
+const ROWS = {
+    live: `<div class="row">${TRANSPORT}${TIME}<span class="spacer"></span>${OPTIONS}${LIVE}</div>`,
+    library: `<div class="row"><div class="row-start">${OPTIONS}</div><div class="row-center">${TRANSPORT}</div><div class="row-end">${TIME}${LIVE}</div></div>`,
+}
+
+const template = (mode: 'live' | 'library') => `
 <div class="stage">
   <video playsinline></video>
   <div class="message" role="status" hidden></div>
 </div>
 <div class="bar">
   <input class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="再生位置">
-  <div class="row">
-    <button type="button" class="back" aria-label="${SKIP_SECONDS}秒戻る" title="${SKIP_SECONDS}秒戻る（←）">${ICONS.back}<span class="label">${SKIP_SECONDS}秒</span></button>
-    <button type="button" class="play" aria-label="再生" title="再生・一時停止（スペース）">${ICONS.play}</button>
-    <button type="button" class="forward" aria-label="${SKIP_SECONDS}秒進む" title="${SKIP_SECONDS}秒進む（→）"><span class="label">${SKIP_SECONDS}秒</span>${ICONS.forward}</button>
-    <div class="time"><span class="time-main"><span class="clock">--:--</span><span class="program-time" title="番組が始まってからの時間（ニコ生のプレイヤーの表示と同じ）"></span></span><span class="behind" hidden><span class="scene-time"></span><span class="ago"></span></span></div>
-    <span class="spacer"></span>
-    <div class="kinds" role="group" aria-label="録画の種類" hidden>
-      ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}" hidden><span class="kind-dot" aria-hidden="true"></span><span class="kind-label">${KIND_LABELS[kind]}</span></button>`).join('')}
-    </div>
-    <button type="button" class="mute" title="音（M）"></button>
-    <button type="button" class="live" title="最新の録画へ戻る（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブ</span></button>
-  </div>
+  ${ROWS[mode]}
 </div>
 `
 
@@ -120,7 +131,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const container = doc.createElement('div')
     container.className = 'review'
     container.dataset.mode = mode
-    container.innerHTML = TEMPLATE
+    container.innerHTML = template(mode)
     root.append(container)
 
     const $ = <T extends Element>(selector: string) => container.querySelector<T>(selector)!
