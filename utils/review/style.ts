@@ -54,8 +54,7 @@ const REVIEW_STYLE = `
   border-top: 1px solid var(--line);
 }
 /* 操作の行: 再生の操作を真ん中に、種類と音を左端、時間（プレイバックではライブに戻るボタンも）を右端に
-   ボタン類は縮めない（形を保つ）。時間は入りきらない所を隠して縮む。それでも入りきらない時は真ん中が少しずれ、
-   最後は消したり重ねたりせず横にスクロールする（スクロールする所の端で、選んだボタンの枠が切れないように、少し余白をとる） */
+   ボタン類は縮めない（形を保つ）。入りきらない時は、fit.ts がいらないものから隠す（下の data-hide） */
 .review .row {
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 8px; min-width: 0;
   padding: 3px; margin: -3px;
@@ -64,7 +63,9 @@ const REVIEW_STYLE = `
 }
 .review :is(.row-start, .row-center, .row-end) { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .review :is(.row-start, .row-center, .row-end) > * { flex-shrink: 0; }
-.review .row-end { justify-content: flex-end; }
+.review .row-start { grid-column: 1; }
+.review .row-center { grid-column: 2; }
+.review .row-end { grid-column: 3; justify-content: flex-end; }
 
 /* シークバー（細い線。再生した所まで色をつける） */
 /* 下の操作の行（枠のための余白）より手前にして、シークバーの下の端も押せるようにする */
@@ -176,12 +177,7 @@ const REVIEW_STYLE = `
   .review .bar { --control: 34px; font-size: 12.5px; padding: 4px 14px 10px; }
   .review .time-main { font-size: 14px; }
 }
-/* 少し狭い: 音と10秒のラベルを隠す */
-@container (max-width: 720px) {
-  .review .mute .label,
-  .review .back .label, .review .forward .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-/* とても狭い: ボタンを小さく、ライブはラベルなしの丸に */
+/* とても狭い: ボタンを小さく */
 @container (max-width: 460px) {
   .review .bar { --control: 28px; font-size: 11px; padding: 0 6px 6px; }
   .review .row { column-gap: 4px; }
@@ -191,22 +187,24 @@ const REVIEW_STYLE = `
   .review button svg { width: 16px; height: 16px; }
   .review .play svg { width: 14px; height: 14px; }
   .review .time-main { font-size: 12px; }
-  .review .live { padding: 0; width: calc(var(--control) - 4px); margin-left: 2px; }
-  .review .live .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .review .live { margin-left: 2px; }
 }
-/* 種類が3つの時は、ボタンが増える分、早めに詰める */
-@container (max-width: 380px) {
-  .review .row:has(.kinds[data-count="3"]) .behind { display: none; }
-}
-@container (max-width: 330px) {
-  .review .kinds[data-count="3"] .kind { padding: 0 4px; }
-  .review .row:has(.kinds[data-count="3"]) :is(.row-start, .row-center, .row-end) { gap: 1px; }
-}
-/* さらに狭い: ライブからの遅れの説明を隠す */
-@container (max-width: 360px) {
-  .review .behind { display: none; }
-  .review .back, .review .forward { min-width: 24px; padding: 0 2px; }
-}
+
+/* 入りきらない時に、いらないものから順に隠す（fit.ts の HIDE_ORDER の順に data-hide に足される） */
+.review[data-hide~="labels"] :is(.back, .forward, .mute) .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.review[data-hide~="skip"] :is(.back, .forward),
+.review[data-hide~="play"] .play,
+.review[data-hide~="program"] .program-time,
+.review[data-hide~="ago"] .ago,
+.review[data-hide~="behind"] .behind { display: none; }
+.review[data-hide~="live-label"] .live { padding: 0; width: calc(var(--control) - 4px); }
+.review[data-hide~="live-label"] .live .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.review[data-hide~="tight"] .row { column-gap: 4px; }
+.review[data-hide~="tight"] :is(.row-start, .row-center, .row-end) { gap: 1px; }
+.review[data-hide~="tight"] .kinds { gap: 2px; }
+.review[data-hide~="tight"] .kind { padding: 0 4px; }
+/* それでも入りきらなければ、重ねずに横にスクロールする */
+.review[data-hide~="scroll"] .row { display: flex; }
 
 @media (prefers-reduced-motion: reduce) {
   .review button, .review .seek::-webkit-slider-runnable-track { transition: none; }

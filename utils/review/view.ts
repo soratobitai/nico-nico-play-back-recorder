@@ -10,6 +10,7 @@ import { Timeline } from './timeline'
 import { createReviewPlayer, type ReviewPlayer } from './player'
 import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '../time-format'
 import { KIND_ICON_PATHS, SCREEN_DOT } from '../kind-icons'
+import { createRowFitter } from './fit'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -309,6 +310,10 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         return first
     }
 
+    // 操作の行が入りきらない時は、いらないものから隠す
+    const rowFitter = createRowFitter(container)
+    let lastLayoutKey = ''
+
     const render = () => {
         if (destroyed) return
         const empty = timeline.isEmpty
@@ -348,7 +353,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         // 種類が2つ以上ある時だけ、切り替えのボタンを出す
         const kinds = availableKinds()
         kindsGroup.hidden = kinds.length < 2
-        kindsGroup.dataset.count = String(kinds.length) // 3つの時は、狭い時に早めに詰める
+        kindsGroup.dataset.count = String(kinds.length)
         for (const button of kindButtons) {
             const kind = button.dataset.kind as RecordingKind
             button.hidden = !kinds.includes(kind)
@@ -368,6 +373,13 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             muteButton.innerHTML = `${video.muted ? ICONS.muted : ICONS.sound}<span class="label">${video.muted ? '音を出す' : '音を消す'}</span>`
             const target = mode === 'live' ? 'プレイバックの音' : '音'
             muteButton.setAttribute('aria-label', video.muted ? `${target}を出す` : `${target}を消す`)
+        }
+
+        // 文字の長さや種類の数が変わったら、操作の行に入りきるか確かめ直す
+        const layoutKey = [clock.textContent, programTime.textContent, sceneTime.textContent, ago.textContent].map(text => text?.length).concat(kinds.length, Number(video.muted)).join()
+        if (layoutKey !== lastLayoutKey) {
+            lastLayoutKey = layoutKey
+            rowFitter.schedule()
         }
 
         onChange?.({ kind: selectedKind, kinds, wallClock, playing: !video.paused })
@@ -608,6 +620,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             unsubscribe?.()
             clearInterval(syncTimer)
             clearInterval(renderTimer)
+            rowFitter.destroy()
             clearTimeout(scrubTimer)
             doc.removeEventListener('keydown', onKeyDown)
             player.destroy()
