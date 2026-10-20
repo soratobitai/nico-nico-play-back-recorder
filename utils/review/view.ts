@@ -20,6 +20,8 @@ const SKIP_SECONDS = 10
 const SYNC_INTERVAL_MS = 30 * 1000
 // 再生できない所を飛ばすのは、1分にこの回数まで（それより多ければ、飛ばし続けずにお知らせする）
 const MAX_RECOVERIES_PER_MINUTE = 5
+// 掴んで動かしている間に、移った位置のコマが出るのを待つ時間の上限（読み込みに時間がかかる所でも、次の位置へ移れるように）
+const SCRUB_WAIT_MS = 250
 // 種類の名前と、初めに見る種類の優先順
 const KIND_LABELS: Record<RecordingKind, string> = { video: 'コメントなし', comments: 'コメントあり', screen: '画面録画' }
 const KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
@@ -32,7 +34,7 @@ const MESSAGES = {
         playError: '録画を再生できませんでした。\nウィンドウを開き直してください。',
     },
     library: {
-        empty: 'この番組には、ここで再生できる録画がありません。\n（webm の録画は、区間の一覧から保存して見てください）',
+        empty: 'この番組には、ここで再生できる録画がありません。\n（webm の録画は、右の録画の一覧から保存して見てください）',
         unavailable: '録画を読み込めませんでした。',
         loadError: '録画を読み込めませんでした。',
         playError: '録画を再生できませんでした。\nページを読み込み直してください。',
@@ -366,11 +368,52 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         playVideo()
     }
 
-    seek.addEventListener('input', () => { dragging = true; render() })
+    // ---- 掴んで動かしている間は、その位置のコマを表示する（シークバー・録画一覧のタイムライン） ----
+    // 動かしている間は再生を止める。前の位置のコマを出し終えてから（読み込みに時間がかかる時は少し待ってから）
+    // 最新の位置へ移す（速く動かして追いつけない分は飛ばす）
+    let scrub: { wasPlaying: boolean, target: number | null, waiting: boolean } | null = null
+    let scrubTimer: ReturnType<typeof setTimeout> | undefined
+    const scrubNext = () => {
+        clearTimeout(scrubTimer)
+        video.removeEventListener('seeked', scrubNext)
+        if (!scrub) return
+        scrub.waiting = false
+        if (scrub.target === null) return
+        const t = scrub.target
+        scrub.target = null
+        scrub.waiting = true
+        video.addEventListener('seeked', scrubNext)
+        scrubTimer = setTimeout(scrubNext, SCRUB_WAIT_MS)
+        player.seek(t)
+    }
+    const scrubTo = (t: number) => {
+        if (!scrub) {
+            scrub = { wasPlaying: !video.paused, target: null, waiting: false }
+            wantsPlaying = false
+            video.pause()
+        }
+        scrub.target = t
+        if (!scrub.waiting) scrubNext()
+    }
+    // 動かし終えて、その位置へ移る。play: 続けて再生するか（指定しなければ、動かす前に再生していたら続ける）
+    const endScrub = (t: number, play?: boolean) => {
+        const wasPlaying = scrub?.wasPlaying
+        clearTimeout(scrubTimer)
+        video.removeEventListener('seeked', scrubNext)
+        scrub = null
+        player.seek(t)
+        if (play ?? wasPlaying) playVideo()
+    }
+
+    seek.addEventListener('input', () => {
+        dragging = true
+        scrubTo(Number(seek.value))
+        render()
+    })
     // 動かし終えたら（値が変わったら）、その位置へ移る
     const commitSeek = () => {
         dragging = false
-        player.seek(Number(seek.value))
+        endScrub(Number(seek.value))
         render()
     }
     seek.addEventListener('change', commitSeek)
@@ -493,17 +536,45 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const syncTimer = setInterval(sync, SYNC_INTERVAL_MS)
     const renderTimer = setInterval(render, 1000)
 
+    // 種類と録った時刻を指定して見る（library。読み込む前なら、読み込んでから）
+    const show = (kind?: RecordingKind, wallClock?: number, play = true) => {
+        if (destroyed) return
+        if (!started) {
+            requested = { kind, wallClock, play }
+            startIfReady()
+            return
+        }
+        const kinds = availableKinds()
+        moveTo(kind && kinds.includes(kind) ? kind : selectedKind, wallClock ?? null, play)
+    }
+    // 違う種類を掴んだら、その種類に切り替える
+    const switchKindFor = (kind: RecordingKind, wallClock: number) => {
+        if (kind !== selectedKind && availableKinds().includes(kind)) moveTo(kind, wallClock, false)
+    }
+
     return {
-        // 種類と録った時刻を指定して見る（library。読み込む前なら、読み込んでから）
-        show(kind?: RecordingKind, wallClock?: number, play = true) {
+        show,
+
+        // 録った時刻の場面のコマを表示する（library のタイムラインを掴んで動かしている間）
+        scrub(kind: RecordingKind, wallClock: number) {
+            if (destroyed || !started) return
+            switchKindFor(kind, wallClock)
+            const t = timeline.timeAtWallClock(wallClock)
+            if (t !== null) scrubTo(t)
+            render()
+        },
+
+        // 掴んで動かし終えた（その時刻から見る。play なら続けて再生する）
+        endScrub(kind: RecordingKind, wallClock: number, play = true) {
             if (destroyed) return
             if (!started) {
-                requested = { kind, wallClock, play }
-                startIfReady()
+                show(kind, wallClock, play)
                 return
             }
-            const kinds = availableKinds()
-            moveTo(kind && kinds.includes(kind) ? kind : selectedKind, wallClock ?? null, play)
+            switchKindFor(kind, wallClock)
+            const t = timeline.timeAtWallClock(wallClock)
+            if (t !== null) endScrub(t, play)
+            render()
         },
 
         // 保存先から読み直す（区間を消した後など）
@@ -514,6 +585,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             unsubscribe?.()
             clearInterval(syncTimer)
             clearInterval(renderTimer)
+            clearTimeout(scrubTimer)
             doc.removeEventListener('keydown', onKeyDown)
             player.destroy()
             container.remove()

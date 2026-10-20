@@ -186,16 +186,73 @@ describe('シークバー', () => {
         const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
         await flush()
         const seek = root.querySelector<HTMLInputElement>('.seek')!
-        current().seek.mockClear()
-
         seek.value = '10'
         seek.dispatchEvent(new Event('input'))
+        current().seek.mockClear() // 動かしている間の移動（コマを出す）は数えない
         seek.dispatchEvent(new Event('pointerup'))
         seek.dispatchEvent(new Event('change'))
         await flush()
 
         expect(current().seek).toHaveBeenCalledTimes(1)
         expect(current().seek).toHaveBeenLastCalledWith(10)
+        view.destroy()
+    })
+
+    it('掴んで動かしている間は止めて、その位置のコマを出す。前の位置を出し終えるまで次へは移らず、最新の位置へ移る', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const seek = root.querySelector<HTMLInputElement>('.seek')!
+        const video = root.querySelector('video')!
+        Object.defineProperty(video, 'paused', { value: false, configurable: true }) // 再生中
+        const pause = vi.spyOn(video, 'pause').mockImplementation(() => {})
+        const play = vi.spyOn(video, 'play').mockResolvedValue()
+        current().seek.mockClear()
+
+        for (const value of ['2', '5', '7']) {
+            seek.value = value
+            seek.dispatchEvent(new Event('input'))
+        }
+        expect(pause).toHaveBeenCalled()
+        expect(current().seek.mock.calls.map(([t]) => t)).toEqual([2]) // 2 のコマを出している間は移らない
+
+        video.dispatchEvent(new Event('seeked'))
+        expect(current().seek.mock.calls.map(([t]) => t)).toEqual([2, 7]) // 出し終えたら、最新の位置へ
+
+        seek.dispatchEvent(new Event('change'))
+        expect(current().seek).toHaveBeenLastCalledWith(7)
+        expect(play).toHaveBeenCalled() // 動かす前に再生していたので、続けて再生する
+        view.destroy()
+    })
+
+    it('止めていた時は、動かし終えても止めたまま', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const seek = root.querySelector<HTMLInputElement>('.seek')!
+        const play = vi.spyOn(root.querySelector('video')!, 'play').mockResolvedValue()
+
+        seek.value = '3'
+        seek.dispatchEvent(new Event('input'))
+        seek.dispatchEvent(new Event('change'))
+
+        expect(current().seek).toHaveBeenLastCalledWith(3)
+        expect(play).not.toHaveBeenCalled()
+        view.destroy()
+    })
+
+    it('録画一覧のタイムラインを掴んで動かしている間も、その場面のコマを出し、離したらそこから再生する', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const play = vi.spyOn(root.querySelector('video')!, 'play').mockResolvedValue()
+        current().seek.mockClear()
+
+        view.scrub('video', 104_000) // A の4秒目
+        expect(current().seek).toHaveBeenLastCalledWith(4)
+        view.endScrub('video', 110_000) // B の始め（9.5秒）より後
+        expect(current().seek).toHaveBeenLastCalledWith(10)
+        expect(play).toHaveBeenCalled()
         view.destroy()
     })
 
