@@ -16,6 +16,12 @@ import { hasLegacyDatabase, deleteLegacyDatabase } from '../../hooks/indexedDB/r
 const GB = 1024 * 1024 * 1024
 // 容量の上限の範囲
 const MAX_STORAGE_SIZE_LIMIT = 100 * GB
+// ホイールでスライダーを1目盛り動かす量（ピクセル。マウスのホイール1回分。タッチパッドは細かく届くので足し合わせる）
+const WHEEL_STEP_PIXELS = 100
+// ホイールで動かした値を保存するまでの時間（動かし終えてから保存する）
+const WHEEL_SAVE_DELAY_MS = 600
+// 開いた直後に、この間のダブルクリックの2回目は無視する（歯車のダブルクリック）
+const OPEN_CLICK_GUARD_MS = 1000
 const STORAGE_QUOTA_ESTIMATE = 30 * GB
 
 interface Settings {
@@ -59,7 +65,6 @@ const CHECKBOXES: Partial<Record<keyof Settings, string>> = {
 class SettingsModal {
   private modal: HTMLDialogElement | null = null
   private isVisible: boolean = false
-  private keyHandler: ((e: KeyboardEvent) => void) | null = null
   private settings: Settings = {
     MAX_STORAGE_SIZE: 1 * GB,
     AUTO_START: true,
@@ -320,20 +325,41 @@ class SettingsModal {
 
     // 閉じる: 閉じるボタン・Esc キー・ダイアログの外（暗くした所）のクリック
     modal.querySelector('.npr-settings-close')?.addEventListener('click', () => this.close())
-    this.keyHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && this.isVisible) {
-        e.preventDefault()
-        this.close()
-      }
+    // キー操作は設定画面の中だけで扱い、ページには伝えない
+    // （ニコ生のプレイヤーの操作キーに届くと、スペースで生放送が一時停止したり、↑↓で音量が変わったりする）
+    for (const type of ['keydown', 'keyup', 'keypress'] as const) {
+      modal.addEventListener(type, (e) => {
+        e.stopPropagation()
+        if (type === 'keydown' && e.key === 'Escape') {
+          e.preventDefault()
+          this.close()
+        }
+      })
     }
-    document.addEventListener('keydown', this.keyHandler)
     // Esc でブラウザがダイアログを閉じる時も、片付けをする
     modal.addEventListener('cancel', (e) => {
       e.preventDefault()
       this.close()
     })
+    // 歯車をダブルクリックした時の2回目は、開いたダイアログに当たるので無視する
+    // （暗くした所に当たってすぐ閉じたり、その場所の設定を変えたりしないように）
+    const openedAt = performance.now()
+    for (const type of ['mousedown', 'click'] as const) {
+      modal.addEventListener(type, (e) => {
+        if (e.detail > 1 && performance.now() - openedAt < OPEN_CLICK_GUARD_MS) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }, { capture: true })
+    }
+    // 暗くした所で押して離した時だけ閉じる（設定画面の中で押して外で離した時、文字を選んでいた時などは閉じない）
+    let pressedOnBackdrop = false
+    modal.addEventListener('pointerdown', (e) => {
+      pressedOnBackdrop = e.target === modal
+    })
     modal.addEventListener('click', (e) => {
-      if (e.target === modal) this.close()
+      if (e.target === modal && pressedOnBackdrop) this.close()
+      pressedOnBackdrop = false
     })
 
     for (const [key, id] of Object.entries(CHECKBOXES) as [keyof Settings, string][]) {
@@ -374,14 +400,24 @@ class SettingsModal {
     const storageRange = modal.querySelector('#storageRange') as HTMLInputElement
     storageRange?.addEventListener('input', () => this.updateStorageLabel(Number(storageRange.value)))
     storageRange?.addEventListener('change', () => this.updateSetting('MAX_STORAGE_SIZE', Number(storageRange.value)))
+    // ホイールでも動かせる。ただし、スライダーを選んでいる（フォーカスがある）時の縦のホイールだけ
+    // （設定画面をスクロールしている途中にスライダーの上を通っても、上限を変えない。上限を下げると古い録画が消えるため）
+    let wheelPixels = 0
+    let wheelSaveTimer: ReturnType<typeof setTimeout> | undefined
     storageRange?.addEventListener('wheel', (e) => {
+      if (document.activeElement !== storageRange) return
+      if (e.deltaY === 0 || Math.abs(e.deltaY) < Math.abs(e.deltaX)) return
       e.preventDefault()
-      const next = this.settings.MAX_STORAGE_SIZE + (e.deltaY < 0 ? GB : -GB)
-      if (next < GB || next > MAX_STORAGE_SIZE_LIMIT) return
+      wheelPixels += e.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? e.deltaY : Math.sign(e.deltaY) * WHEEL_STEP_PIXELS
+      const steps = Math.trunc(wheelPixels / WHEEL_STEP_PIXELS)
+      if (steps === 0) return
+      wheelPixels -= steps * WHEEL_STEP_PIXELS
+      const next = Math.min(Math.max(Number(storageRange.value) - steps * GB, GB), MAX_STORAGE_SIZE_LIMIT)
       storageRange.value = String(next)
       this.updateStorageLabel(next)
-      this.updateSetting('MAX_STORAGE_SIZE', next)
-    })
+      clearTimeout(wheelSaveTimer)
+      wheelSaveTimer = setTimeout(() => this.updateSetting('MAX_STORAGE_SIZE', Number(storageRange.value)), WHEEL_SAVE_DELAY_MS)
+    }, { passive: false })
 
     // すべての録画を削除
     modal.querySelector('#clearButton')?.addEventListener('click', async () => {
@@ -487,10 +523,6 @@ class SettingsModal {
     }
     const settingsButton = document.getElementById('settingsButton')
     settingsButton?.setAttribute('aria-expanded', 'false')
-    if (this.keyHandler) {
-      document.removeEventListener('keydown', this.keyHandler)
-      this.keyHandler = null
-    }
   }
 }
 

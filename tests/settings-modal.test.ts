@@ -13,6 +13,14 @@ vi.mock('@/utils/library/api', () => ({
 
 const GB = 1024 * 1024 * 1024
 const flush = () => new Promise(resolve => setTimeout(resolve, 0))
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+const wheel = (deltaY: number, init: WheelEventInit = {}) => slider('storageRange').dispatchEvent(new WheelEvent('wheel', { deltaY, cancelable: true, ...init }))
+const dialog = () => document.getElementById('settingsModal')!
+// 暗くした所（ダイアログ自身）で押して離す
+const clickBackdrop = (detail = 1) => {
+    dialog().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    dialog().dispatchEvent(new MouseEvent('click', { bubbles: true, detail }))
+}
 const slider = (id: string) => document.getElementById(id) as HTMLInputElement
 const moveSlider = (id: string, value: number, event: 'input' | 'change') => {
     slider(id).value = String(value)
@@ -77,9 +85,50 @@ describe('設定画面', () => {
         expect(document.getElementById('storageGB')?.textContent).toBe('50')
 
         // ホイールで1つ下げると、50 GB から下げる（このタブを開いた時の 1 GB からではない）
-        slider('storageRange').dispatchEvent(new WheelEvent('wheel', { deltaY: 1, cancelable: true }))
-        await flush()
+        slider('storageRange').focus()
+        wheel(100)
+        await wait(700)
         expect(await MAX_STORAGE_SIZE.getValue()).toBe(49 * GB)
+    })
+
+    describe('容量の上限のスライダーのホイール（上限を下げると古い録画が消えるので、うっかり動かさない）', () => {
+        beforeEach(async () => {
+            await MAX_STORAGE_SIZE.setValue(30 * GB)
+            await flush()
+            modal.show()
+            await flush()
+        })
+
+        it('スライダーを選んでいない時は、上を通ってスクロールしても動かさない', async () => {
+            for (let i = 0; i < 10; i++) wheel(100)
+            await wait(700)
+
+            expect(slider('storageRange').value).toBe(String(30 * GB))
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(30 * GB)
+        })
+
+        it('選んでいる時は、ホイール1回で1目盛り。タッチパッドの細かい動きは足し合わせ、横のスクロールでは動かさない', async () => {
+            slider('storageRange').focus()
+            for (let i = 0; i < 10; i++) wheel(4) // 40 ピクセル分では、まだ動かさない
+            wheel(0, { deltaX: 100 })
+            expect(slider('storageRange').value).toBe(String(30 * GB))
+
+            wheel(-100)
+            wheel(-100)
+            expect(slider('storageRange').value).toBe(String(31 * GB)) // 40 + (-200) = -160 → 1目盛り上げる
+            await wait(700) // 保存を待つ（次のテストに持ち越さない）
+        })
+
+        it('動かしている間は保存せず、動かし終えてから1回だけ保存する', async () => {
+            slider('storageRange').focus()
+            wheel(100)
+            wheel(100)
+            await flush()
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(30 * GB)
+
+            await wait(700)
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(28 * GB)
+        })
     })
 
     it('録画を区切る間隔は設定にない（内部で区切る）', () => {
@@ -90,9 +139,8 @@ describe('設定画面', () => {
 
     it('画面の中央にダイアログで開き、もう一度押す・閉じるボタン・Esc・ダイアログの外のクリックで閉じる', () => {
         modal.show()
-        const dialog = document.getElementById('settingsModal')!
-        expect(dialog.tagName).toBe('DIALOG')
-        expect(dialog.parentElement).toBe(document.body) // 録画バーの中ではなく、ページの上に開く
+        expect(dialog().tagName).toBe('DIALOG')
+        expect(dialog().parentElement).toBe(document.body) // 録画バーの中ではなく、ページの上に開く
         expect(document.getElementById('settingsButton')?.getAttribute('aria-expanded')).toBe('true')
 
         modal.show()
@@ -104,16 +152,51 @@ describe('設定画面', () => {
         expect(document.getElementById('settingsModal')).toBeNull()
 
         modal.show()
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+        dialog().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
         expect(document.getElementById('settingsModal')).toBeNull()
 
         modal.show()
-        document.getElementById('settingsModal')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) // 暗くした所
+        clickBackdrop()
         expect(document.getElementById('settingsModal')).toBeNull()
 
         modal.show()
         ;(document.querySelector('.npr-settings-body') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true })) // ダイアログの中
         expect(document.getElementById('settingsModal')).not.toBeNull()
+    })
+
+    it('開いている間のキー操作はページに伝えない（スペースでプレイヤーが一時停止したり、↑↓で音量が変わったりしないように）', () => {
+        const pageKeys = vi.fn()
+        document.addEventListener('keydown', pageKeys)
+        modal.show()
+
+        for (const key of [' ', 'ArrowUp', 'ArrowDown']) dialog().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+
+        expect(pageKeys).not.toHaveBeenCalled()
+        expect(document.getElementById('settingsModal')).not.toBeNull()
+        document.removeEventListener('keydown', pageKeys)
+    })
+
+    it('設定画面の中で押して、暗くした所で離しても閉じない（文字を選んでいた時など）', () => {
+        modal.show()
+
+        document.querySelector('.npr-settings-body')!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+        dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        expect(document.getElementById('settingsModal')).not.toBeNull()
+    })
+
+    it('歯車のダブルクリックの2回目は、開いたダイアログに当たっても無視する（すぐ閉じたり、設定を変えたりしない）', () => {
+        modal.show()
+
+        clickBackdrop(2)
+        expect(document.getElementById('settingsModal')).not.toBeNull()
+        const comments = document.getElementById('recordCommentsCheckbox') as HTMLInputElement
+        comments.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 2 }))
+        expect(comments.checked).toBe(false)
+
+        // ふつうのクリックは効く
+        clickBackdrop(1)
+        expect(document.getElementById('settingsModal')).toBeNull()
     })
 
     describe('録画する種類', () => {
