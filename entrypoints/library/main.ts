@@ -14,6 +14,7 @@ import { REVIEW_STYLE } from '@/utils/review/style'
 import { downloadBlob, formatDateForFileName, getVideoExtension } from '@/utils/feature'
 import { MAX_STORAGE_SIZE } from '@/utils/storage'
 import { formatRecorded, formatElapsed, formatBroadcastTime } from '@/utils/time-format'
+import { setupLegacyImport } from './legacy'
 
 // 一覧を読み直す間隔（録画中の番組の分が増える）
 const REFRESH_INTERVAL_MS = 15 * 1000
@@ -913,6 +914,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (tab?.windowId !== undefined) chrome.windows.update(tab.windowId, { focused: true })
     }).catch(() => {})
     sendResponse(true)
+})
+
+// 以前のバージョンの録画の取り込み（手動。進み具合を番組の一覧の上に出す）
+setupLegacyImport({
+    notice: $<HTMLDivElement>('legacyNotice'),
+    dialog: $<HTMLDialogElement>('legacyDialog'),
+    usageBytes: () => programs.reduce((sum, program) => sum + program.bytes, 0),
+    formatBytes,
+    reload: () => load(),
 })
 
 // 最初に選ぶ番組（指定がなければ、最近録った番組）

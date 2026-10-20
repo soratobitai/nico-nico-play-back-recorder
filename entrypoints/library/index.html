@@ -33,6 +33,8 @@
           </select>
         </div>
       </div>
+      <!-- 以前のバージョンの録画の取り込み（残っている時と、取り込んでいる間だけ出す） -->
+      <div id="legacyNotice" class="legacy-notice" role="status" hidden></div>
       <div id="programList" class="program-list"></div>
       <div class="side-foot">
         <span id="listSummary"></span>
@@ -103,6 +105,22 @@
       </section>
     </main>
   </div>
+
+  <!-- 以前のバージョンの録画を取り込む前の確認 -->
+  <dialog id="legacyDialog" class="dialog" aria-labelledby="legacyDialogTitle">
+    <h2 id="legacyDialogTitle">以前のバージョンの録画を取り込む</h2>
+    <p id="legacySummary"></p>
+    <ul class="dialog-notes">
+      <li>取り込んだ録画は、以前のバージョンの保存先（ニコ生のサイトデータ）からは消えます。</li>
+      <li>取り込むために、ニコ生のページを裏で開きます（取り込み終えたら閉じます）。取り込んでいる間も、録画一覧や録画はそのまま使えます。</li>
+      <li>途中でやめても、取り込んだ分はそのまま残ります。もう一度取り込むと、続きから取り込みます。</li>
+    </ul>
+    <div class="legacy-capacity"></div>
+    <div class="dialog-actions">
+      <button type="button" id="legacyClose" class="button">閉じる</button>
+      <button type="button" id="legacyStart" class="button primary">取り込みを始める</button>
+    </div>
+  </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="./main.ts"></script>

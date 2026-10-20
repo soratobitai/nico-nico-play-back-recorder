@@ -1,4 +1,4 @@
-import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments, setPendingLimit, isPendingSegment } from "../../utils/library/api"
+import { enforceLimit, flushPending, closeStaleSegments, setPendingLimit, isPendingSegment } from "../../utils/library/api"
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds } from "../../utils/recording"
 import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
@@ -680,10 +680,7 @@ export default async () => {
                     }
                     // 移した分で容量の上限を超えていれば、古いものから消す
                     await enforceStorageLimit()
-
-                    // 以前のバージョンの録画を拡張機能側へ移す
-                    migrateLegacy()
-                        .catch((error) => console.log("以前の録画を移せませんでした:", error))
+                    // 以前のバージョンの録画は自動では移さない（録画一覧から手動で取り込む。entrypoints/legacy.content.ts）
                 })
             })
         })

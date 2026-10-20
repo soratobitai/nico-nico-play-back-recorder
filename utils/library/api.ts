@@ -3,7 +3,7 @@
 // ニコ生側に一時保存して録画を続け、次にページを開いた時に移す（flushPending）。
 import { getBridge, BridgeUnavailableError, isExtensionContextValid } from './client'
 import { savePendingRequest, flushPendingRequests, clearPendingRequests } from './pending'
-import { migrateLegacyRecordings } from './migrate'
+import { importLegacyRecordings } from './migrate'
 import { WRITE_REQUEST_TYPES, type BridgeRequest, type BridgeRequestOf, type BridgeRequestType, type BridgeResults } from './protocol'
 import type { NewSegment, NewFragment } from './db'
 
@@ -133,14 +133,15 @@ const flushPending = (): Promise<{ sent: number, complete: boolean }> => flushin
     }
 })()
 
-// 以前のバージョンの録画（ニコ生のサイトデータに保存していたもの）を拡張機能側へ移す
+// 以前のバージョンの録画（ニコ生のサイトデータに保存していたもの）を拡張機能側へ移す（録画一覧から頼まれた時）
 // 移した録画を確実に拡張機能側に置くため、一時保存には回さずに直接送る
-const migrateLegacy = () => migrateLegacyRecordings(async (request) => (await getBridge()).call(request))
+const importLegacy = (options?: Parameters<typeof importLegacyRecordings>[1]) =>
+    importLegacyRecordings(async (request) => (await getBridge()).call(request), options)
 
 export {
     isPendingSegment,
     createSegment, setSegmentInit, appendFragments, finishSegment,
     getTimeline, getFragmentBlobs,
-    getUsage, enforceLimit, freeSpace, closeStaleSegments, deleteSegments, clearAll, estimateStorage, flushPending, migrateLegacy,
+    getUsage, enforceLimit, freeSpace, closeStaleSegments, deleteSegments, clearAll, estimateStorage, flushPending, importLegacy,
     setPendingLimit,
 }

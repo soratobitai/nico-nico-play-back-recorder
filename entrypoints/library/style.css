@@ -226,6 +226,46 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .side-foot span, .select-bar span { flex: 1; min-width: 0; }
 .select-bar { background: #1f1416; color: #f1c9cd; }
 
+/* 以前のバージョンの録画の取り込み（番組の一覧の上） */
+.legacy-notice {
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(92, 141, 255, 0.35);
+  background: rgba(92, 141, 255, 0.1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.legacy-notice[data-phase="interrupted"] { border-color: rgba(255, 138, 149, 0.4); background: rgba(255, 138, 149, 0.08); }
+.legacy-text { margin: 0; flex: 1 1 100%; font-size: 12px; line-height: 1.6; }
+.legacy-detail { margin: 0; flex: 1 1 100%; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legacy-progress { flex: 1 1 100%; width: 100%; height: 6px; appearance: none; border: none; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.legacy-progress::-webkit-progress-bar { background: rgba(255, 255, 255, 0.12); border-radius: 3px; }
+.legacy-progress::-webkit-progress-value { background: var(--accent); border-radius: 3px; transition: width 0.3s; }
+
+/* 確認のダイアログ */
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 20px 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+.dialog h2 { margin: 0 0 10px; font-size: 16px; }
+.dialog p { margin: 0 0 8px; line-height: 1.7; }
+.dialog-notes { margin: 0 0 12px; padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.legacy-capacity { padding: 10px 12px; border-radius: 10px; background: var(--raised); font-size: 12px; }
+.legacy-capacity p:last-child { margin-bottom: 0; }
+.legacy-ok { color: #7fd8b4; }
+.legacy-warning { margin-top: 8px; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255, 138, 149, 0.4); background: rgba(255, 138, 149, 0.08); color: #ffd0d5; }
+.legacy-warning p { margin: 0 0 8px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
 /* ===== 右: 番組 ===== */
 .main { min-width: 0; padding: 16px 24px; }
 .empty { margin: 64px auto; max-width: 520px; text-align: center; color: var(--muted); line-height: 1.8; white-space: pre-line; }

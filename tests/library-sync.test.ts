@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { savePendingRequest, flushPendingRequests, clearPendingRequests } from '@/utils/library/pending'
-import { migrateLegacyRecordings } from '@/utils/library/migrate'
+import { migrateLegacyRecordings, importLegacyRecordings, summarizeLegacyRecordings, type LegacyImportProgress } from '@/utils/library/migrate'
 import { handleBridgeRequest } from '@/utils/library/handler'
 import { clearAll, listAllSegments, buildDownloadFiles } from '@/utils/library/db'
 import { saveChunk, getAllChunks, hasLegacyDatabase, deleteLegacyDatabase } from '@/hooks/indexedDB/recordingDB'
@@ -170,6 +170,28 @@ describe('以前のバージョンの録画を移す', () => {
 
         expect(counts.sort()).toEqual([0, 1])
         expect(await listAllSegments()).toHaveLength(1)
+    })
+
+    it('取り込む本数と大きさを数え、進み具合を知らせ、やめると言われたら1本を移し終えてからやめる', async () => {
+        for (let i = 0; i < 3; i++) await saveChunk('Chunks', 'S1', i, fixtureBlob, null, 5000 + i, 'user', 'title')
+        expect(await summarizeLegacyRecordings()).toEqual({ count: 3, bytes: fixtureBlob.size * 3 })
+
+        const progress: LegacyImportProgress[] = []
+        const result = await importLegacyRecordings(call, {
+            onProgress: p => progress.push(p),
+            isCancelled: () => progress.some(p => p.done === 1),
+        })
+
+        expect(result).toEqual({ migrated: 1, cancelled: true, busy: false })
+        expect(progress[0]).toMatchObject({ done: 0, total: 3, bytesDone: 0, bytesTotal: fixtureBlob.size * 3 })
+        expect(progress.at(-1)).toMatchObject({ done: 1, bytesDone: fixtureBlob.size })
+        // 途中の進み具合（断片をまとめて送るたび）も知らせる
+        expect(progress.some(p => p.done === 0 && p.bytesDone > 0)).toBe(true)
+        // 残りは以前の保存先に残り、続きから取り込める
+        expect(await summarizeLegacyRecordings()).toEqual({ count: 2, bytes: fixtureBlob.size * 2 })
+        expect(await importLegacyRecordings(call)).toEqual({ migrated: 2, cancelled: false, busy: false })
+        expect(await listAllSegments()).toHaveLength(3)
+        expect(await summarizeLegacyRecordings()).toBeNull()
     })
 
     it('以前の保存先がなければ何もせず、作りもしない', async () => {

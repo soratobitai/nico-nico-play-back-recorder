@@ -61,3 +61,13 @@ export const FIXED_RESOLUTION_HEIGHT = storage.defineItem<number>(
         fallback: 720,
     }
 )
+
+// 以前のバージョン（1.2.2 まで）の録画が、ニコ生のサイトデータに残っているか（数と大きさ。なければ null）
+// ニコ生のページを開いた時に調べて書き込み、録画一覧で取り込み（手動）を勧める
+export type LegacyRecordings = { count: number, bytes: number }
+export const LEGACY_RECORDINGS = storage.defineItem<LegacyRecordings | null>(
+    'local:LEGACY_RECORDINGS',
+    {
+        fallback: null,
+    }
+)

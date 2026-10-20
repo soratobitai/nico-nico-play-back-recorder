@@ -123,8 +123,12 @@ const deleteLegacyDatabase = async (): Promise<void> => {
         const request = indexedDB.deleteDatabase(DB_NAME)
         request.onsuccess = () => resolve()
         request.onerror = () => reject(request.error)
-        // 古いバージョンのスクリプトが開いたままのタブがあると消せない（そのタブを閉じれば消える）
-        request.onblocked = () => console.log('以前の録画の保存先は、開いているタブがあるため後で消えます')
+        // 古いバージョンのスクリプトが開いたままのタブがあると、すぐには消せない（そのタブを閉じれば消える）。
+        // 消えるのを待たずに終える（取り込みが終わらないままにならないように）
+        request.onblocked = () => {
+            console.log('以前の録画の保存先は、開いているタブがあるため後で消えます')
+            resolve()
+        }
     })
 }
 
