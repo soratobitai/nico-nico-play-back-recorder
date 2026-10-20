@@ -2,10 +2,12 @@
 const getProgramData = () => {
     // ユーザー名を取得（ページの構造が変わって取れなくても、録画は続けられるように空にする）
     let userName_ = ''
+    let ldStartDate: unknown
     try {
-        const ldJson = document.querySelector('script[type="application/ld+json"]')
-        const name = JSON.parse(ldJson?.textContent || '{}')?.author?.name
+        const ldJson = JSON.parse(document.querySelector('script[type="application/ld+json"]')?.textContent || '{}')
+        const name = ldJson?.author?.name
         if (typeof name === 'string') userName_ = name
+        ldStartDate = ldJson?.startDate
     } catch (error) {
         console.log('ユーザー名の取得に失敗しました:', error)
     }
@@ -17,7 +19,20 @@ const getProgramData = () => {
     if (meta) title_ = meta.content
     const title = (title_ || '').replace(/[\\/:*?"<>|]/g, '')
 
-    return { userName, title }
+    // 番組が始まった時刻（ミリ秒。プレイバックと録画一覧で、番組の経過時間を出すのに使う。読めなければ null）
+    let beginAt: number | null = null
+    try {
+        const seconds = JSON.parse(document.getElementById('embedded-data')?.dataset.props || '{}')?.program?.beginTime
+        if (typeof seconds === 'number' && seconds > 0) beginAt = seconds * 1000
+    } catch {
+        // 読めなければ、番組情報の開始日時を使う
+    }
+    if (beginAt === null && typeof ldStartDate === 'string') {
+        const parsed = Date.parse(ldStartDate)
+        if (!Number.isNaN(parsed)) beginAt = parsed
+    }
+
+    return { userName, title, beginAt }
 }
 
 // ライブ映像の今のコマを、録画リスト用の小さなサムネイル（JPEG の data URL）にする

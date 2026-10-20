@@ -6,7 +6,7 @@ import type { RecordingSource } from './recording-source'
 import type { NewSegment, RecordingKind, SegmentSummary } from './library/db'
 
 // 区間に記録する番組の情報など
-type SegmentDetails = Pick<NewSegment, 'programId' | 'title' | 'userName' | 'thumbnail'>
+type SegmentDetails = Pick<NewSegment, 'programId' | 'title' | 'userName' | 'thumbnail' | 'programBeginAt'>
 
 type KindRecorderOptions = {
     kind: RecordingKind

@@ -7,6 +7,7 @@ type ProgramSummary = {
     title: string
     userName: string
     startedAt: number // 最初に録り始めた時刻
+    beginAt: number | null // 番組が始まった時刻（分からなければ null）
     endedAt: number // 最後に録り終えた時刻（録画中なら、今のところの終わり）
     recording: boolean // 録画中の区間がある
     segments: SegmentSummary[] // 始めた順
@@ -32,12 +33,13 @@ const summarizePrograms = (segments: SegmentSummary[]): ProgramSummary[] => {
         if (!program) {
             program = {
                 key, programId: segment.programId, title: segment.title, userName: segment.userName,
-                startedAt: segment.startedAt, endedAt: segmentEnd(segment), recording: false,
+                startedAt: segment.startedAt, beginAt: null, endedAt: segmentEnd(segment), recording: false,
                 segments: [], kinds: [], bytes: 0, bytesByKind: { video: 0, comments: 0, screen: 0 },
             }
             programs.set(key, program)
         }
         program.segments.push(segment)
+        if (program.beginAt === null && segment.programBeginAt) program.beginAt = segment.programBeginAt
         program.endedAt = Math.max(program.endedAt, segmentEnd(segment))
         program.recording ||= segment.endedAt === null
         program.bytes += segment.bytes

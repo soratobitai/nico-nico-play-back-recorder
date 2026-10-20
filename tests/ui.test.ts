@@ -204,7 +204,19 @@ describe('getProgramData', () => {
             <script type="application/ld+json">{"author": {"name": "user/name"}}</script>
             <meta property="og:title" content="title:1">`
 
-        expect(getProgramData()).toEqual({ userName: 'username', title: 'title1' })
+        expect(getProgramData()).toEqual({ userName: 'username', title: 'title1', beginAt: null })
+    })
+
+    it('番組が始まった時刻を、埋め込みデータ（なければ番組情報の開始日時）から読む', () => {
+        document.head.innerHTML = '<script type="application/ld+json">{"startDate": "2026-10-20T00:00:00+09:00"}</script>'
+        document.body.innerHTML = '<script id="embedded-data" data-props="{&quot;program&quot;:{&quot;beginTime&quot;:1792422000}}"></script>'
+        expect(getProgramData().beginAt).toBe(1792422000 * 1000)
+
+        document.body.innerHTML = ''
+        expect(getProgramData().beginAt).toBe(Date.parse('2026-10-20T00:00:00+09:00'))
+
+        document.head.innerHTML = ''
+        expect(getProgramData().beginAt).toBeNull()
     })
 
     it('番組情報がない・壊れているページでも例外にならず、ユーザー名を空にする', () => {

@@ -270,6 +270,28 @@ describe('シークバー', () => {
     })
 })
 
+describe('時間の表示', () => {
+    it('番組の経過時間を大きく出し、録画一覧では放送した時刻（午前・午後）も出す', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', programBeginAt: 40_000, readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+
+        // A の始め（100 秒）は、番組が始まって（40 秒）から 1 分
+        expect(root.querySelector('.clock')!.textContent).toBe('0:01:00')
+        expect(root.querySelector('.behind')!.textContent).toMatch(/^(\d+\/\d+ )?午[前後]\d+:\d\d に放送$/)
+        expect(root.querySelector<HTMLElement>('.clock')!.title).toContain('に放送')
+        view.destroy()
+    })
+
+    it('番組が始まった時刻が分からなければ、最初に録った時刻からの経過時間', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        expect(root.querySelector('.clock')!.textContent).toBe('0:00:00')
+        view.destroy()
+    })
+})
+
 describe('動画を押す', () => {
     it.each(['library', 'live'] as const)('動画を押すと再生・一時停止する（%s）', async (mode) => {
         const root = document.getElementById('root')!

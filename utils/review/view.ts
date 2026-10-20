@@ -8,6 +8,7 @@ import type { RecordingKind, TimelineSegment } from '../library/db'
 import type { LiveFeedEvent } from './live-feed'
 import { Timeline } from './timeline'
 import { createReviewPlayer, type ReviewPlayer } from './player'
+import { formatElapsed, formatBroadcastTime } from '../time-format'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -76,13 +77,6 @@ const TEMPLATE = `
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-// 録った時刻の表示（今日でなければ日付も）
-const formatClock = (ms: number) => {
-    const date = new Date(ms)
-    const time = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-    return date.toDateString() === new Date().toDateString() ? time : `${date.getMonth() + 1}/${date.getDate()} ${time}`
-}
-
 const formatDuration = (seconds: number) => {
     const s = Math.max(0, Math.floor(seconds))
     const h = Math.floor(s / 3600)
@@ -122,10 +116,12 @@ type ReviewViewOptions = {
     // 録画中に書き込んだ断片の知らせ（live。同じページで録画している番組の分だけ使う）
     subscribe?: (listener: (event: LiveFeedEvent) => void) => () => void
     programId?: string
+    // 番組が始まった時刻（番組の経過時間を出す。分からなければ、最初に録った時刻からの経過時間）
+    programBeginAt?: number | null
     onChange?: (state: ReviewViewState) => void
 }
 
-const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, onChange }: ReviewViewOptions) => {
+const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, programBeginAt, onChange }: ReviewViewOptions) => {
     const doc = root.ownerDocument
     const messages = MESSAGES[mode]
     const container = doc.createElement('div')
@@ -310,8 +306,12 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         const length = timeline.end - timeline.start
         seek.style.setProperty('--progress', `${length > 0 ? Math.min(100, Math.max(0, ((t - timeline.start) / length) * 100)) : 0}%`)
         const wallClock = empty ? null : timeline.wallClockAt(t)
-        clock.textContent = wallClock === null ? '--:--:--' : formatClock(wallClock)
-        seek.setAttribute('aria-valuetext', clock.textContent)
+        // 番組の経過時間（ニコ生のプレイヤーの表示と同じ）。番組が始まった時刻が分からなければ、最初に録った時刻から
+        const base = programBeginAt ?? (empty ? null : timeline.wallClockAt(timeline.start))
+        clock.textContent = wallClock === null || base === null ? '--:--:--' : formatElapsed(wallClock - base)
+        const aired = wallClock === null ? '' : formatBroadcastTime(wallClock, { seconds: true })
+        clock.title = wallClock === null ? '' : `経過時間（${aired} に放送）`
+        seek.setAttribute('aria-valuetext', wallClock === null ? clock.textContent : `経過時間 ${clock.textContent}（${aired} に放送）`)
 
         if (mode === 'live') {
             const behindSeconds = wallClock === null ? null : (Date.now() - wallClock) / 1000
@@ -321,8 +321,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             liveButton.disabled = empty || atLive
             liveButton.setAttribute('aria-label', atLive ? 'ライブ（最新の録画）を再生中' : 'ライブに戻る')
         } else {
-            // 番組の録画の中での位置
-            behind.textContent = empty ? '' : `${formatDuration(t - timeline.start)} / ${formatDuration(timeline.end - timeline.start)}`
+            // 放送した時刻（午前・午後）
+            behind.textContent = wallClock === null ? '' : `${formatBroadcastTime(wallClock)} に放送`
         }
 
         // 種類が2つ以上ある時だけ、切り替えのボタンを出す

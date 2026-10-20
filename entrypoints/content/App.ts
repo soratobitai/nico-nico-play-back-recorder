@@ -70,7 +70,7 @@ export default async () => {
         FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
 
-    const { userName, title } = getProgramData() // 番組情報を取得
+    const { userName, title, beginAt } = getProgramData() // 番組情報を取得
     const programId = location.pathname.match(/lv\d+/)?.[0] ?? location.pathname
     const video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
     // 動画の取り込み（コメントなし・コメントありで共有する）
@@ -122,7 +122,7 @@ export default async () => {
             kind,
             createSource,
             chunkIntervalMs: SAVE_CHUNK_INTERVAL_MS,
-            segmentDetails: () => ({ programId, title, userName, thumbnail: captureThumbnail(video) }),
+            segmentDetails: () => ({ programId, title, userName, thumbnail: captureThumbnail(video), programBeginAt: beginAt }),
             onStarted: (mediaRecorder) => {
                 watch(mediaRecorder)
                 if (!sessionActive || stateManager.getState() === 'recording') return
@@ -555,7 +555,7 @@ export default async () => {
 
     // プレイバックのウィンドウを開く・閉じる（録画は止めない）
     const togglePlayback = () => {
-        togglePlaybackWindow({ programId, title, onClose: () => setPlaybackButton(false) })
+        togglePlaybackWindow({ programId, title, programBeginAt: beginAt, onClose: () => setPlaybackButton(false) })
             .then(() => setPlaybackButton(isPlaybackOpen()))
             .catch((error) => console.log("プレイバックのウィンドウを開けませんでした:", error))
     }

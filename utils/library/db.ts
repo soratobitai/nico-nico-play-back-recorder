@@ -29,6 +29,8 @@ type SegmentRecord = {
     endedAt: number | null // 録画を終えた時刻。録画中は null
     init: Blob | null // fmp4 の初期化セグメント（届くまでは null）
     thumbnail: string | null // data URL
+    // 番組が始まった時刻（ミリ秒。番組の経過時間を出すのに使う。以前の録画や、読めなかった時はない）
+    programBeginAt?: number | null
     bytes: number // 初期化セグメントと断片の合計
     fragmentCount: number
     duration: number // 区間の長さ（秒）

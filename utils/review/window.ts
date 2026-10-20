@@ -20,6 +20,7 @@ const WINDOW_SIZE = { width: 640, height: 420 }
 type PlaybackWindowOptions = {
     programId: string
     title: string
+    programBeginAt?: number | null // 番組が始まった時刻（番組の経過時間を出す）
     onClose?: () => void
 }
 
@@ -46,7 +47,7 @@ const togglePlaybackWindow = async (options: PlaybackWindowOptions) => {
     }
 }
 
-const mountPlaybackWindow = (pip: Window, { programId, title, onClose }: PlaybackWindowOptions) => {
+const mountPlaybackWindow = (pip: Window, { programId, title, programBeginAt, onClose }: PlaybackWindowOptions) => {
     const doc = pip.document
     doc.title = `プレイバック - ${title}`
     const style = doc.createElement('style')
@@ -57,6 +58,7 @@ const mountPlaybackWindow = (pip: Window, { programId, title, onClose }: Playbac
         root: doc.body,
         mode: 'live',
         programId,
+        programBeginAt,
         readTimeline: () => getTimeline(programId),
         readFragments: getFragmentBlobs,
         subscribe: subscribeLiveFeed,

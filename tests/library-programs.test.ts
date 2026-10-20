@@ -32,6 +32,15 @@ describe('番組ごとにまとめる', () => {
         expect(programs[0].segments.map(s => s.segmentId)).toEqual(['a1', 'a2'])
     })
 
+    it('番組が始まった時刻を、録画から読む（以前の録画にはないので null）', () => {
+        const programs = summarizePrograms([
+            summary({ segmentId: 'a', programId: 'lv1' }),
+            summary({ segmentId: 'b', programId: 'lv1', programBeginAt: 500 }),
+            summary({ segmentId: 'c', programId: 'lv2' }),
+        ])
+        expect(programs.map(p => [p.key, p.beginAt])).toEqual([['lv1', 500], ['lv2', null]])
+    })
+
     it('以前のバージョンから移した録画は、配信者とタイトルで見分ける', () => {
         expect(programKeyOf({ programId: 'legacy', title: 'T', userName: 'U' })).toBe('legacy:U:T')
         expect(programKeyOf({ programId: 'lv1', title: 'T', userName: 'U' })).toBe('lv1')
