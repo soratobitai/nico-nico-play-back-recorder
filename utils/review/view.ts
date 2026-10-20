@@ -9,6 +9,7 @@ import type { LiveFeedEvent } from './live-feed'
 import { Timeline } from './timeline'
 import { createReviewPlayer, type ReviewPlayer } from './player'
 import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '../time-format'
+import { KIND_ICON_PATHS, SCREEN_DOT } from '../kind-icons'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -52,6 +53,12 @@ const ICONS = {
     muted: icon('<path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M22 9l-6 6M16 9l6 6"></path>'),
     sound: icon('<path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"></path>'),
 }
+// 種類の切り替えのアイコン（録画バーの種類のチップと同じ形）
+const KIND_ICONS: Record<RecordingKind, string> = {
+    video: icon(KIND_ICON_PATHS.video),
+    comments: icon(KIND_ICON_PATHS.comments),
+    screen: icon(`${KIND_ICON_PATHS.screen}<circle cx="${SCREEN_DOT.cx}" cy="${SCREEN_DOT.cy}" r="${SCREEN_DOT.r}"></circle>`),
+}
 
 const TRANSPORT = `
     <button type="button" class="back" aria-label="${SKIP_SECONDS}秒戻る" title="${SKIP_SECONDS}秒戻る（←）">${ICONS.back}<span class="label">${SKIP_SECONDS}秒</span></button>
@@ -61,28 +68,21 @@ const TIME = `
     <div class="time"><span class="time-main"><span class="clock">--:--</span><span class="program-time" title="番組が始まってからの時間（ニコ生のプレイヤーの表示と同じ）"></span></span><span class="behind" hidden><span class="scene-time"></span><span class="ago"></span></span></div>`
 const OPTIONS = `
     <div class="kinds" role="group" aria-label="録画の種類" hidden>
-      ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}" hidden><span class="kind-dot" aria-hidden="true"></span><span class="kind-label">${KIND_LABELS[kind]}</span></button>`).join('')}
+      ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}の録画を見る" hidden>${KIND_ICONS[kind]}</button>`).join('')}
     </div>
     <button type="button" class="mute" title="音（M）"></button>`
 const LIVE = `
     <button type="button" class="live" title="最新の録画へ戻る（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブ</span></button>`
 
-// 操作の行
-// - live（プレイバックのウィンドウ）: 再生の操作と時間を左に寄せ、種類・音・ライブを右に
-// - library（録画一覧）: 再生の操作を真ん中に、種類と音を左に、時間を右に
-const ROWS = {
-    live: `<div class="row">${TRANSPORT}${TIME}<span class="spacer"></span>${OPTIONS}${LIVE}</div>`,
-    library: `<div class="row"><div class="row-start">${OPTIONS}</div><div class="row-center">${TRANSPORT}</div><div class="row-end">${TIME}${LIVE}</div></div>`,
-}
-
-const template = (mode: 'live' | 'library') => `
+// 操作の行: 再生の操作を真ん中に、種類と音を左に、時間（と、プレイバックではライブに戻るボタン）を右に
+const TEMPLATE = `
 <div class="stage">
   <video playsinline></video>
   <div class="message" role="status" hidden></div>
 </div>
 <div class="bar">
   <input class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="再生位置">
-  ${ROWS[mode]}
+  <div class="row"><div class="row-start">${OPTIONS}</div><div class="row-center">${TRANSPORT}</div><div class="row-end">${TIME}${LIVE}</div></div>
 </div>
 `
 
@@ -131,7 +131,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const container = doc.createElement('div')
     container.className = 'review'
     container.dataset.mode = mode
-    container.innerHTML = template(mode)
+    container.innerHTML = TEMPLATE
     root.append(container)
 
     const $ = <T extends Element>(selector: string) => container.querySelector<T>(selector)!

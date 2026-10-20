@@ -4,6 +4,7 @@
 // 録画の再生・保存・削除は、録画一覧のページ（拡張機能のページ）で行う。
 import { getScreenShotAndDownload } from "./feature"
 import { UI_COLLAPSED } from "./storage"
+import { KIND_ICON_PATHS, SCREEN_DOT } from "./kind-icons"
 
 type BarState = 'preparing' | 'recording' | 'stopped' | 'error'
 type VideoKind = 'video' | 'comments'
@@ -25,10 +26,10 @@ const icon = (path: string, filled = false) =>
     `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" ${filled ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'}>${path}</svg>`
 const ICONS = {
     // 録る種類のチップのアイコン。コメントなしは吹き出しに斜線、コメントありは吹き出しに文字の線
-    commentsOff: icon('<path d="M4 4.5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9l-4.5 3.5v-3.5H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"></path><path d="M3.5 3l17 17.5"></path>'),
-    comments: icon('<path d="M4 4.5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-9l-4.5 3.5v-3.5H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"></path><path d="M7.5 9h9M7.5 12.5h6"></path>'),
+    commentsOff: icon(KIND_ICON_PATHS.video),
+    comments: icon(KIND_ICON_PATHS.comments),
     // 画面（真ん中の丸は、録画中は点滅する）
-    screen: icon('<rect x="2.5" y="4" width="19" height="13" rx="2.2"></rect><path d="M8.5 20.5h7M12 17v3.5"></path><circle class="npr-screen-rec" cx="12" cy="10.5" r="3.4" fill="currentColor" stroke="none"></circle>'),
+    screen: icon(`${KIND_ICON_PATHS.screen}<circle class="npr-screen-rec" cx="${SCREEN_DOT.cx}" cy="${SCREEN_DOT.cy}" r="${SCREEN_DOT.r}" fill="currentColor" stroke="none"></circle>`),
     play: icon('<path d="M8 5.5v13l10.5-6.5z"></path>', true),
     list: icon('<rect x="3" y="4" width="18" height="6" rx="1.5"></rect><rect x="3" y="14" width="18" height="6" rx="1.5"></rect>'),
     camera: icon('<path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle>'),

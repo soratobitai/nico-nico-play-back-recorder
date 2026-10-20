@@ -53,21 +53,18 @@ const REVIEW_STYLE = `
   background: var(--bar);
   border-top: 1px solid var(--line);
 }
-/* ボタン類は縮めない（形を保つ）。入り切らない時は、消したり重ねたりせず横にスクロールする
-   （スクロールする所の端で、選んだボタンの枠が切れないように、少し余白をとる） */
+/* 操作の行: 再生の操作を真ん中に、種類と音を左端、時間（プレイバックではライブに戻るボタンも）を右端に
+   ボタン類は縮めない（形を保つ）。時間は入りきらない所を隠して縮む。それでも入りきらない時は真ん中が少しずれ、
+   最後は消したり重ねたりせず横にスクロールする（スクロールする所の端で、選んだボタンの枠が切れないように、少し余白をとる） */
 .review .row {
-  display: flex; align-items: center; gap: 4px; min-width: 0;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 8px; min-width: 0;
   padding: 3px; margin: -3px;
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
-.review .row > * { flex-shrink: 0; }
-.review .spacer { flex: 1 0 4px; }
-/* 録画一覧: 再生の操作を真ん中に、種類と音を左端、時間を右端に（入りきらない時は、真ん中が少しずれる） */
-.review .row:has(.row-center) { display: grid; grid-template-columns: 1fr auto 1fr; column-gap: 8px; }
 .review :is(.row-start, .row-center, .row-end) { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.review :is(.row-start, .row-center, .row-end) > * { flex-shrink: 0; }
 .review .row-end { justify-content: flex-end; }
-.review .row-end .time { margin-right: 0; }
 
 /* シークバー（細い線。再生した所まで色をつける） */
 /* 下の操作の行（枠のための余白）より手前にして、シークバーの下の端も押せるようにする */
@@ -123,7 +120,7 @@ const REVIEW_STYLE = `
 /* 録画を始めてからの時間（横に番組の経過時間）と、その場面の時刻（プレイバックでは、ライブからどれだけ前か も） */
 .review .time {
   display: flex; flex-direction: column; justify-content: center; min-width: 0; flex: 0 1 auto;
-  margin: 0 6px; line-height: 1.25; font-variant-numeric: tabular-nums;
+  margin: 0; line-height: 1.25; font-variant-numeric: tabular-nums;
 }
 /* 番組の経過時間は、入りきらない時は折り返した2行目に回して隠す（途中で切れて見えないように） */
 .review .time-main {
@@ -141,24 +138,23 @@ const REVIEW_STYLE = `
 .review .behind[hidden] { display: none; }
 .review .scene-time { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
-/* 種類の切り替え（色の丸つきのセグメント） */
-.review .kinds {
-  display: flex; gap: 2px; padding: 2px;
-  border: 1px solid var(--border); border-radius: 9px;
-  background: rgba(0, 0, 0, 0.25);
-}
+/* 種類の切り替え（録画バーの種類のチップと同じ、吹き出しのアイコン。見ている種類は、その色のアイコンと薄い色の面）
+   名前は読み上げとマウスを乗せた時の説明で伝える */
+.review .kinds { display: flex; gap: 5px; }
 .review .kinds[hidden] { display: none; }
 .review .kind {
   --kind-rgb: 141, 146, 160;
-  height: calc(var(--control) - 6px); min-width: 0; padding: 0 9px 0 8px;
-  border-radius: 7px; color: var(--muted); font-size: 11px;
+  height: calc(var(--control) - 6px); min-width: 0; padding: 0 8px;
+  border: 1px solid var(--border); border-radius: 6px; color: var(--muted);
 }
 .review .kind-video { --kind-rgb: var(--video-rgb); }
 .review .kind-comments { --kind-rgb: var(--comments-rgb); }
 .review .kind-screen { --kind-rgb: var(--screen-rgb); }
-.review .kind-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; border: 1.5px solid rgb(var(--kind-rgb)); opacity: 0.8; }
-.review .kind[aria-pressed="true"] { background: rgba(var(--kind-rgb), 0.2); color: #fff; }
-.review .kind[aria-pressed="true"] .kind-dot { background: rgb(var(--kind-rgb)); opacity: 1; box-shadow: 0 0 6px rgba(var(--kind-rgb), 0.8); }
+.review .kind svg { width: 16px; height: 16px; }
+.review .kind:hover { background: var(--surface); border-color: rgba(255, 255, 255, 0.16); color: var(--text); }
+.review .kind[aria-pressed="true"] { background: rgba(var(--kind-rgb), 0.14); border-color: rgba(var(--kind-rgb), 0.5); color: #f2f4f8; }
+.review .kind[aria-pressed="true"]:hover { background: rgba(var(--kind-rgb), 0.22); }
+.review .kind[aria-pressed="true"] svg { color: rgb(var(--kind-rgb)); }
 
 /* 音 */
 .review .mute .label { font-size: 11px; }
@@ -179,45 +175,32 @@ const REVIEW_STYLE = `
 @container (min-width: 820px) {
   .review .bar { --control: 34px; font-size: 12.5px; padding: 4px 14px 10px; }
   .review .time-main { font-size: 14px; }
-  .review .kind { font-size: 11.5px; }
 }
 /* 少し狭い: 音と10秒のラベルを隠す */
 @container (max-width: 720px) {
   .review .mute .label,
   .review .back .label, .review .forward .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-/* 狭い: 種類は色の丸だけ */
-@container (max-width: 600px) {
-  .review .kind-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .review .kind { padding: 0; width: calc(var(--control) - 6px); }
-  .review .kind-dot { width: 9px; height: 9px; }
-}
 /* とても狭い: ボタンを小さく、ライブはラベルなしの丸に */
 @container (max-width: 460px) {
   .review .bar { --control: 28px; font-size: 11px; padding: 0 6px 6px; }
-  .review .row, .review :is(.row-start, .row-center, .row-end) { gap: 2px; }
+  .review .row { column-gap: 4px; }
+  .review :is(.row-start, .row-center, .row-end) { gap: 2px; }
+  .review .kinds { gap: 3px; }
+  .review .kind { padding: 0 6px; }
   .review button svg { width: 16px; height: 16px; }
   .review .play svg { width: 14px; height: 14px; }
   .review .time-main { font-size: 12px; }
-  .review .time { margin: 0 4px; }
   .review .live { padding: 0; width: calc(var(--control) - 4px); margin-left: 2px; }
   .review .live .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 /* 種類が3つの時は、ボタンが増える分、早めに詰める */
-@container (max-width: 760px) {
-  .review .row:has(.kinds[data-count="3"]) :is(.mute, .back, .forward) .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-@container (max-width: 660px) {
-  .review .kinds[data-count="3"] .kind-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .review .kinds[data-count="3"] .kind { padding: 0; width: calc(var(--control) - 6px); }
-  .review .kinds[data-count="3"] .kind-dot { width: 9px; height: 9px; }
-}
 @container (max-width: 380px) {
   .review .row:has(.kinds[data-count="3"]) .behind { display: none; }
 }
 @container (max-width: 330px) {
-  .review .kinds[data-count="3"] .kind { width: calc(var(--control) - 10px); }
-  .review .row:has(.kinds[data-count="3"]) { gap: 1px; }
+  .review .kinds[data-count="3"] .kind { padding: 0 4px; }
+  .review .row:has(.kinds[data-count="3"]) :is(.row-start, .row-center, .row-end) { gap: 1px; }
 }
 /* さらに狭い: ライブからの遅れの説明を隠す */
 @container (max-width: 360px) {
