@@ -41,6 +41,9 @@ type BridgeRequestOf<T extends BridgeRequestType> = Extract<BridgeRequest, { typ
 // 録り始めてすぐの区間を残さずに消す依頼も含める（その区間を一時保存していたら、移した後に消えるように）
 const WRITE_REQUEST_TYPES: ReadonlySet<BridgeRequestType> = new Set(['createSegment', 'setSegmentInit', 'appendFragments', 'finishSegment', 'deleteSegments'])
 
+// content script → background: ページを閉じる時に、まだ確定していない区間を確定してもらう
+const CLOSE_SEGMENTS_MESSAGE = 'playback:close-segments'
+
 // content script → background: bridge を使うための合言葉をもらう
 const BRIDGE_TOKEN_MESSAGE = 'playback-bridge:token'
 // 合言葉を置く場所（chrome.storage.session。拡張機能のページと background だけが読める）
@@ -53,5 +56,5 @@ type BridgeReply =
     | { id: number, ok: true, result: unknown }
     | { id: number, ok: false, error: { name: string, message: string } }
 
-export { WRITE_REQUEST_TYPES, BRIDGE_TOKEN_MESSAGE, BRIDGE_TOKEN_KEY, BRIDGE_INIT_MESSAGE }
+export { WRITE_REQUEST_TYPES, CLOSE_SEGMENTS_MESSAGE, BRIDGE_TOKEN_MESSAGE, BRIDGE_TOKEN_KEY, BRIDGE_INIT_MESSAGE }
 export type { BridgeRequest, BridgeResults, BridgeRequestType, BridgeRequestOf, BridgeEnvelope, BridgeReply, DeletedSpace }

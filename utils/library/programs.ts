@@ -24,8 +24,14 @@ const programKeyOf = (segment: Pick<SegmentSummary, 'programId' | 'title' | 'use
 
 const segmentEnd = (segment: SegmentSummary) => segment.endedAt ?? segment.startedAt + segment.duration * 1000
 
+// 録画中の区間か。確定していない区間でも、これだけ書き込みがなければ、録画していたページが閉じられたものとする
+// （録画中は数秒ごとに書き込まれる。ページを閉じる時に確定できなかった場合に、「録画中」のまま残らないように）
+const RECORDING_IDLE_MS = 60 * 1000
+const isRecordingSegment = (segment: SegmentSummary, now = Date.now()) =>
+    segment.endedAt === null && now - Math.max(segmentEnd(segment), segment.updatedAt ?? 0) < RECORDING_IDLE_MS
+
 // 区間を番組ごとにまとめる。最近録った番組から順に並べる
-const summarizePrograms = (segments: SegmentSummary[]): ProgramSummary[] => {
+const summarizePrograms = (segments: SegmentSummary[], now = Date.now()): ProgramSummary[] => {
     const programs = new Map<string, ProgramSummary>()
     for (const segment of [...segments].sort((a, b) => a.startedAt - b.startedAt)) {
         const key = programKeyOf(segment)
@@ -41,7 +47,7 @@ const summarizePrograms = (segments: SegmentSummary[]): ProgramSummary[] => {
         program.segments.push(segment)
         if (program.beginAt === null && segment.programBeginAt) program.beginAt = segment.programBeginAt
         program.endedAt = Math.max(program.endedAt, segmentEnd(segment))
-        program.recording ||= segment.endedAt === null
+        program.recording ||= isRecordingSegment(segment, now)
         program.bytes += segment.bytes
         program.bytesByKind[segment.kind] += segment.bytes
         // タイトルが変わった場合（番組の途中でタイトルが変わった など）は、新しい方を使う
@@ -140,7 +146,7 @@ const CONTINUOUS_GAP_MS = 3000
 
 // 番組の1つの種類の区間を、保存した時のファイルの単位にまとめる
 // signatures: 区間ごとの映像・音声の設定の印（分からなければ null）
-const filesOf = (segments: SegmentSummary[], kind: RecordingKind, signatures: ReadonlyMap<string, string | null>): RecordingFile[] => {
+const filesOf = (segments: SegmentSummary[], kind: RecordingKind, signatures: ReadonlyMap<string, string | null>, now = Date.now()): RecordingFile[] => {
     const ofKind = segments.filter(segment => segment.kind === kind).sort((a, b) => a.startedAt - b.startedAt)
     const groups = groupIntoFiles(ofKind, segment => ({ kind, signature: segment.format === 'fmp4' ? signatures.get(segment.segmentId) ?? null : null }))
     let previousEnd = -Infinity
@@ -157,7 +163,7 @@ const filesOf = (segments: SegmentSummary[], kind: RecordingKind, signatures: Re
             segments: group,
             startedAt,
             endedAt: Math.max(...group.map(segmentEnd)),
-            recording: group.some(segment => segment.endedAt === null),
+            recording: group.some(segment => isRecordingSegment(segment, now)),
             seconds: recordedSeconds(group),
             bytes: group.reduce((sum, segment) => sum + segment.bytes, 0),
             thumbnail: group.find(segment => segment.thumbnail)?.thumbnail ?? null,
@@ -169,5 +175,5 @@ const filesOf = (segments: SegmentSummary[], kind: RecordingKind, signatures: Re
     })
 }
 
-export { summarizePrograms, filterPrograms, groupByDay, programKeyOf, sortPrograms, recordedSeconds, thumbnailOf, groupIntoFiles, filesOf, segmentEnd }
+export { summarizePrograms, filterPrograms, groupByDay, programKeyOf, sortPrograms, recordedSeconds, thumbnailOf, groupIntoFiles, filesOf, segmentEnd, isRecordingSegment }
 export type { ProgramSummary, ProgramOrder, RecordingFile }

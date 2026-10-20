@@ -1,5 +1,6 @@
 import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments, setPendingLimit } from "../../utils/library/api"
-import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
+import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds } from "../../utils/recording"
+import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
 import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setKindChips, setKindRecording, showBarHint } from "../../utils/ui"
 import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, type ResolutionMode } from '../../utils/storage'
@@ -302,6 +303,19 @@ export default async () => {
         }
         refreshRecordingIndicators()
     }
+
+    // ページを閉じる・他の番組へ移る時は、録画を終える処理を最後まで行えないので、まだ確定していない区間を
+    // background に、最後に書き込んだ所で確定してもらう（録画一覧で、閉じた番組が「録画中」のまま残らないように）。
+    // 戻る・進むで後から表示し直されるページ（persisted）は、録画が続くので確定しない
+    window.addEventListener('pagehide', (event) => {
+        const segmentIds = getOpenSegmentIds()
+        if (event.persisted || segmentIds.length === 0) return
+        try {
+            chrome.runtime.sendMessage({ type: CLOSE_SEGMENTS_MESSAGE, segmentIds }).catch(() => {})
+        } catch {
+            // 拡張機能が更新された後は頼めない（録画一覧で、しばらくして確定される）
+        }
+    })
 
     // 拡張機能側に保存できない間に一時保存する量の上限（拡張機能が更新された後も録画を続けるので）
     setPendingLimit(maxStorageSize)

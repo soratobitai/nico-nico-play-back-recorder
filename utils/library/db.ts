@@ -349,21 +349,34 @@ const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
 // 最後の書き込み（録った時刻と、保存先に書き込んだ時刻の新しい方）から idleMs 以上たったものが対象。
 // 断片が1つもなければ消す。消した区間の ID を返す
 const closeStaleSegments = (idleMs: number, now = Date.now()) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
-    const store = tx.objectStore(SEGMENTS)
     const deletedSegmentIds: string[] = []
-    for (const segment of await promisify<SegmentRecord[]>(store.getAll())) {
+    for (const segment of await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).getAll())) {
         if (segment.endedAt !== null || now - Math.max(lastWriteOf(segment), segment.updatedAt ?? 0) < idleMs) continue
-        if (segment.fragmentCount <= 0) {
-            await promisify(tx.objectStore(FRAGMENTS).delete(fragmentRange(segment.segmentId)))
-            await promisify(store.delete(segment.segmentId))
-            deletedSegmentIds.push(segment.segmentId)
-        } else {
-            segment.endedAt = lastWriteOf(segment)
-            await promisify(store.put(segment))
-        }
+        if (await closeSegmentIn(tx, segment)) deletedSegmentIds.push(segment.segmentId)
     }
     return deletedSegmentIds
 })
+
+// 録画していたページが閉じられて、確定できなかった区間を、最後に書き込んだ所で確定する
+// （ページを閉じる時に、content script から background に頼まれる。確定済み・ない区間は何もしない）
+const closeSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+    for (const segmentId of segmentIds) {
+        const segment = await promisify<SegmentRecord | undefined>(tx.objectStore(SEGMENTS).get(segmentId))
+        if (segment && segment.endedAt === null) await closeSegmentIn(tx, segment)
+    }
+})
+
+// 区間を最後に書き込んだ所で確定する。断片が1つもなければ消す（消したら true）
+const closeSegmentIn = async (tx: IDBTransaction, segment: SegmentRecord) => {
+    if (segment.fragmentCount <= 0) {
+        await promisify(tx.objectStore(FRAGMENTS).delete(fragmentRange(segment.segmentId)))
+        await promisify(tx.objectStore(SEGMENTS).delete(segment.segmentId))
+        return true
+    }
+    segment.endedAt = lastWriteOf(segment)
+    await promisify(tx.objectStore(SEGMENTS).put(segment))
+    return false
+}
 
 // 録った時刻の古い断片から、合計 bytesToFree バイト以上を消す
 // 断片がなくなった区間は消す（録画中の区間は、続きの断片が届くので残す）。
@@ -450,6 +463,7 @@ export {
     clearAll,
     getUsage,
     closeStaleSegments,
+    closeSegments,
     STALE_SEGMENT_IDLE_MS,
     freeSpace,
     enforceLimit,

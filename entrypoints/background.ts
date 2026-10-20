@@ -1,4 +1,5 @@
-import { BRIDGE_TOKEN_KEY, BRIDGE_TOKEN_MESSAGE } from '@/utils/library/protocol'
+import { BRIDGE_TOKEN_KEY, BRIDGE_TOKEN_MESSAGE, CLOSE_SEGMENTS_MESSAGE } from '@/utils/library/protocol'
+import { closeSegments } from '@/utils/library/db'
 import { OPEN_LIBRARY_MESSAGE, openLibrary } from '@/utils/library/open-library'
 
 // ニコ生のページに埋め込む bridge を使ってよい相手（content script）だけに渡す合言葉
@@ -21,6 +22,12 @@ export default defineBackground(() => {
         if (message?.type === BRIDGE_TOKEN_MESSAGE) {
             getBridgeToken().then(token => sendResponse({ token }))
             return true
+        }
+        // 録画していたページが閉じられる（ページの方では、録画を終える処理を最後まで行えない）
+        if (message?.type === CLOSE_SEGMENTS_MESSAGE && Array.isArray(message.segmentIds)) {
+            const segmentIds = message.segmentIds.filter((id: unknown): id is string => typeof id === 'string')
+            closeSegments(segmentIds).catch(error => console.error('閉じられたページの録画を確定できませんでした:', error))
+            return
         }
         if (message?.type === OPEN_LIBRARY_MESSAGE) {
             const programId = typeof message.programId === 'string' ? message.programId : undefined

@@ -97,6 +97,10 @@ const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<
     }
 }
 
+// このページで録っていて、まだ確定していない区間（ページを閉じる時に、background に確定してもらう）
+const openSegmentIds = new Set<string>()
+const getOpenSegmentIds = () => [...openSegmentIds]
+
 // 区間を作る時に、容量不足なら空ける量（サムネイルなどの分）
 const SEGMENT_RECORD_BYTES = 1024 * 1024
 
@@ -107,6 +111,7 @@ const SEGMENT_RECORD_BYTES = 1024 * 1024
 // write は届いた順に1つずつ呼ぶこと（前の write が終わってから次を呼ぶ）
 const createSegmentWriter = (segment: NewSegment) => {
     const splitter = segment.format === 'fmp4' ? createFmp4Splitter() : null
+    openSegmentIds.add(segment.segmentId)
     let index = 0
     let opaqueEnd = 0 // webm などの、これまでに書き込んだ長さ（秒）
 
@@ -149,6 +154,7 @@ const createSegmentWriter = (segment: NewSegment) => {
         // 録画を終えた区間を確定する。断片が1つもない区間は消して null を返す
         async finish(endedAt: number, mimeType?: string): Promise<SegmentSummary | null> {
             const summary = await library.finishSegment(segment.segmentId, endedAt, mimeType)
+            openSegmentIds.delete(segment.segmentId)
             publishLiveFeed({ type: 'finish', segmentId: segment.segmentId, endedAt })
             return summary
         },
@@ -156,6 +162,7 @@ const createSegmentWriter = (segment: NewSegment) => {
         // 録った区間を残さずに消す（録り始めてすぐに解像度が変わった時の、数秒だけの区間など）
         async discard(endedAt: number) {
             await library.deleteSegments([segment.segmentId])
+            openSegmentIds.delete(segment.segmentId)
             // プレイバックの窓では、終えた区間として扱い、次に保存先から読み直した時に外す
             publishLiveFeed({ type: 'finish', segmentId: segment.segmentId, endedAt })
         },
@@ -225,6 +232,7 @@ export {
     isQuotaExceeded,
     retryOnQuotaExceeded,
     createSegmentWriter,
+    getOpenSegmentIds,
     segmentFormatOf,
     resetTimeoutCheck,
 }

@@ -5,7 +5,7 @@
 import * as db from '@/utils/library/db'
 import type { RecordingKind } from '@/utils/library/db'
 import {
-    summarizePrograms, filterPrograms, groupByDay, sortPrograms, recordedSeconds, thumbnailOf, filesOf,
+    summarizePrograms, filterPrograms, groupByDay, sortPrograms, recordedSeconds, thumbnailOf, filesOf, isRecordingSegment,
     type ProgramSummary, type ProgramOrder, type RecordingFile,
 } from '@/utils/library/programs'
 import { SHOW_PROGRAM_MESSAGE } from '@/utils/library/open-library'
@@ -110,7 +110,8 @@ const formatBytes = (bytes: number) => {
 const programName = (program: ProgramSummary) => program.title || '（タイトルなし）'
 // 番組の経過時間の基準（番組が始まった時刻。分からない以前の録画は、最初に録り始めた時刻）
 const elapsedBase = (program: ProgramSummary) => program.beginAt ?? program.startedAt
-const finishedSegments = (program: ProgramSummary) => program.segments.filter(segment => segment.endedAt !== null)
+// 録り終えた区間（録画中の区間は書き込み中なので、消さない）
+const finishedSegments = (program: ProgramSummary) => program.segments.filter(segment => !isRecordingSegment(segment))
 
 const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string) => {
     const el = document.createElement(tag)
@@ -795,7 +796,7 @@ const fileRow = (program: ProgramSummary, file: RecordingFile, position: number)
     save.addEventListener('click', () => downloadSegments(program, file.segments.map(segment => segment.segmentId)))
 
     // 録画中の区間は、書き込み中なので消さない（同じファイルの、録り終えた区間だけ消す）
-    const finished = file.segments.filter(segment => segment.endedAt !== null)
+    const finished = file.segments.filter(segment => !isRecordingSegment(segment))
     const remove = element('button', 'icon-button danger')
     remove.type = 'button'
     remove.dataset.focusKey = `delete:${first.segmentId}`
@@ -861,10 +862,14 @@ for (const button of filterButtons) {
     })
 }
 
-// 録画中の番組の分が増えるので、見ている間は読み直す
+// 録画中の番組の分が増えるので、見ている間は読み直す。他のタブから戻ってきた時もすぐ読み直す
+// （番組のページを閉じてから見に来た時に、その番組の「録画中」がすぐ外れるように）
 setInterval(() => {
     if (document.visibilityState === 'visible') void load()
 }, REFRESH_INTERVAL_MS)
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void load()
+})
 
 // ニコ生のページなどから開かれた時（既に開いていれば、このページに番組を表示して前に出す）
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

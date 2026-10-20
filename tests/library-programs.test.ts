@@ -2,9 +2,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { summarizePrograms, filterPrograms, groupByDay, programKeyOf, sortPrograms, recordedSeconds, thumbnailOf, filesOf } from '@/utils/library/programs'
+import { summarizePrograms, filterPrograms, groupByDay, programKeyOf, sortPrograms, recordedSeconds, thumbnailOf, filesOf, isRecordingSegment } from '@/utils/library/programs'
 import {
-    clearAll, createSegment, setSegmentInit, appendFragments, finishSegment, buildDownloadFiles, listAllSegments, getTimelineForSegments, getInitSignatures,
+    clearAll, createSegment, setSegmentInit, appendFragments, finishSegment, buildDownloadFiles, listAllSegments, getTimelineForSegments, getInitSignatures, closeSegments,
     type NewSegment, type SegmentSummary,
 } from '@/utils/library/db'
 import { splitFmp4Blob, initSignature } from '@/utils/fmp4'
@@ -22,7 +22,7 @@ describe('番組ごとにまとめる', () => {
             summary({ segmentId: 'a1', programId: 'lv1', startedAt: 1000, endedAt: 2000, bytes: 10 }),
             summary({ segmentId: 'b1', programId: 'lv2', startedAt: 5000, endedAt: 6000, bytes: 30, title: 'other' }),
             summary({ segmentId: 'a2', programId: 'lv1', kind: 'comments', startedAt: 1000, endedAt: null, duration: 9, bytes: 20 }),
-        ])
+        ], 12_000)
 
         expect(programs.map(p => p.key)).toEqual(['lv1', 'lv2']) // lv1 は録画中で 10 秒まで延びている
         expect(programs[0]).toMatchObject({
@@ -39,6 +39,14 @@ describe('番組ごとにまとめる', () => {
             summary({ segmentId: 'c', programId: 'lv2' }),
         ])
         expect(programs.map(p => [p.key, p.beginAt])).toEqual([['lv1', 500], ['lv2', null]])
+    })
+
+    it('確定していない区間でも、しばらく書き込みがなければ録画中にしない（録画していたページが閉じられた）', () => {
+        const segment = summary({ segmentId: 'a', startedAt: 0, endedAt: null, duration: 10, updatedAt: 10_000 })
+        expect(isRecordingSegment(segment, 30_000)).toBe(true)
+        expect(isRecordingSegment(segment, 80_000)).toBe(false)
+        expect(summarizePrograms([segment], 80_000)[0].recording).toBe(false)
+        expect(isRecordingSegment({ ...segment, endedAt: 10_000 }, 20_000)).toBe(false)
     })
 
     it('以前のバージョンから移した録画は、配信者とタイトルで見分ける', () => {
@@ -104,7 +112,7 @@ describe('録画一覧のページに出す形', () => {
         ]
         const signatures = new Map([['a', '720p'], ['b', '720p'], ['c', '1080p'], ['d', '1080p'], ['x', '720p']])
 
-        const files = filesOf(segments, 'video', signatures)
+        const files = filesOf(segments, 'video', signatures, 4_070_000)
 
         expect(files.map(f => f.segments.map(s => s.segmentId))).toEqual([['a', 'b'], ['c', 'd']])
         expect(files.map(f => f.splitBySettings)).toEqual([false, true])
@@ -176,6 +184,21 @@ describe('まとめて保存（buildDownloadFiles）', () => {
         await createSegment(segment('E', 9000))
 
         expect((await buildDownloadFiles(['A', 'E'])).map(f => f.segmentIds)).toEqual([['A']])
+    })
+
+    it('録画していたページが閉じられた区間を、最後に書き込んだ所で確定する（断片がなければ消す。確定済みはそのまま）', async () => {
+        await createSegment(segment('A', 1000))
+        await appendFragments('A', fragments.map((f, i) => ({ ...f, index: i, wallClock: 1000 + i })))
+        await createSegment(segment('E', 5000))
+        await record(segment('F', 9000))
+
+        await closeSegments(['A', 'E', 'F', 'missing'])
+
+        const segments = await listAllSegments()
+        const a = segments.find(s => s.segmentId === 'A')!
+        expect(a.endedAt).toBe(1000 + a.duration * 1000)
+        expect(segments.some(s => s.segmentId === 'E')).toBe(false)
+        expect(segments.find(s => s.segmentId === 'F')!.endedAt).toBe(17000)
     })
 
     it('区間ごとの設定の印を読める（初期化セグメントのない区間・ない区間は null）', async () => {
