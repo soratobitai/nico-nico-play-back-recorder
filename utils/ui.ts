@@ -59,11 +59,11 @@ const BAR_HTML = `
   <!-- 画面録画（設定ではなく、ページを開くたびに押して始める。録る種類のチップとは別の、開始ボタンの形） -->
   <div class="npr-screen">
     <button type="button" id="screenCaptureButton" class="npr-screen-button" aria-pressed="false" hidden>
-      ${ICONS.screen}<span class="npr-screen-label">画面録画</span>
+      ${ICONS.screen}<span class="npr-screen-label">画面録画<span class="npr-screen-state" aria-hidden="true"></span></span>
     </button>
   </div>
 
-  <p id="recorderError" class="npr-error">${ICONS.warning}<span>${ERROR_MESSAGE}</span></p>
+  <p id="recorderError" class="npr-error" title="${ERROR_MESSAGE}">${ICONS.warning}<span>${ERROR_MESSAGE}</span></p>
 
   <div class="npr-actions">
     <button type="button" id="playbackButton" class="npr-button npr-primary" aria-pressed="false" hidden>
@@ -130,23 +130,55 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     $<HTMLButtonElement>('#capButton').addEventListener('click', getScreenShotAndDownload)
     $<HTMLButtonElement>('#settingsButton').addEventListener('click', showSettings)
 
+    // 中身の大きさが変わったら（幅・録画時間・ボタンの文字など）、はみ出していないか確かめる
+    const observer = new ResizeObserver(fitBar)
+    for (const element of [bar, ...bar.children]) observer.observe(element)
+
     setRecorderState(state)
+}
+
+// 幅ごとに詰める表示（style.css のコンテナクエリ）でも入り切らない時は、最も詰めた表示にする
+// （ブラウザの最小フォントサイズの設定などで、文字が想定より大きく表示される環境）。
+// その時のバーの幅より広くなったら、元に戻して確かめ直す
+let tightWidth = 0
+// 中身が、バーの左右の余白を除いた所からはみ出しているか（余白にはみ出しただけでは scrollWidth に出ないので、位置で比べる）
+const isOverflowing = (target: HTMLElement) => {
+    const right = target.getBoundingClientRect().right - parseFloat(getComputedStyle(target).paddingRight)
+    return [...target.children].some(child => child.getBoundingClientRect().right > right + 0.5)
+}
+const fitBar = () => {
+    if (!bar) return
+    const width = bar.clientWidth
+    if (bar.dataset.tight !== undefined && width > tightWidth) delete bar.dataset.tight
+    if (bar.dataset.tight === undefined && isOverflowing(bar)) {
+        bar.dataset.tight = ''
+        tightWidth = width
+    }
 }
 
 // 録画の状態を表示する
 const STATE_LABELS: Record<BarState, string> = { preparing: '準備中', recording: '録画中', stopped: '停止中', error: '保存エラー' }
+// 文字を隠して丸やアイコンだけの時のための説明
+const STATE_TITLES: Record<BarState, string> = {
+    preparing: '準備中: 動画の読み込みを待っています',
+    recording: '録画中',
+    stopped: '停止中',
+    error: `保存エラー: ${ERROR_MESSAGE}`,
+}
 
 const setRecorderState = (next: BarState) => {
     state = next
     if (!bar || !recordButton) return
     bar.dataset.state = next
     bar.querySelector('#recordStatus')!.textContent = STATE_LABELS[next]
+    bar.querySelector<HTMLElement>('.npr-status')!.title = STATE_TITLES[next]
 
     const recording = next === 'recording'
     recordButton.disabled = next === 'preparing'
     recordButton.classList.toggle('is-stop', recording)
     recordButton.querySelector('.npr-record-icon')!.innerHTML = recording ? ICONS.stop : ICONS.record
     recordButton.querySelector('.npr-record-label')!.textContent = recording ? '停止' : '録画開始'
+    recordButton.title = recording ? '録画を止めます' : next === 'preparing' ? '動画の読み込みを待っています' : '録画を始めます'
 }
 
 // 録る種類（設定）の表示
@@ -171,7 +203,8 @@ const showBarHint = (text: string) => {
 function setScreenCaptureButton(active: boolean) {
     if (!screenCaptureButton) return
     screenCaptureButton.setAttribute('aria-pressed', String(active))
-    screenCaptureButton.querySelector('.npr-screen-label')!.textContent = active ? '画面録画中' : '画面録画'
+    // 読み上げの名前は「画面録画」のまま（録っているかは「押されている」で伝わる）。見た目だけ「画面録画中」にする
+    screenCaptureButton.querySelector('.npr-screen-state')!.textContent = active ? '中' : ''
     screenCaptureButton.title = active
         ? 'クリックすると、画面録画だけを止めます（他の録画は続きます）'
         : 'ゲームやギフトなどの演出も含めて、プレイヤーの画面をそのまま録画します（クリックして「このタブを共有」を許可すると始まります）'

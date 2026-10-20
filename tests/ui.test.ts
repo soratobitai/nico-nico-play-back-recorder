@@ -66,6 +66,20 @@ describe('録画バー', () => {
         expect($('#recordStatus').textContent).toBe('保存エラー')
         expect($('#recorderError').textContent).toContain('空き容量が足りず録画を止めました')
         expect($<HTMLButtonElement>('#recordButton').disabled).toBe(false) // もう一度録画を始められる
+        // 理由は長いので、入り切らない時はマウスを乗せると全文が出る
+        expect($('#recorderError').title).toContain('古い録画を削除するか')
+    })
+
+    it('状態と録画ボタンには説明を付ける（狭い時は文字を隠して丸やアイコンだけになるため）', () => {
+        insertRecorderBar(options())
+        setRecorderState('preparing')
+        expect($('.npr-status').title).toContain('動画の読み込みを待っています')
+
+        setRecorderState('recording')
+        expect($('.npr-status').title).toBe('録画中')
+        expect($('#recordButton').title).toBe('録画を止めます')
+        setRecorderState('stopped')
+        expect($('#recordButton').title).toBe('録画を始めます')
     })
 
     it('録る種類のチップは設定の通りに押された表示になり、押すと切り替えの処理を呼ぶ', () => {
@@ -124,6 +138,8 @@ describe('録画バー', () => {
             setScreenCaptureButton(true)
             expect(chip.getAttribute('aria-pressed')).toBe('true')
             expect(chip.textContent?.trim()).toBe('画面録画中')
+            // 読み上げの名前は「画面録画」のまま（「中」は見た目だけ。録っているかは「押されている」で伝わる）
+            expect(chip.querySelector('.npr-screen-state')?.getAttribute('aria-hidden')).toBe('true')
             setScreenCaptureButton(false)
             expect(chip.getAttribute('aria-pressed')).toBe('false')
             expect(chip.textContent?.trim()).toBe('画面録画')

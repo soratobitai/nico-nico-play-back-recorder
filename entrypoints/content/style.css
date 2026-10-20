@@ -206,7 +206,7 @@
 .npr-screen-button[aria-pressed="true"]:hover { background: rgba(var(--npr-screen-rgb), 0.3); }
 .npr-screen-button[aria-pressed="true"] .npr-screen-rec { fill: var(--npr-rec); stroke: none; animation: npr-blink 1.2s ease-in-out infinite; }
 
-/* 保存エラー（バーを赤くし、理由を1行で出す） */
+/* 保存エラー（バーを赤くし、理由を出す） */
 .npr-error {
   display: none;
   align-items: center;
@@ -216,9 +216,11 @@
   color: #ffb3ba;
   font-size: 11.5px;
 }
-.npr-error span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 長いので2行まで（入り切らない分は、マウスを乗せると全文が出る） */
+.npr-error span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.3; }
 .npr-bar[data-state="error"] { background: var(--npr-danger-bg); border-top-color: rgba(var(--npr-rec-rgb), 0.35); }
 .npr-bar[data-state="error"] .npr-error { display: flex; }
+.npr-bar[data-state="error"] .npr-time { display: none; } /* 録画していないので、理由に場所を譲る */
 .npr-bar[data-state="error"] .npr-kinds,
 .npr-bar[data-state="error"] .npr-screen { display: none; }
 
@@ -358,6 +360,22 @@
   .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
   .npr-screen-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
+
+/* 幅ごとに詰めても入り切らない時（文字が想定より大きく表示される環境）は、最も詰めた表示にする（ui.ts の fitBar） */
+.npr-bar[data-tight] .npr-long,
+.npr-bar[data-tight] .npr-screen-label,
+.npr-bar[data-tight] .npr-label,
+.npr-bar[data-tight] .npr-status-label,
+.npr-bar[data-tight] .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.npr-bar[data-tight] .npr-time,
+.npr-bar[data-tight] .npr-chip .npr-chip-icon,
+.npr-bar[data-tight] .npr-chip .npr-short { display: none; }
+.npr-bar[data-tight] .npr-chip { width: 30px; padding: 0; justify-content: center; }
+.npr-bar[data-tight] .npr-chip svg { display: block; }
+.npr-bar[data-tight] .npr-chip[aria-pressed="true"] svg { color: rgb(var(--npr-kind-rgb)); }
+.npr-bar[data-tight] .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
+.npr-bar[data-tight] :is(#playbackButton, #recordingsButton, .npr-record) { width: 28px; padding: 0; justify-content: center; }
+.npr-bar[data-tight] :is(.npr-kinds, .npr-screen) { padding-left: 8px; }
 
 @media (prefers-reduced-motion: reduce) {
   .npr-bar .npr-status-dot,
