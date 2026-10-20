@@ -14,11 +14,17 @@ vi.mock('@/utils/library/api', () => ({
 const GB = 1024 * 1024 * 1024
 const flush = () => new Promise(resolve => setTimeout(resolve, 0))
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-const wheel = (deltaY: number, init: WheelEventInit = {}) => slider('storageRange').dispatchEvent(new WheelEvent('wheel', { deltaY, cancelable: true, ...init }))
+const wheel = (deltaY: number, init: WheelEventInit = {}) => {
+    const event = new WheelEvent('wheel', { deltaY, cancelable: true, ...init })
+    // happy-dom の WheelEvent は ctrlKey を受け取らないので付ける
+    if (init.ctrlKey) Object.defineProperty(event, 'ctrlKey', { value: true })
+    return slider('storageRange').dispatchEvent(event)
+}
 const dialog = () => document.getElementById('settingsModal')!
 // 暗くした所（ダイアログ自身）で押して離す
 const clickBackdrop = (detail = 1) => {
     dialog().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    dialog().dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
     dialog().dispatchEvent(new MouseEvent('click', { bubbles: true, detail }))
 }
 const slider = (id: string) => document.getElementById(id) as HTMLInputElement
@@ -91,6 +97,41 @@ describe('設定画面', () => {
         expect(await MAX_STORAGE_SIZE.getValue()).toBe(49 * GB)
     })
 
+    describe('容量の上限を今の使用量より下げる時（超えた分の古い録画がすぐに消える）', () => {
+        // 使用量は 2 GB（getUsage の代わり）。上限を 1 GB に下げると 1 GB 分消える
+        beforeEach(async () => {
+            await MAX_STORAGE_SIZE.setValue(10 * GB)
+            await flush()
+            modal.show()
+            await flush()
+        })
+
+        it('確かめて、やめたら保存せずにスライダーを元に戻す', async () => {
+            const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
+            moveSlider('storageRange', 1 * GB, 'change')
+            await flush()
+
+            expect(confirm).toHaveBeenCalledWith(expect.stringContaining('削除されます'))
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(10 * GB)
+            expect(slider('storageRange').value).toBe(String(10 * GB))
+            expect(document.getElementById('storageGB')?.textContent).toBe('10')
+            confirm.mockRestore()
+        })
+
+        it('よければ保存する。使用量より上なら確かめない', async () => {
+            const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
+            moveSlider('storageRange', 1 * GB, 'change')
+            await flush()
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(1 * GB)
+
+            moveSlider('storageRange', 3 * GB, 'change')
+            await flush()
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(3 * GB)
+            expect(confirm).toHaveBeenCalledTimes(1)
+            confirm.mockRestore()
+        })
+    })
+
     describe('容量の上限のスライダーのホイール（上限を下げると古い録画が消えるので、うっかり動かさない）', () => {
         beforeEach(async () => {
             await MAX_STORAGE_SIZE.setValue(30 * GB)
@@ -117,6 +158,32 @@ describe('設定画面', () => {
             wheel(-100)
             expect(slider('storageRange').value).toBe(String(31 * GB)) // 40 + (-200) = -160 → 1目盛り上げる
             await wait(700) // 保存を待つ（次のテストに持ち越さない）
+        })
+
+        it('ホイールで動かした後につまんで動かし始めたら、その前に保存しておく（動かしている途中の値で保存しない）', async () => {
+            slider('storageRange').focus()
+            wheel(100)
+            slider('storageRange').dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+            await flush()
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(29 * GB)
+
+            moveSlider('storageRange', 5 * GB, 'input') // つまんで動かしている途中
+            await wait(700)
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(29 * GB)
+        })
+
+        it('ホイールで動かしてすぐ閉じたら、閉じる時に保存する（閉じた後に古い値で保存しない）', async () => {
+            slider('storageRange').focus()
+            wheel(100)
+            modal.close()
+            await flush()
+            expect(await MAX_STORAGE_SIZE.getValue()).toBe(29 * GB)
+        })
+
+        it('Ctrl+ホイール（拡大・縮小）では動かさない', () => {
+            slider('storageRange').focus()
+            wheel(100, { ctrlKey: true })
+            expect(slider('storageRange').value).toBe(String(30 * GB))
         })
 
         it('動かしている間は保存せず、動かし終えてから1回だけ保存する', async () => {
@@ -182,6 +249,27 @@ describe('設定画面', () => {
         document.querySelector('.npr-settings-body')!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
         dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }))
 
+        expect(document.getElementById('settingsModal')).not.toBeNull()
+    })
+
+    it('暗くした所で押して、設定画面の中で離しても閉じない', () => {
+        modal.show()
+
+        dialog().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+        document.querySelector('.npr-settings-body')!.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+        dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+        expect(document.getElementById('settingsModal')).not.toBeNull()
+    })
+
+    it('開いている時に暗くした所の歯車をダブルクリックしたら、1回目で閉じて、2回目ではまた開かない', () => {
+        modal.show()
+        clickBackdrop(1)
+        expect(document.getElementById('settingsModal')).toBeNull()
+
+        modal.show(new MouseEvent('click', { detail: 2 }))
+        expect(document.getElementById('settingsModal')).toBeNull()
+        modal.show(new MouseEvent('click', { detail: 1 }))
         expect(document.getElementById('settingsModal')).not.toBeNull()
     })
 

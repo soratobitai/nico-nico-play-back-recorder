@@ -81,6 +81,8 @@ class SettingsModal {
   private messageTimer: ReturnType<typeof setTimeout> | null = null
   private kindsMessageTimer: ReturnType<typeof setTimeout> | null = null
   private usageUpdateInterval: ReturnType<typeof setInterval> | null = null
+  private pendingWheelSave: { timer: ReturnType<typeof setTimeout>, save: () => void } | null = null // ホイールで動かした値の、待っている保存
+  private closedAt = -Infinity // 閉じた時刻（performance.now）
 
   constructor({ screenCaptureSupported = false }: SettingsModalOptions = {}) {
     this.screenCaptureSupported = screenCaptureSupported
@@ -352,14 +354,20 @@ class SettingsModal {
         }
       }, { capture: true })
     }
-    // 暗くした所で押して離した時だけ閉じる（設定画面の中で押して外で離した時、文字を選んでいた時などは閉じない）
+    // 暗くした所で押して、暗くした所で離した時だけ閉じる
+    // （中で押して外で離した時・外で押して中で離した時は、クリックがダイアログ自身に届くが閉じない）
     let pressedOnBackdrop = false
+    let releasedOnBackdrop = false
     modal.addEventListener('pointerdown', (e) => {
       pressedOnBackdrop = e.target === modal
     })
+    modal.addEventListener('pointerup', (e) => {
+      releasedOnBackdrop = e.target === modal
+    })
     modal.addEventListener('click', (e) => {
-      if (e.target === modal && pressedOnBackdrop) this.close()
+      if (e.target === modal && pressedOnBackdrop && releasedOnBackdrop) this.close()
       pressedOnBackdrop = false
+      releasedOnBackdrop = false
     })
 
     for (const [key, id] of Object.entries(CHECKBOXES) as [keyof Settings, string][]) {
@@ -399,13 +407,17 @@ class SettingsModal {
     // 容量の上限。動かしている間は表示だけ更新し、保存は手を離した時に行う
     const storageRange = modal.querySelector('#storageRange') as HTMLInputElement
     storageRange?.addEventListener('input', () => this.updateStorageLabel(Number(storageRange.value)))
-    storageRange?.addEventListener('change', () => this.updateSetting('MAX_STORAGE_SIZE', Number(storageRange.value)))
+    storageRange?.addEventListener('change', () => {
+      this.flushWheelSave()
+      this.saveStorageLimit(Number(storageRange.value))
+    })
+    // つまんで動かし始める前に、ホイールで動かした値を保存しておく（動かしている途中の値で保存しないように）
+    storageRange?.addEventListener('pointerdown', () => this.flushWheelSave())
     // ホイールでも動かせる。ただし、スライダーを選んでいる（フォーカスがある）時の縦のホイールだけ
     // （設定画面をスクロールしている途中にスライダーの上を通っても、上限を変えない。上限を下げると古い録画が消えるため）
     let wheelPixels = 0
-    let wheelSaveTimer: ReturnType<typeof setTimeout> | undefined
     storageRange?.addEventListener('wheel', (e) => {
-      if (document.activeElement !== storageRange) return
+      if (document.activeElement !== storageRange || e.ctrlKey) return // Ctrl+ホイールは拡大・縮小
       if (e.deltaY === 0 || Math.abs(e.deltaY) < Math.abs(e.deltaX)) return
       e.preventDefault()
       wheelPixels += e.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? e.deltaY : Math.sign(e.deltaY) * WHEEL_STEP_PIXELS
@@ -415,8 +427,9 @@ class SettingsModal {
       const next = Math.min(Math.max(Number(storageRange.value) - steps * GB, GB), MAX_STORAGE_SIZE_LIMIT)
       storageRange.value = String(next)
       this.updateStorageLabel(next)
-      clearTimeout(wheelSaveTimer)
-      wheelSaveTimer = setTimeout(() => this.updateSetting('MAX_STORAGE_SIZE', Number(storageRange.value)), WHEEL_SAVE_DELAY_MS)
+      // 動かし終えてから保存する
+      if (this.pendingWheelSave) clearTimeout(this.pendingWheelSave.timer)
+      this.pendingWheelSave = { timer: setTimeout(() => this.flushWheelSave(), WHEEL_SAVE_DELAY_MS), save: () => this.saveStorageLimit(Number(storageRange.value)) }
     }, { passive: false })
 
     // すべての録画を削除
@@ -432,6 +445,32 @@ class SettingsModal {
         this.showMessage('削除できませんでした', 'error')
       }
     })
+  }
+
+  // ホイールで動かした値の保存を待っていれば、すぐ保存する
+  private flushWheelSave() {
+    const pending = this.pendingWheelSave
+    if (!pending) return
+    this.pendingWheelSave = null
+    clearTimeout(pending.timer)
+    pending.save()
+  }
+
+  // 容量の上限を保存する。今の使用量より下げると、超えた分の古い録画がすぐに消えるので、確かめてから保存する
+  // （スライダー・キー・ホイールのどれで動かしても。やめたら、スライダーを元の値に戻す）
+  private saveStorageLimit(next: number) {
+    const previous = this.settings.MAX_STORAGE_SIZE
+    if (next === previous) return
+    const usage = this.currentStorageUsage
+    if (usage !== null && next < usage && next < previous
+      && !confirm(`上限を ${toGB(next)} GB にすると、超えた分の古い録画（約 ${formatUsage(usage - next)}）が削除されます。
+よろしいですか？`)) {
+      const storageRange = this.modal?.querySelector<HTMLInputElement>('#storageRange')
+      if (storageRange) storageRange.value = String(previous)
+      this.updateStorageLabel(previous)
+      return
+    }
+    void this.updateSetting('MAX_STORAGE_SIZE', next)
   }
 
   private updateStorageLabel(value: number) {
@@ -490,11 +529,14 @@ class SettingsModal {
   }
 
   // 開く（開いていれば閉じる）
-  public show() {
+  // event: 歯車のクリック。開いている時に暗くした所の歯車をダブルクリックすると、1回目で閉じて2回目で
+  // また開いてしまうので、閉じた直後のダブルクリックの2回目では開かない
+  public show(event?: MouseEvent) {
     if (this.isVisible) {
       this.close()
       return
     }
+    if (event && event.detail > 1 && performance.now() - this.closedAt < OPEN_CLICK_GUARD_MS) return
     document.body.insertAdjacentHTML('beforeend', this.createModalHTML())
     this.modal = document.getElementById('settingsModal') as HTMLDialogElement | null
     if (!this.modal) return
@@ -513,7 +555,9 @@ class SettingsModal {
   }
 
   public close() {
+    this.flushWheelSave() // 閉じた後に、古い値で保存しないように
     this.stopUsageUpdateInterval()
+    if (this.isVisible) this.closedAt = performance.now()
     const modal = this.modal
     this.modal = null
     this.isVisible = false

@@ -559,7 +559,7 @@ export default async () => {
     insertRecorderBar({
         start,
         stop,
-        showSettings: () => settingsModal.show(),
+        showSettings: (event) => settingsModal.show(event),
         toggleKind,
         toggleScreenCapture: isScreenCaptureSupported() ? toggleScreenCapture : null,
         // プレイバックは mp4 の録画だけ（webm でしか録画できない環境では使えない）
