@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertRecorderBar, setRecorderState, setKindChips, showBarHint, setScreenCaptureButton, setPlaybackButton, getTimeString } from '@/utils/ui'
+import { insertRecorderBar, setRecorderState, setKindChips, setKindRecording, showBarHint, setScreenCaptureButton, setPlaybackButton, getTimeString } from '@/utils/ui'
 import { isPlaybackSupported } from '@/utils/review/window'
 import { getProgramData } from '@/utils/feature'
 
@@ -92,6 +92,21 @@ describe('録画バー', () => {
 
         $<HTMLButtonElement>('.npr-chip[data-kind="comments"]').click()
         expect(toggleKind).toHaveBeenCalledWith('comments')
+    })
+
+    it('録る種類のチップに、その種類を今録っているかを出す', () => {
+        insertRecorderBar(options())
+        const chip = (kind: string) => $(`.npr-chip[data-kind="${kind}"]`)
+        expect([chip('video').dataset.recording, chip('comments').dataset.recording]).toEqual(['false', 'false'])
+
+        setKindRecording({ video: true, comments: false })
+        expect([chip('video').dataset.recording, chip('comments').dataset.recording]).toEqual(['true', 'false'])
+        expect(chip('video').title).toContain('（録画中）')
+        expect(chip('comments').title).not.toContain('（録画中）')
+
+        setKindRecording({ video: false, comments: false })
+        expect(chip('video').dataset.recording).toBe('false')
+        expect(chip('video').title).not.toContain('（録画中）')
     })
 
     it('短いお知らせを出せる', () => {

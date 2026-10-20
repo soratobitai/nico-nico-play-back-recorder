@@ -38,6 +38,12 @@ const ICONS = {
     warning: icon('<path d="M12 3l10 18H2z"></path><path d="M12 10v5M12 18v.5"></path>'),
 }
 
+// 録る種類のチップの説明（マウスを乗せた時）
+const CHIP_TITLES: Record<VideoKind, string> = {
+    video: 'コメントなし: 映像と音声をそのまま録画します',
+    comments: 'コメントあり: 流れるコメントを重ねて録画します（タブを表示していない時は、コメントは録画されません）',
+}
+
 const BAR_HTML = `
 <div id="${BAR_ID}" class="npr-bar" data-state="preparing">
   <div class="npr-status">
@@ -47,10 +53,10 @@ const BAR_HTML = `
   </div>
 
   <div class="npr-kinds" role="group" aria-label="録画する種類">
-    <button type="button" class="npr-chip npr-chip-video" data-kind="video" aria-pressed="true" title="コメントなし: 映像と音声をそのまま録画します">
+    <button type="button" class="npr-chip npr-chip-video" data-kind="video" aria-pressed="true" data-recording="false" title="${CHIP_TITLES.video}">
       ${ICONS.commentsOff}<span class="npr-chip-label">コメントなし</span>
     </button>
-    <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" title="コメントあり: 流れるコメントを重ねて録画します（タブを表示していない時は、コメントは録画されません）">
+    <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" data-recording="false" title="${CHIP_TITLES.comments}">
       ${ICONS.comments}<span class="npr-chip-label">コメントあり</span>
     </button>
     <span class="npr-hint" role="status"></span>
@@ -205,6 +211,16 @@ const setKindChips = (kinds: Record<VideoKind, boolean>) => {
     }
 }
 
+// 録る種類のチップに、その種類を今録っているかを出す（録っていれば右上の赤い丸が脈打つ。
+// 選んでいて録っていない時（停止中など）は空の丸）
+const setKindRecording = (kinds: Record<VideoKind, boolean>) => {
+    for (const chip of bar?.querySelectorAll<HTMLButtonElement>('.npr-chip[data-kind]') ?? []) {
+        const kind = chip.dataset.kind as VideoKind
+        chip.dataset.recording = String(kinds[kind])
+        chip.title = `${CHIP_TITLES[kind]}${kinds[kind] ? '（録画中）' : ''}`
+    }
+}
+
 // 録画バーに短いお知らせを出す（数秒で消える）
 const showBarHint = (text: string) => {
     const hint = bar?.querySelector<HTMLElement>('.npr-hint')
@@ -288,6 +304,7 @@ export {
     insertRecorderBar,
     setRecorderState,
     setKindChips,
+    setKindRecording,
     showBarHint,
     setScreenCaptureButton,
     setPlaybackButton,

@@ -1,7 +1,7 @@
 import { enforceLimit, flushPending, migrateLegacy, closeStaleSegments, setPendingLimit } from "../../utils/library/api"
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer } from "../../utils/recording"
 import { getProgramData, captureThumbnail } from "../../utils/feature"
-import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setKindChips, showBarHint } from "../../utils/ui"
+import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setKindChips, setKindRecording, showBarHint } from "../../utils/ui"
 import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, type ResolutionMode } from '../../utils/storage'
 import { createVideoCapture, createVideoSource, createCommentSource, type RecordingSource } from '../../utils/recording-source'
 import { createKindRecorder, type KindRecorder } from '../../utils/kind-recorder'
@@ -147,6 +147,7 @@ export default async () => {
         // 順番待ちの区切り・録り直しは、これより KIND_STAGGER_MS 以上あとに行う
         nextStartAt = Math.max(nextStartAt, Date.now() + KIND_STAGGER_MS)
         recorders.set(kind, recorder)
+        refreshRecordingIndicators()
         return true
     }
 
@@ -162,7 +163,7 @@ export default async () => {
 
     // 種類の録画が止まった後。録画している種類がなくなったら停止する
     const afterKindStopped = (kind: RecordingKind) => {
-        if (kind === 'screen') refreshScreenButton()
+        refreshRecordingIndicators()
         if (sessionActive && recorders.size === 0 && restartPending.size === 0) stopSession('stopped')
     }
 
@@ -237,6 +238,7 @@ export default async () => {
         restartPending.clear()
         discardPending.clear()
         for (const kind of [...recorders.keys()]) stopKind(kind)
+        refreshRecordingIndicators()
         stopTimer()
         stateManager.setState(state)
     }
@@ -271,10 +273,12 @@ export default async () => {
                 }
                 discardPending.delete(kind)
                 if (enabledKinds().includes(kind)) startKind(kind, () => createSourceFor(kind))
+                refreshRecordingIndicators()
             }, () => {
                 if (recorders.size === 0) stopSession('stopped')
             })
         }, RESTART_DELAY_MS)
+        refreshRecordingIndicators()
     }
 
     // 録画中の、動画から作る種類をすべて録り直す（設定の変更を反映する）
@@ -296,6 +300,7 @@ export default async () => {
                 stopKind(kind)
             }
         }
+        refreshRecordingIndicators()
     }
 
     // 拡張機能側に保存できない間に一時保存する量の上限（拡張機能が更新された後も録画を続けるので）
@@ -346,9 +351,12 @@ export default async () => {
     // ---- 画面録画（プレイヤーの画面をそのまま録る。ゲームやギフトなどの演出も入る） ----
     // 「このタブを共有」の確認を出すので、録画バーのボタンのクリックから始める（自動では始められないので、設定にはしない）
 
-    // 録画バーのボタンの表示を合わせる
-    const refreshScreenButton = () => {
+    // 録画バーの、種類ごとに今録っているかの表示を合わせる（画面録画のボタンと、録る種類のチップ）
+    // 録り直しを待っている種類（解像度が変わった直後など）は、録っていることにする（表示がちらつかないように）
+    const refreshRecordingIndicators = () => {
         setScreenCaptureButton(recorders.has('screen'))
+        const recording = (kind: VideoKind) => recorders.has(kind) || restartPending.has(kind)
+        setKindRecording({ video: recording('video'), comments: recording('comments') })
     }
 
     // 画面録画を始める（他の種類と並行して録る。停止中なら、設定で選んだ種類も一緒に録り始める）
@@ -380,7 +388,7 @@ export default async () => {
             source.stop()
             if (recorders.size === 0) stopSession('stopped')
         }
-        refreshScreenButton()
+        refreshRecordingIndicators()
         return started
     }
 

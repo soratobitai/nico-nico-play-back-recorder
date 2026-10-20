@@ -130,6 +130,26 @@
 }
 .npr-chip[aria-pressed="true"]:hover { background: rgba(var(--npr-kind-rgb), 0.22); }
 .npr-chip[aria-pressed="true"] svg { color: rgb(var(--npr-kind-rgb)); }
+/* その種類を今録っているか（右上の丸。録画の状態の丸と同じ見え方）。録っていれば赤い丸が脈打ち、
+   選んでいて録っていない時（停止中など）は空の丸 */
+.npr-chip { position: relative; }
+.npr-chip[aria-pressed="true"]::after,
+.npr-chip[data-recording="true"]::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--npr-muted);
+  background: #121318;
+}
+.npr-chip[data-recording="true"]::after {
+  border: 1.5px solid #121318;
+  background: var(--npr-rec);
+  animation: npr-pulse 2s ease-out infinite;
+}
 
 /* チップの上に出る短いお知らせ */
 .npr-hint {
@@ -347,7 +367,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .npr-bar .npr-status-dot,
-  .npr-bar .npr-screen-rec { animation: none !important; }
+  .npr-bar .npr-screen-rec,
+  .npr-bar .npr-chip::after { animation: none !important; }
   .npr-hint, .npr-bar :where(button) { transition: none; }
 }
 
