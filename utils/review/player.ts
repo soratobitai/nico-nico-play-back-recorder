@@ -20,6 +20,39 @@ const RETRY_DELAY_MS = 2000
 
 type ReadFragments = (segmentId: string, indexes: number[]) => Promise<(Blob | null)[]>
 
+// 断片の終わりの端数（その後が空いている時）に入らない、いちばん後ろの位置
+const beforeTail = (fragment: PlacedFragment) => Math.max(fragment.start, fragment.end - FRAGMENT_TAIL_SECONDS)
+
+// 移る位置を、読み込める所に合わせる
+// 録っていない間を指していたら、次に録った所へ（読み込めないので、そこへは移れない）。
+// 断片の終わりぎりぎり（映像と音声の長さの違いで、読み込まれない端数）で、その後が空いている場合も同じ。
+// backward（戻る操作）なら、間の前の録った所へ、間を除いて戻る（戻れずに同じ所へ移り続けないように）。
+// 間の前の断片が短くても、録った時間で数えて、その前の断片までさかのぼる
+const snapToRecorded = (timeline: Timeline, t: number, backward = false) => {
+    const flat = timeline.fragments
+    const i = timeline.indexAt(t)
+    const here = flat[i]
+    if (!here) return t
+    const inGap = here.start > t
+    if (inGap && backward && i > 0) {
+        let remaining = here.start - t
+        for (let j = i - 1; j >= 0; j--) {
+            const fragment = flat[j]
+            const length = fragment.end - fragment.start
+            if (remaining <= length) return j === i - 1 ? Math.min(fragment.end - remaining, beforeTail(fragment)) : fragment.end - remaining
+            remaining -= length
+        }
+        return flat[0].start
+    }
+    if (inGap) return here.start
+    const next = flat[i + 1]
+    if (next && here.end - t < FRAGMENT_TAIL_SECONDS && next.start > here.end + 0.05) {
+        // 戻る操作なら、この断片の端数の手前へ（次の録った所へ進めると、戻れずに同じ所へ移り続ける）
+        return backward ? beforeTail(here) : next.start
+    }
+    return t
+}
+
 type ReviewPlayerOptions = {
     video: HTMLVideoElement
     timeline: Timeline
@@ -168,28 +201,6 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         mediaSource.endOfStream()
     }
 
-    // 録っていない間を指していたら、次に録った所へ（読み込めないので、そこへは移れない）
-    // 断片の終わりぎりぎり（映像と音声の長さの違いで、読み込まれない端数）で、その後が空いている場合も同じ
-    // backward（戻る操作）なら、間の前の録った所へ、間を飛ばして戻る（戻れずに同じ所へ移り続けないように）
-    const snapToRecorded = (t: number, backward = false) => {
-        const flat = timeline.fragments
-        const i = timeline.indexAt(t)
-        const here = flat[i]
-        if (!here) return t
-        const inGap = here.start > t
-        if (inGap && backward && i > 0) {
-            const previous = flat[i - 1]
-            return Math.max(previous.start, previous.end - (here.start - t))
-        }
-        if (inGap) return here.start
-        const next = flat[i + 1]
-        if (next && here.end - t < FRAGMENT_TAIL_SECONDS && next.start > here.end + 0.05) {
-            // 戻る操作なら、この断片の端数の手前へ（次の録った所へ進めると、戻れずに同じ所へ移り続ける）
-            return backward ? Math.max(here.start, here.end - FRAGMENT_TAIL_SECONDS) : next.start
-        }
-        return t
-    }
-
     // 断片のデータを読む（録画中に届いたものは覚えているものを使う）
     // 続けて読めない場合は、1つずつ読み直して、読めない断片を壊れた録画として知らせる（その断片のせいで、まわりも読めなくならないように）
     const read = async (fragments: PlacedFragment[]) => {
@@ -232,7 +243,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         // 動画の長さがその位置まで延びてから移る（延ばせない間は、次の機会にもう一度）
         if (!(mediaSource.duration >= pendingSeek)) extendDuration()
         if (!(mediaSource.duration >= pendingSeek)) return
-        const target = snapToRecorded(pendingSeek)
+        const target = snapToRecorded(timeline, pendingSeek)
         pendingSeek = null
         video.currentTime = target
     }
@@ -330,7 +341,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         if (bufferedAt(t)) return // 続きが読み込まれている
 
         // 時間軸の上で、今の位置より後にある次の断片（読み込み済みなら飛ぶ）
-        const next = snapToRecorded(t)
+        const next = snapToRecorded(timeline, t)
         if (next > t && bufferedAt(next + 0.1)) {
             video.currentTime = next + 0.01
             return
@@ -372,7 +383,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
 
         // backward: 戻る操作（録っていない間に当たったら、間の前へ戻る）
         seek(t: number, { backward = false } = {}) {
-            const target = snapToRecorded(Math.min(Math.max(t, timeline.start), timeline.end), backward)
+            const target = snapToRecorded(timeline, Math.min(Math.max(t, timeline.start), timeline.end), backward)
             if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
                 extendDuration()
                 video.currentTime = target
@@ -409,5 +420,5 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
 
 type ReviewPlayer = ReturnType<typeof createReviewPlayer>
 
-export { createReviewPlayer }
+export { createReviewPlayer, snapToRecorded }
 export type { ReviewPlayer }

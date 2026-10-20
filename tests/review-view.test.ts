@@ -171,12 +171,31 @@ describe('シークバー', () => {
 
         seek.dispatchEvent(new Event('input')) // 動かして元の値に戻した
         seek.dispatchEvent(new Event('pointerup'))
+        await flush()
         expect(current().seek).toHaveBeenLastCalledWith(4)
 
         // 10秒進むと、シークバーも進む
         root.querySelector<HTMLButtonElement>('.forward')!.click()
         root.querySelector('video')!.dispatchEvent(new Event('timeupdate'))
         expect(seek.value).toBe('14')
+        view.destroy()
+    })
+
+    it('クリックやドラッグで、離した後に change が届く時は、1回だけ移る', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const seek = root.querySelector<HTMLInputElement>('.seek')!
+        current().seek.mockClear()
+
+        seek.value = '10'
+        seek.dispatchEvent(new Event('input'))
+        seek.dispatchEvent(new Event('pointerup'))
+        seek.dispatchEvent(new Event('change'))
+        await flush()
+
+        expect(current().seek).toHaveBeenCalledTimes(1)
+        expect(current().seek).toHaveBeenLastCalledWith(10)
         view.destroy()
     })
 

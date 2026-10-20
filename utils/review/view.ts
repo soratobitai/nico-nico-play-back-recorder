@@ -375,9 +375,10 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
     seek.addEventListener('change', commitSeek)
     // 動かして元の値に戻して離した時は change が届かないので、離した時などにも終える
-    // （終えないと、シークバーと時刻の表示が止まったままになる）
+    // （終えないと、シークバーと時刻の表示が止まったままになる）。離した直後に change が届く時は、
+    // そちらで終えるので、少し待ってから確かめる（2回移らないように）
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture', 'blur']) {
-        seek.addEventListener(type, () => { if (dragging) commitSeek() })
+        seek.addEventListener(type, () => setTimeout(() => { if (dragging) commitSeek() }))
     }
     backButton.addEventListener('click', () => skip(-SKIP_SECONDS))
     forwardButton.addEventListener('click', () => skip(SKIP_SECONDS))

@@ -63,7 +63,9 @@ const REVIEW_STYLE = `
 .review .spacer { flex: 1 0 4px; }
 
 /* シークバー（細い線。再生した所まで色をつける） */
+/* 下の操作の行（枠のための余白）より手前にして、シークバーの下の端も押せるようにする */
 .review .seek {
+  position: relative; z-index: 1;
   --progress: 0%;
   width: 100%; height: 18px; margin: 0;
   appearance: none; -webkit-appearance: none;
@@ -186,13 +188,17 @@ const REVIEW_STYLE = `
 @container (max-width: 760px) {
   .review .row:has(.kinds[data-count="3"]) :is(.mute, .back, .forward) .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-@container (max-width: 650px) {
+@container (max-width: 660px) {
   .review .kinds[data-count="3"] .kind-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .review .kinds[data-count="3"] .kind { padding: 0; width: calc(var(--control) - 6px); }
   .review .kinds[data-count="3"] .kind-dot { width: 9px; height: 9px; }
 }
+@container (max-width: 380px) {
+  .review .row:has(.kinds[data-count="3"]) .behind { display: none; }
+}
 @container (max-width: 330px) {
   .review .kinds[data-count="3"] .kind { width: calc(var(--control) - 10px); }
+  .review .row:has(.kinds[data-count="3"]) { gap: 1px; }
 }
 /* さらに狭い: ライブからの遅れの説明を隠す */
 @container (max-width: 360px) {
