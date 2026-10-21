@@ -494,7 +494,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
                 showFlash('スクリーンショットを保存できませんでした')
                 return
             }
-            downloadBlob(blob, name)
+            downloadBlob(blob, name, doc)
             showFlash('スクリーンショットを保存しました')
         }, 'image/png')
     }
@@ -520,7 +520,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
                 return
             }
             for (const [i, file] of files.entries()) {
-                downloadBlob(file.blob, saveFileName(kind, file.startedAt, 'mp4'))
+                downloadBlob(file.blob, saveFileName(kind, file.startedAt, 'mp4'), doc)
                 if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
             }
             const seconds = Math.round(files.reduce((sum, file) => sum + file.duration, 0))

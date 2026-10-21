@@ -63,14 +63,18 @@ const captureThumbnail = (video: HTMLVideoElement | null, width = 160): string |
 }
 
 // Blob をファイルとしてダウンロードする
-const downloadBlob = (blob: Blob, filename: string) => {
+// ownerDocument: ダウンロードを始めるページ（ボタンを押したページ）。Chrome は、操作のないまま続けてダウンロードした
+// ページでは2回目から止める（「複数のファイルをダウンロード」の確認）。プレイバックの窓で押した時は、窓の操作は
+// ニコ生のタブの操作に数えられないので、窓で始める。窓が閉じられていたら、このページで始める
+const downloadBlob = (blob: Blob, filename: string, ownerDocument: Document = document) => {
     const url = URL.createObjectURL(blob)
+    const owner = ownerDocument.defaultView && ownerDocument.body ? ownerDocument : document
 
     // 一時的にaタグを作成して自動クリック
-    const a = document.createElement('a')
+    const a = owner.createElement('a')
     a.href = url
     a.download = filename
-    document.body.appendChild(a)
+    owner.body.appendChild(a)
     a.click()
     a.remove()
 

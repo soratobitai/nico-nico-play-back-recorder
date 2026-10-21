@@ -66,7 +66,8 @@ describe('スクリーンショット', () => {
 
         expect(drawImage).toHaveBeenCalledWith(video, 0, 0, 1280, 720)
         // 時刻は、保存した時ではなく場面の時刻。コメントなし以外は種類を付ける（録画一覧の「保存」と同じ）
-        expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'user_title_2026-10-21 093006_コメントあり.png')
+        // ボタンを押したページ（プレイバックでは窓）でダウンロードを始める
+        expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'user_title_2026-10-21 093006_コメントあり.png', document)
         expect(flashText()).toBe('スクリーンショットを保存しました')
         view.destroy()
         vi.restoreAllMocks()
@@ -96,7 +97,7 @@ describe('この場面の前後を動画で保存', () => {
         await flush()
 
         expect(buildClipFiles).toHaveBeenCalledWith(current().timeline, 36, 96, readFragments)
-        expect(downloadBlob).toHaveBeenCalledWith(clip, 'user_title_2026-10-21 093036.mp4')
+        expect(downloadBlob).toHaveBeenCalledWith(clip, 'user_title_2026-10-21 093036.mp4', document)
         expect(flashText()).toBe('60秒の動画を保存しました')
         view.destroy()
     })
@@ -115,7 +116,7 @@ describe('この場面の前後を動画で保存', () => {
 
         finish([{ blob: new Blob(['mp4']), startedAt: at930, duration: 30 }])
         await flush()
-        expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'user_title_2026-10-21 093000_コメントあり.mp4')
+        expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'user_title_2026-10-21 093000_コメントあり.mp4', document)
         expect(flashText()).toBe('30秒の動画を保存しました')
         expect(button.hasAttribute('aria-disabled')).toBe(false)
         view.destroy()
