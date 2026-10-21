@@ -1,9 +1,11 @@
-// 見ている場面の前後を切り出して、mp4 のファイルにする（再エンコードしない）
+// 見ている場面の前後を切り出して、1本の mp4 にする（再エンコードしない）
 // 保存先の断片（数秒ごと）の単位で切るので、前後は断片の境目まで少し長くなる。
 // 途中から切り出す時は、キーフレームから始まる断片までさかのぼる（そこからでないと再生できないため）。
-// 映像・音声の設定が変わった所（解像度が変わった など）は、つなぐと再生できないので、ファイルを分ける
+// 映像・音声の設定が変わった所（解像度が変わった など）と、録画が途切れた所（ページを開き直した など）より先は入れない
+// （つなぐと再生できない・離れた時刻の場面が続いて見えるため）。1回で1本だけ作る
+// （続けて何本もダウンロードすると、2本目から Chrome に止められるため）
 import { buildFmp4File, initSignature, moofSizeOf } from '../fmp4'
-import type { PlacedFragment, PlacedSegment, Timeline } from './timeline'
+import { MAX_CONTINUOUS_GAP_SECONDS, type PlacedFragment, type PlacedSegment, type Timeline } from './timeline'
 
 type ClipFile = {
     blob: Blob
@@ -13,7 +15,8 @@ type ClipFile = {
 
 type ReadFragments = (segmentId: string, indexes: number[]) => Promise<(Blob | null)[]>
 
-type RunFragment = Pick<PlacedFragment, 'segmentId' | 'index' | 'keyframe' | 'startTime' | 'duration'>
+type RunFragment = Pick<PlacedFragment, 'segmentId' | 'index' | 'keyframe'>
+type LoadedFragment = PlacedFragment & { blob: Blob }
 
 // 続けて再生できるまとまり（同じ区間の、間の抜けていない断片）に分ける
 // 続きでない所からは、キーフレームから始まる断片からしか再生できないので、それまでの断片は除く
@@ -41,60 +44,68 @@ const signatureOf = async (init: Blob) => {
     }
 }
 
-// 時間軸の from〜to（秒）を切り出す。切り出せる録画がなければ空
-const buildClipFiles = async (timeline: Timeline, from: number, to: number, readFragments: ReadFragments): Promise<ClipFile[]> => {
-    const flat = timeline.fragments
-    let first = timeline.indexAt(from)
-    if (first < 0) return []
-    while (first > 0 && !flat[first].keyframe && flat[first - 1].segmentId === flat[first].segmentId && flat[first - 1].index === flat[first].index - 1) first--
-    const picked: PlacedFragment[] = []
-    for (let i = first; i < flat.length && flat[i].start < to; i++) picked.push(flat[i])
-    // 読んでいる間に時間軸が変わっても（消された・読み直した）、選んだ時の区間を使う
+// 時間軸の at（秒）の前後 seconds 秒を切り出す。切り出せる録画がなければ null
+const buildClipFile = async (timeline: Timeline, at: number, seconds: number, readFragments: ReadFragments): Promise<ClipFile | null> => {
+    const from = at - seconds
+    const to = at + seconds
+    // 区間ごとに、範囲にかかる断片を区間の中の順に選ぶ（区間どうしが少し重なっていても、混ぜない）
+    // 最初の断片がキーフレームから始まらなければ、同じ区間の続けて録った断片の中で、キーフレームまでさかのぼる
+    // （読んでいる間に時間軸が変わっても（消された・読み直した）、選んだ時の区間を使う）
     const segments = new Map<string, PlacedSegment>()
-    for (const fragment of picked) {
-        const segment = timeline.segment(fragment.segmentId)
-        if (segment) segments.set(segment.segmentId, segment)
+    const picked: PlacedFragment[] = []
+    for (const segment of timeline.placedSegments) {
+        const fragments = segment.fragments
+        let first = fragments.findIndex(f => f.end > from && f.start < to)
+        if (first < 0) continue
+        let last = first
+        while (last + 1 < fragments.length && fragments[last + 1].start < to) last++
+        while (first > 0 && !fragments[first].keyframe && fragments[first - 1].index === fragments[first].index - 1) first--
+        segments.set(segment.segmentId, segment)
+        picked.push(...fragments.slice(first, last + 1))
     }
 
     // 断片のデータを読む（読む前に消された断片は除いて、続けて再生できるように分け直す）
-    const loaded: (PlacedFragment & { blob: Blob })[] = []
-    for (const run of splitRuns(picked.filter(f => segments.has(f.segmentId)))) {
+    const loaded: LoadedFragment[] = []
+    for (const run of splitRuns(picked)) {
         const blobs = await readFragments(run[0].segmentId, run.map(f => f.index))
         run.forEach((fragment, i) => {
             const blob = blobs[i]
             if (blob) loaded.push({ ...fragment, blob })
         })
     }
+    const runs = splitRuns(loaded)
+    if (runs.length === 0) return null
 
-    // 設定が同じで続けて並んだまとまりは、1本のファイルにつなぐ
+    // 1本につなげる所（設定が同じで、録った時刻が続いている）ごとにまとめる
     const signatures = new Map<string, string | null>()
     for (const segment of segments.values()) signatures.set(segment.segmentId, await signatureOf(segment.init))
-    const groups: (PlacedFragment & { blob: Blob })[][][] = []
-    let previous: string | null = null
-    for (const run of splitRuns(loaded)) {
-        const signature = signatures.get(run[0].segmentId) ?? null
+    const wallStart = (f: LoadedFragment) => segments.get(f.segmentId)!.startedAt + f.startTime * 1000
+    const groups: LoadedFragment[][][] = []
+    for (const run of runs) {
         const group = groups[groups.length - 1]
-        if (group && signature !== null && signature === previous) group.push(run)
+        const previous = group?.[group.length - 1]
+        const tail = previous?.[previous.length - 1]
+        const signature = signatures.get(run[0].segmentId) ?? null
+        const joinable = !!previous && !!tail && signature !== null && signature === signatures.get(previous[0].segmentId)
+            && wallStart(run[0]) - (wallStart(tail) + tail.duration * 1000) <= MAX_CONTINUOUS_GAP_SECONDS * 1000
+        if (joinable) group.push(run)
         else groups.push([run])
-        previous = signature
     }
+    // 場面を含むまとまり（場面が抜けた所にあれば、その次のまとまり）
+    const endOf = (group: LoadedFragment[][]) => { const run = group[group.length - 1]; return run[run.length - 1].end }
+    const group = groups.find(g => at < endOf(g)) ?? groups[groups.length - 1]
 
-    const files: ClipFile[] = []
-    for (const group of groups) {
-        const parts = await Promise.all(group.map(async run => ({
-            init: segments.get(run[0].segmentId)!.init,
-            fragments: await Promise.all(run.map(async f => ({ blob: f.blob, moofSize: await moofSizeOf(f.blob) }))),
-        })))
-        const head = group[0][0]
-        files.push({
-            blob: await buildFmp4File(parts),
-            startedAt: segments.get(head.segmentId)!.startedAt + head.startTime * 1000,
-            // 断片の長さは映像と音声の早い方の始め〜遅い方の終わりなので、足し合わせずに、まとまりの始めから終わりまでで数える
-            duration: group.reduce((sum, run) => sum + run[run.length - 1].startTime + run[run.length - 1].duration - run[0].startTime, 0),
-        })
+    const parts = await Promise.all(group.map(async run => ({
+        init: segments.get(run[0].segmentId)!.init,
+        fragments: await Promise.all(run.map(async f => ({ blob: f.blob, moofSize: await moofSizeOf(f.blob) }))),
+    })))
+    return {
+        blob: await buildFmp4File(parts),
+        startedAt: wallStart(group[0][0]),
+        // 断片の長さは映像と音声の早い方の始め〜遅い方の終わりなので、足し合わせずに、まとまりの始めから終わりまでで数える
+        duration: group.reduce((sum, run) => sum + run[run.length - 1].startTime + run[run.length - 1].duration - run[0].startTime, 0),
     }
-    return files
 }
 
-export { buildClipFiles, splitRuns }
+export { buildClipFile, splitRuns }
 export type { ClipFile }

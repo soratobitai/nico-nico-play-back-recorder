@@ -12,7 +12,7 @@ import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '.
 import { KIND_ICON_PATHS, SCREEN_DOT } from '../kind-icons'
 import { createRowFitter } from './fit'
 import { downloadBlob, formatDateForFileName } from '../feature'
-import { buildClipFiles } from './clip'
+import { buildClipFile } from './clip'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -105,6 +105,12 @@ const isExtensionGone = () => {
     }
 }
 
+// 押せないように見せる（disabled と違って、フォーカスは外れない。押された時の処理で、押せない時は何もしない）
+const setAriaDisabled = (button: HTMLButtonElement, value: boolean) => {
+    if (value) button.setAttribute('aria-disabled', 'true')
+    else button.removeAttribute('aria-disabled')
+}
+
 // 文字を入力している所（検索欄など）では、キー操作を横取りしない
 const isTyping = (target: EventTarget | null) => {
     if (!(target instanceof Element)) return false
@@ -160,6 +166,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const muteButton = $<HTMLButtonElement>('.mute')
     const shotButton = $<HTMLButtonElement>('.shot')
     const clipButton = $<HTMLButtonElement>('.clip')
+    let clipping = false // 場面の前後の動画を作っている
     const flash = $<HTMLDivElement>('.flash')
     const liveButton = $<HTMLButtonElement>('.live')
     const clock = $<HTMLSpanElement>('.clock')
@@ -223,11 +230,13 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     // live は動画の終わりにしない（録画中の番組を追いかけるので）。録り終えた録画（録画中の区間がない）を最後まで見て、
     // しばらく続きが届かなければ止める（止めないと、再生中のまま固まって見える）
     const FINISHED_WAIT_MS = 10 * 1000
+    // 終わりのこれだけ手前まで来ていれば、最後まで見たとみなす（Chrome は、読み込んだ範囲の終わりより少し前で止まることがある）
+    const FINISHED_MARGIN_SECONDS = 1
     let waitingAtEndSince: number | null = null
     // 止めた時の時間軸の終わり（続きが届いて、これより延びたら再生を続ける。null: 止めていない）
     let stoppedAtEnd: number | null = null
     const stopIfFinished = () => {
-        const finished = mode === 'live' && !video.paused && !timeline.isEmpty && player.position >= timeline.end - 0.3
+        const finished = mode === 'live' && !video.paused && !timeline.isEmpty && player.position >= timeline.end - FINISHED_MARGIN_SECONDS
             && !timeline.placedSegments.some(s => s.endedAt === null)
         if (!finished) {
             waitingAtEndSince = null
@@ -394,6 +403,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         stopIfFinished()
         const empty = timeline.isEmpty
         for (const element of [seek, playButton, backButton, forwardButton]) element.disabled = empty
+        setAriaDisabled(shotButton, empty)
+        setAriaDisabled(clipButton, empty || clipping)
         if (!dragging) {
             seek.min = String(timeline.start)
             seek.max = String(timeline.end)
@@ -475,11 +486,19 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         flash.textContent = text
         flash.hidden = false
         clearTimeout(flashTimer)
-        if (ms !== null) flashTimer = setTimeout(() => { flash.hidden = true }, ms)
+        // 消す時に動画を作っている途中なら、そのお知らせに戻す（作っている間にスクリーンショットを保存した時など）
+        if (ms !== null) flashTimer = setTimeout(() => {
+            if (clipping) flash.textContent = CLIP_MAKING
+            else flash.hidden = true
+        }, ms)
     }
     const saveScreenshot = () => {
-        if (timeline.isEmpty || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+        if (timeline.isEmpty) {
             showFlash('保存できる場面がありません')
+            return
+        }
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+            showFlash('読み込み中です。少し待ってから押してください')
             return
         }
         const canvas = doc.createElement('canvas')
@@ -500,7 +519,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
 
     // ---- この場面の前後を、動画で保存する（録画の区切りとは別に、保存先の数秒ごとの断片の単位で切り出す）----
-    let clipping = false
+    const CLIP_MAKING = '動画を作っています…'
     const saveClip = async () => {
         if (clipping) return
         if (timeline.isEmpty) {
@@ -509,30 +528,23 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         }
         // 作っている間は押せないように見せる（disabled にすると、キーボードで操作していた人のフォーカスが外れるので使わない）
         clipping = true
-        clipButton.setAttribute('aria-disabled', 'true')
-        showFlash('動画を作っています…', null)
+        setAriaDisabled(clipButton, true)
+        showFlash(CLIP_MAKING, null)
         const kind = selectedKind
-        const t = player.position
         try {
-            const files = await buildClipFiles(timeline, t - CLIP_SECONDS, t + CLIP_SECONDS, readFragments)
-            if (files.length === 0) {
+            const file = await buildClipFile(timeline, player.position, CLIP_SECONDS, readFragments)
+            if (!file) {
                 showFlash('保存できる場面がありません')
                 return
             }
-            for (const [i, file] of files.entries()) {
-                downloadBlob(file.blob, saveFileName(kind, file.startedAt, 'mp4'), doc)
-                if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
-            }
-            const seconds = Math.round(files.reduce((sum, file) => sum + file.duration, 0))
-            showFlash(files.length > 1
-                ? `${seconds}秒の動画を、${files.length}個のファイルに分けて保存しました（画質が変わった所で分かれます）`
-                : `${seconds}秒の動画を保存しました`, files.length > 1 ? 5000 : 2000)
+            downloadBlob(file.blob, saveFileName(kind, file.startedAt, 'mp4'), doc)
+            showFlash(`${Math.round(file.duration)}秒の動画を保存しました`)
         } catch (error) {
             console.error('動画を保存できませんでした:', error)
             showFlash('動画を保存できませんでした')
         } finally {
             clipping = false
-            clipButton.removeAttribute('aria-disabled')
+            setAriaDisabled(clipButton, timeline.isEmpty)
         }
     }
     const togglePlay = () => {

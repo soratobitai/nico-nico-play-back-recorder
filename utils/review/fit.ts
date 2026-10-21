@@ -60,6 +60,19 @@ const createRowFitter = (container: HTMLElement) => {
             hidden.push(name)
             container.dataset.hide = hidden.join(' ')
         }
+        // 隠したものを、大事な方から出し直してみて、入りきるなら出しておく
+        // （行は左・真ん中・右の3つの場所に分かれていて、左右は同じ幅なので、例えば右があふれている時に
+        //   左のものを隠しても入りきるようにはならない。隠さなくてよかったものを出す）
+        // 横にスクロールするほど狭い時は、隠したままにする
+        if (!hidden.includes('scroll')) {
+            for (const name of [...hidden].reverse()) {
+                if (name === 'tight') continue
+                const trial = hidden.filter(other => other !== name)
+                container.dataset.hide = trial.join(' ')
+                if (fits(trial)) hidden.splice(hidden.indexOf(name), 1)
+                else container.dataset.hide = hidden.join(' ')
+            }
+        }
         // フォーカスのあるボタンを隠したら、シークバーへ移す（ページの先頭へ外れないように）
         // （プレイバックのウィンドウの要素は、そのウィンドウの HTMLElement で見分ける）
         const OwnHTMLElement = container.ownerDocument.defaultView?.HTMLElement ?? HTMLElement

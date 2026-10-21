@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 // 録画を見る画面の保存のボタン: スクリーンショット・この場面の前後を動画で保存
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mountReviewView } from '@/utils/review/view'
 import type { Timeline } from '@/utils/review/timeline'
 import type { TimelineFragment, TimelineSegment } from '@/utils/library/db'
 import { downloadBlob } from '@/utils/feature'
-import { buildClipFiles, type ClipFile } from '@/utils/review/clip'
+import { buildClipFile, type ClipFile } from '@/utils/review/clip'
 
 vi.mock('@/utils/feature', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/feature')>()), downloadBlob: vi.fn() }))
-vi.mock('@/utils/review/clip', () => ({ buildClipFiles: vi.fn() }))
+vi.mock('@/utils/review/clip', () => ({ buildClipFile: vi.fn() }))
 
 type FakePlayer = { timeline: Timeline, position: number, seek: ReturnType<typeof vi.fn> }
 const players: FakePlayer[] = []
@@ -33,8 +33,8 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0))
 const current = () => players[players.length - 1]
 const at930 = new Date(2026, 9, 21, 9, 30, 0).getTime()
 
-const mount = async (kind: 'video' | 'comments', readFragments = async () => [] as (Blob | null)[]) => {
-    const root = document.getElementById('root')!
+// root: 画面を作る所（プレイバックの窓の代わりに、iframe の中にも作れる）
+const mount = async (kind: 'video' | 'comments', readFragments = async () => [] as (Blob | null)[], root = document.getElementById('root')!) => {
     const view = mountReviewView({
         root, mode: 'library', readTimeline: async () => [segment(kind, at930, 30)], readFragments, screenshotName: () => 'user_title',
     })
@@ -46,8 +46,12 @@ const mount = async (kind: 'video' | 'comments', readFragments = async () => [] 
 beforeEach(() => {
     players.length = 0
     vi.mocked(downloadBlob).mockClear()
-    vi.mocked(buildClipFiles).mockReset()
+    vi.mocked(buildClipFile).mockReset()
     document.body.innerHTML = '<div id="root"></div>'
+})
+// テストが途中で失敗しても、差し替えた canvas・console を次のテストに残さない
+afterEach(() => {
+    vi.restoreAllMocks()
 })
 
 describe('スクリーンショット', () => {
@@ -70,16 +74,24 @@ describe('スクリーンショット', () => {
         expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'user_title_2026-10-21 093006_コメントあり.png', document)
         expect(flashText()).toBe('スクリーンショットを保存しました')
         view.destroy()
-        vi.restoreAllMocks()
     })
 
-    it('表示できる場面がなければ、保存せずにお知らせする', async () => {
+    it('場面の読み込み中は、保存せずにお知らせする', async () => {
         const { view, $, flashText } = await mount('video')
 
         $<HTMLButtonElement>('.shot').click()
 
         expect(downloadBlob).not.toHaveBeenCalled()
-        expect(flashText()).toBe('保存できる場面がありません')
+        expect(flashText()).toBe('読み込み中です。少し待ってから押してください')
+        view.destroy()
+    })
+
+    it('録画がない時は、保存のボタンを押せないように見せる', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => [], readFragments: async () => [] })
+        await flush()
+        expect(root.querySelector('.shot')!.getAttribute('aria-disabled')).toBe('true')
+        expect(root.querySelector('.clip')!.getAttribute('aria-disabled')).toBe('true')
         view.destroy()
     })
 })
@@ -87,7 +99,7 @@ describe('スクリーンショット', () => {
 describe('この場面の前後を動画で保存', () => {
     it('見ている場面の前後30秒ずつを切り出して、配信者_タイトル_切り出した始めの時刻 の名前で保存する', async () => {
         const clip = new Blob(['mp4'])
-        vi.mocked(buildClipFiles).mockResolvedValue([{ blob: clip, startedAt: new Date(2026, 9, 21, 9, 30, 36).getTime(), duration: 60.2 }])
+        vi.mocked(buildClipFile).mockResolvedValue({ blob: clip, startedAt: new Date(2026, 9, 21, 9, 30, 36).getTime(), duration: 60.2 })
         const readFragments = async () => []
         const { view, $, flashText } = await mount('video', readFragments)
         current().seek(66)
@@ -96,25 +108,32 @@ describe('この場面の前後を動画で保存', () => {
         expect(flashText()).toBe('動画を作っています…')
         await flush()
 
-        expect(buildClipFiles).toHaveBeenCalledWith(current().timeline, 36, 96, readFragments)
+        expect(buildClipFile).toHaveBeenCalledWith(current().timeline, 66, 30, readFragments)
         expect(downloadBlob).toHaveBeenCalledWith(clip, 'user_title_2026-10-21 093036.mp4', document)
         expect(flashText()).toBe('60秒の動画を保存しました')
         view.destroy()
     })
 
     it('作っている間は、もう一度押しても作らない（フォーカスは外さない）', async () => {
-        let finish: (files: ClipFile[]) => void = () => {}
-        vi.mocked(buildClipFiles).mockReturnValue(new Promise(resolve => { finish = resolve }))
+        let finish: (file: ClipFile) => void = () => {}
+        vi.mocked(buildClipFile).mockReturnValue(new Promise(resolve => { finish = resolve }))
         const { view, $, flashText } = await mount('comments')
         const button = $<HTMLButtonElement>('.clip')
 
         button.click()
         button.click()
-        expect(buildClipFiles).toHaveBeenCalledTimes(1)
+        expect(buildClipFile).toHaveBeenCalledTimes(1)
         expect(button.getAttribute('aria-disabled')).toBe('true')
         expect(button.disabled).toBe(false)
 
-        finish([{ blob: new Blob(['mp4']), startedAt: at930, duration: 30 }])
+        // 作っている間にスクリーンショットのお知らせが出ても、消える時に「作っています」へ戻す
+        vi.useFakeTimers()
+        $<HTMLButtonElement>('.shot').click()
+        vi.advanceTimersByTime(2500)
+        expect(flashText()).toBe('動画を作っています…')
+        vi.useRealTimers()
+
+        finish({ blob: new Blob(['mp4']), startedAt: at930, duration: 30 })
         await flush()
         expect(downloadBlob).toHaveBeenCalledWith(expect.anything(), 'user_title_2026-10-21 093000_コメントあり.mp4', document)
         expect(flashText()).toBe('30秒の動画を保存しました')
@@ -126,18 +145,34 @@ describe('この場面の前後を動画で保存', () => {
         const { view, $, flashText } = await mount('video')
         vi.spyOn(console, 'error').mockImplementation(() => {})
 
-        vi.mocked(buildClipFiles).mockRejectedValueOnce(new Error('broken'))
+        vi.mocked(buildClipFile).mockRejectedValueOnce(new Error('broken'))
         $<HTMLButtonElement>('.clip').click()
         await flush()
         expect(flashText()).toBe('動画を保存できませんでした')
 
-        vi.mocked(buildClipFiles).mockResolvedValueOnce([])
+        vi.mocked(buildClipFile).mockResolvedValueOnce(null)
         $<HTMLButtonElement>('.clip').click()
         await flush()
         expect(flashText()).toBe('保存できる場面がありません')
         expect(downloadBlob).not.toHaveBeenCalled()
         view.destroy()
-        vi.restoreAllMocks()
+    })
+
+    it('ダウンロードは、ボタンを押したページ（プレイバックの窓）で始める', async () => {
+        vi.mocked(buildClipFile).mockResolvedValue({ blob: new Blob(['mp4']), startedAt: at930, duration: 30 })
+        const iframe = document.createElement('iframe')
+        document.body.append(iframe)
+        const pipDocument = iframe.contentDocument!
+        const root = pipDocument.createElement('div')
+        pipDocument.body.append(root)
+        const { view, $ } = await mount('video', undefined, root)
+
+        $<HTMLButtonElement>('.clip').click()
+        await flush()
+
+        expect(vi.mocked(downloadBlob).mock.lastCall?.[2]).toBe(pipDocument)
+        expect(pipDocument).not.toBe(document)
+        view.destroy()
     })
 })
 

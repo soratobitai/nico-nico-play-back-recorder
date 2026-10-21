@@ -47,15 +47,15 @@ beforeEach(() => {
     document.body.innerHTML = '<div id="root"></div>'
 })
 
-// 録り終えた録画（60秒）を、最後まで見て止まるまで
-const watchToEnd = async (stored: () => TimelineSegment[], subscribe?: (l: (event: LiveFeedEvent) => void) => () => void) => {
+// 録り終えた録画（60秒）を、最後まで（behind: 終わりのこれだけ手前まで）見て止まるまで
+const watchToEnd = async (stored: () => TimelineSegment[], subscribe?: (l: (event: LiveFeedEvent) => void) => () => void, behind = 0) => {
     const root = document.getElementById('root')!
     const view = mountReviewView({ root, mode: 'live', programId: 'lv1', readTimeline: async () => stored(), readFragments: async () => [], subscribe })
     const video = root.querySelector('video')!
     const v = fakeVideo(video)
     await flush()
     await flush()
-    current().position = current().timeline.end
+    current().position = current().timeline.end - behind
     video.dispatchEvent(new Event('timeupdate'))
     now += 11_000
     video.dispatchEvent(new Event('timeupdate'))
@@ -72,6 +72,12 @@ describe('録り終えた録画の終わり', () => {
         now += 30_000
         await view.refresh()
         expect(v.play).not.toHaveBeenCalled()
+        view.destroy()
+    })
+
+    it('Chrome が読み込んだ範囲の終わりより少し前で止まっても、最後まで見たとして止める', async () => {
+        const { view, v } = await watchToEnd(() => [segment('A', 'video', 900_000, 20, 960_000)], undefined, 0.5)
+        expect(v.paused).toBe(true)
         view.destroy()
     })
 

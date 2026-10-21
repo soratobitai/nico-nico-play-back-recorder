@@ -35,6 +35,7 @@ const getOutputSize = (videoHeight: number, area: { width: number, height: numbe
 type FrameRegion = { x: number, y: number, width: number, height: number }
 
 // コマ（region を指定すれば、その部分）を表示領域に収まるように中央に描く（縦横比が違う場合はプレイヤーと同じく黒帯になる）
+// region がコマの外にはみ出していても、はみ出した所は描かれずに黒のまま残る（drawImage が切り詰める）
 const drawContain = (ctx: OffscreenCanvasRenderingContext2D, frame: VideoFrame, width: number, height: number, region?: FrameRegion) => {
     ctx.fillStyle = '#000'
     ctx.fillRect(0, 0, width, height)

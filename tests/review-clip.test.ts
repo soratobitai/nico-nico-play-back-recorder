@@ -4,15 +4,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { splitFmp4Blob, type FragmentBlob } from '@/utils/fmp4'
 import { Timeline } from '@/utils/review/timeline'
-import { buildClipFiles } from '@/utils/review/clip'
+import { buildClipFile } from '@/utils/review/clip'
 
 // MediaRecorder（Chrome）で録った約8秒の MP4
 const fixture = new Blob([new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures/recorder-sample.mp4')))], { type: 'video/mp4' })
 
 let init: Blob
 let fragments: FragmentBlob[]
+let length: number // 録画の長さ（秒）
 beforeAll(async () => {
     ({ init, fragments } = await splitFmp4Blob(fixture))
+    const last = fragments[fragments.length - 1]
+    length = last.startTime + last.duration - fragments[0].startTime
 })
 
 // 解像度だけ違う初期化セグメント（つなげない録画）
@@ -33,9 +36,12 @@ const setup = (recorded: Recorded[], deleted: string[] = []) => {
         segmentId, kind: 'video', mimeType: 'video/mp4', startedAt, endedAt: startedAt + 10_000, init: segmentInit ?? init,
         fragments: fragments.map((f, index) => ({ index, startTime: f.startTime, duration: f.duration, keyframe: keyframes?.[index] ?? f.keyframe })),
     })))
-    const read = async (segmentId: string, indexes: number[]) =>
-        indexes.map(index => deleted.includes(`${segmentId}:${index}`) ? null : fragments[index].blob)
-    return { timeline, read }
+    const reads: string[] = []
+    const read = async (segmentId: string, indexes: number[]) => {
+        reads.push(`${segmentId}[${indexes.join(',')}]`)
+        return indexes.map(index => deleted.includes(`${segmentId}:${index}`) ? null : fragments[index].blob)
+    }
+    return { timeline, read, reads }
 }
 
 // 保存したファイルの断片（切り出した断片と同じ中身か、mdat の大きさで確かめる）
@@ -47,11 +53,9 @@ describe('この場面の前後を動画で保存', () => {
         expect(fragments.length).toBeGreaterThanOrEqual(3)
         const { timeline, read } = setup([{ segmentId: 'A', startedAt: 1_000_000 }])
         const middle = timeline.fragments[1]
-        const t = (middle.start + middle.end) / 2
 
-        const [file, ...rest] = await buildClipFiles(timeline, t - 0.1, t + 0.1, read)
+        const file = (await buildClipFile(timeline, (middle.start + middle.end) / 2, 0.1, read))!
 
-        expect(rest).toHaveLength(0)
         const saved = await fragmentsOf(file.blob)
         expect(mdatSizes(saved)).toEqual(mdatSizes([fragments[1]]))
         expect(saved[0].startTime).toBeCloseTo(0, 1)
@@ -61,9 +65,8 @@ describe('この場面の前後を動画で保存', () => {
 
     it('キーフレームから始まらない断片からは、キーフレームの断片までさかのぼる', async () => {
         const { timeline, read } = setup([{ segmentId: 'A', startedAt: 1_000_000, keyframes: [true, false, false] }])
-        const t = timeline.fragments[2].start + 0.01
 
-        const [file] = await buildClipFiles(timeline, t, t + 0.01, read)
+        const file = (await buildClipFile(timeline, timeline.fragments[2].start + 0.02, 0.01, read))!
 
         expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes(fragments.slice(0, 3)))
     })
@@ -72,27 +75,52 @@ describe('この場面の前後を動画で保存', () => {
         const keyframes = fragments.map((_, i) => i !== 2)
         const { timeline, read } = setup([{ segmentId: 'A', startedAt: 1_000_000, keyframes }], ['A:1'])
 
-        const [file, ...rest] = await buildClipFiles(timeline, 0, timeline.end, read)
+        const file = (await buildClipFile(timeline, 0, 100, read))!
 
-        expect(rest).toHaveLength(0)
         expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes([fragments[0], ...fragments.slice(3)]))
     })
 
-    it('続けて録った区間をまたぐ時は1本につなぎ、解像度が変わった所ではファイルを分ける', async () => {
-        const length = fragments[fragments.length - 1].startTime + fragments[fragments.length - 1].duration - fragments[0].startTime
+    it('続けて録った区間をまたぐ時は、1本につなぐ', async () => {
         const second = 1_000_000 + Math.round(length * 1000) + 500
-        const same = setup([{ segmentId: 'A', startedAt: 1_000_000 }, { segmentId: 'B', startedAt: second }])
+        const { timeline, read } = setup([{ segmentId: 'A', startedAt: 1_000_000 }, { segmentId: 'B', startedAt: second }])
 
-        const joined = await buildClipFiles(same.timeline, 0, same.timeline.end, same.read)
-        expect(joined).toHaveLength(1)
-        expect(mdatSizes(await fragmentsOf(joined[0].blob))).toEqual(mdatSizes([...fragments, ...fragments]))
+        const file = (await buildClipFile(timeline, length, 100, read))!
 
+        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes([...fragments, ...fragments]))
+        expect(file.startedAt).toBe(1_000_000 + fragments[0].startTime * 1000)
+    })
+
+    it('区間どうしが少し重なっていても、区間の中の順番のまま並べる（時刻が戻らない）', async () => {
+        // B を A の終わりの 1.8 秒前に始める（A の最後の断片より前に B の最初の断片が始まる）
+        const second = 1_000_000 + Math.round((length - 1.8) * 1000)
+        const { timeline, read, reads } = setup([{ segmentId: 'A', startedAt: 1_000_000 }, { segmentId: 'B', startedAt: second }])
+        expect(timeline.fragments.map(f => f.segmentId).join('')).not.toBe('A'.repeat(fragments.length) + 'B'.repeat(fragments.length))
+
+        const file = (await buildClipFile(timeline, length, 100, read))!
+
+        expect(reads).toEqual([`A[${fragments.map((_, i) => i).join(',')}]`, `B[${fragments.map((_, i) => i).join(',')}]`])
+        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes([...fragments, ...fragments]))
+    })
+
+    it('解像度が変わった所・録画が途切れた所より先は入れず、場面を含む1本だけを作る', async () => {
+        const second = 1_000_000 + Math.round(length * 1000) + 500
+        const first = fragments[0].startTime * 1000
+
+        // 解像度が変わった（B だけ違う）: 場面が B にあれば B だけ、A にあれば A だけ
         const changed = setup([{ segmentId: 'A', startedAt: 1_000_000 }, { segmentId: 'B', startedAt: second, init: await otherResolution() }])
-        const split = await buildClipFiles(changed.timeline, 0, changed.timeline.end, changed.read)
-        expect(split.map(f => f.startedAt)).toEqual([1_000_000 + fragments[0].startTime * 1000, second + fragments[0].startTime * 1000])
+        const inB = (await buildClipFile(changed.timeline, length + 1, 100, changed.read))!
+        expect(inB.startedAt).toBe(second + first)
+        expect(mdatSizes(await fragmentsOf(inB.blob))).toEqual(mdatSizes(fragments))
+        expect((await buildClipFile(changed.timeline, 1, 100, changed.read))!.startedAt).toBe(1_000_000 + first)
+
+        // 録画が途切れた（1時間後に録り直した。時間軸では詰めて並ぶ）: 離れた時刻の場面をつながない
+        const later = setup([{ segmentId: 'A', startedAt: 1_000_000 }, { segmentId: 'B', startedAt: 1_000_000 + 3_600_000 }])
+        const inA = (await buildClipFile(later.timeline, 1, 100, later.read))!
+        expect(inA.startedAt).toBe(1_000_000 + first)
+        expect(mdatSizes(await fragmentsOf(inA.blob))).toEqual(mdatSizes(fragments))
     })
 
     it('録画がなければ、何も作らない', async () => {
-        expect(await buildClipFiles(new Timeline(), 0, 60, async () => [])).toEqual([])
+        expect(await buildClipFile(new Timeline(), 0, 30, async () => [])).toBeNull()
     })
 })

@@ -21,7 +21,9 @@ type Viewport = { innerWidth: number, innerHeight: number, clientWidth: number }
 
 // タブ全体のコマの中で、要素（rect はページの表示領域の中の位置）が写っている所
 // コマはタブの表示領域を写したもの（画面の拡大率などで、大きさは表示領域の CSS の大きさとは違う）。
-// 縦のスクロールバーがコマに写っているかは環境で違うので、コマの縦横比に近い方の幅を表示領域の幅とする
+// 縦のスクロールバーがコマに写っているかは環境で違うので、コマの縦横比に近い方の幅を表示領域の幅とする。
+// 表示領域からはみ出した所（スクロールした時など）も含めた、要素全体の位置を返す。コマの外の部分は、描く時に
+// 切り詰められて黒のまま残る（はみ出した分を除いて返すと、見えている部分だけが拡大されて、録画の中で映像がずれるため）
 const regionInFrame = (frame: { width: number, height: number }, rect: { x: number, y: number, width: number, height: number }, viewport: Viewport): FrameRegion => {
     const aspect = frame.width / frame.height
     const viewportWidth = Math.abs(viewport.innerWidth / viewport.innerHeight - aspect) <= Math.abs(viewport.clientWidth / viewport.innerHeight - aspect)
@@ -29,13 +31,10 @@ const regionInFrame = (frame: { width: number, height: number }, rect: { x: numb
         : viewport.clientWidth
     const scaleX = frame.width / viewportWidth
     const scaleY = frame.height / viewport.innerHeight
-    // 表示領域からはみ出した所は写っていないので、写っている所だけにする
-    const left = Math.max(0, rect.x * scaleX)
-    const top = Math.max(0, rect.y * scaleY)
-    const right = Math.min(frame.width, (rect.x + rect.width) * scaleX)
-    const bottom = Math.min(frame.height, (rect.y + rect.height) * scaleY)
-    return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
+    return { x: rect.x * scaleX, y: rect.y * scaleY, width: rect.width * scaleX, height: rect.height * scaleY }
 }
+
+const measureViewport = (): Viewport => ({ innerWidth: window.innerWidth, innerHeight: window.innerHeight, clientWidth: document.documentElement.clientWidth })
 
 // 画面ごと録画を始める。共有の確認でキャンセルされた場合や、この環境で使えない場合は例外になる
 // onEnded は、Chrome の「共有を停止」などで取り込みが終わった時に呼ばれる（stop() では呼ばれない）
@@ -58,23 +57,40 @@ const startScreenCapture = async (videoHeight: number, onEnded: () => void): Pro
         const surface = (videoTrack.getSettings() as { displaySurface?: string }).displaySurface
         if (surface && surface !== 'browser') throw new Error('このタブ以外が選ばれました')
 
-        // プレイヤーの位置（全画面表示・シアターモード・スクロールなどで変わったら測り直す。
-        // 大きさが変わらずに位置だけ動いた時のために、1秒ごとにも測る）
-        let rect = screen.getBoundingClientRect()
-        const measure = () => { rect = screen.getBoundingClientRect() }
+        // プレイヤーの位置と表示領域の大きさ（全画面表示・シアターモード・スクロールなどで変わったら測り直す。
+        // 大きさが変わらずに位置だけ動いた時のために、1秒ごとにも測る。コマごとに測ると、そのたびに
+        // ページのレイアウトを計算させて重いので、測っておいた値で描く）
+        // プレイヤーが作り直されていたら、探し直す
+        let player = screen
+        let rect = player.getBoundingClientRect()
+        let viewport = measureViewport()
+        const measure = () => {
+            if (!player.isConnected) {
+                const found = document.querySelector(PLAYER_SCREEN_SELECTOR)
+                if (found) {
+                    resizeObserver.unobserve(player)
+                    player = found
+                    resizeObserver.observe(player)
+                }
+            }
+            rect = player.getBoundingClientRect()
+            viewport = measureViewport()
+        }
         const resizeObserver = new ResizeObserver(measure)
-        resizeObserver.observe(screen)
-        window.addEventListener('resize', measure)
-        window.addEventListener('scroll', measure, { capture: true, passive: true })
-        const measureTimer = setInterval(measure, 1000)
 
         // 全画面表示などでプレイヤーの大きさが変わっても、録画の解像度は変えない
         const { width, height } = getOutputSize(videoHeight, rect)
         const pipeline = createFramePipeline(videoTrack, width, height, (ctx, frame) => drawContain(ctx, frame, width, height, regionInFrame(
             { width: frame.displayWidth, height: frame.displayHeight },
             rect,
-            { innerWidth: window.innerWidth, innerHeight: window.innerHeight, clientWidth: document.documentElement.clientWidth },
+            viewport,
         )))
+
+        // 測り直しは、描き直しを作れてから始める（作れずに例外になった時に、残らないように）
+        resizeObserver.observe(player)
+        window.addEventListener('resize', measure)
+        window.addEventListener('scroll', measure, { capture: true, passive: true })
+        const measureTimer = setInterval(measure, 1000)
 
         videoTrack.addEventListener('ended', onEnded, { once: true })
 

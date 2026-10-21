@@ -9,8 +9,8 @@ const BUFFER_WINDOW = { ahead: 30, keepBehind: 30, keepAhead: 90 }
 const READ_BATCH = 4
 // 録画中に届いた断片を、保存先から読み直さずに使うために覚えておく数（約3分）
 const LIVE_CACHE_SIZE = 60
-// 録っていない短い間（区間の切り替わり など）は飛ばして再生を続ける
-const MAX_GAP_JUMP_SECONDS = 12
+// 読み込んだ範囲の、これより小さな隙間（映像と音声の境目のずれなど）は、録っていない間でなくても飛ばす
+const SMALL_HOLE_SECONDS = 1
 // 録っていない間・止まっていないかを確かめる間隔と、止まったとみなすまでの回数（1秒）
 const GAP_CHECK_MS = 500
 const STUCK_CHECKS = 2
@@ -25,6 +25,31 @@ type ReadFragments = (segmentId: string, indexes: number[]) => Promise<(Blob | n
 
 // 断片の終わりの端数（その後が空いている時）に入らない、いちばん後ろの位置
 const beforeTail = (fragment: PlacedFragment) => Math.max(fragment.start, fragment.end - FRAGMENT_TAIL_SECONDS)
+
+type BufferedRange = { start: number, end: number }
+
+// 再生が t で先へ進まない時に、飛ぶ先（飛ばないなら null）
+// - 時間軸の上で、t の先に録っていない間（区間の切り替わり・壊れて外した所・消された所）があり、
+//   その先が読み込まれていれば、間がどれだけ長くても、その先へ
+// - そうでなければ、読み込んだ範囲のごく小さな隙間（映像と音声の境目のずれなど）だけ飛ぶ。
+//   同じ区間の続きは、まだ読み込んでいる途中なので飛ばない（飛ぶと、録った場面を見落とす）
+const stuckJumpTarget = (timeline: Timeline, t: number, ranges: readonly BufferedRange[]): number | null => {
+    const ahead = ranges.filter(range => range.start > t)
+    const flat = timeline.fragments
+    const i = timeline.indexAt(t)
+    const here = flat[i]
+    const next = flat[i + 1]
+    const gapEnd = !here ? null
+        : here.start > t + 0.05 ? here.start // 録っていない間にいる
+            : next && next.start > here.end + 0.001 ? next.start // この断片の後が空いている
+                : null
+    if (gapEnd !== null) {
+        const range = ahead.find(r => r.end > gapEnd + 0.1)
+        if (range) return Math.max(range.start, gapEnd) + 0.01
+    }
+    const hole = ahead.find(range => range.start - t < SMALL_HOLE_SECONDS)
+    return hole ? hole.start + 0.01 : null
+}
 
 // 移る位置を、読み込める所に合わせる
 // 録っていない間を指していたら、次に録った所へ（読み込めないので、そこへは移れない）。
@@ -328,6 +353,11 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         update()
     }
 
+    const bufferedRanges = (): BufferedRange[] => {
+        const ranges = video.buffered
+        return Array.from({ length: ranges.length }, (_, i) => ({ start: ranges.start(i), end: ranges.end(i) }))
+    }
+
     // 録っていない間（区間の切り替わり・容量の上限を超えて消された部分）で止まったら、続きへ飛ぶ
     // 録っていない間へ移ろうとしている（移り終わらない）場合も、次に録った所へ移る
     const jumpGap = () => {
@@ -351,19 +381,15 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         }
         // 移っている途中なら、読み込みを待つ（その位置の断片を読み込んでいる）
         if (video.seeking) return
-        // 少し先に読み込まれた部分（映像と音声の境目のずれなど）
-        for (let i = 0; i < ranges.length; i++) {
-            const start = ranges.start(i)
-            if (start > t && start - t < MAX_GAP_JUMP_SECONDS) {
-                video.currentTime = start + 0.01
-                return
-            }
-        }
+        // 録っていない間の先や、映像と音声の境目のずれなどの小さな隙間の先が読み込まれていれば、そこへ
+        const target = stuckJumpTarget(timeline, t, bufferedRanges())
+        if (target !== null) video.currentTime = target
     }
 
-    // 再生しているのに位置が進まない時は、少し先に読み込まれた部分へ飛ぶ
-    // （区間の切り替わりの小さな隙間の手前では、読み込んだ範囲の終わりより少し前で止まり、
+    // 再生しているのに位置が進まない時は、録っていない間の先（または小さな隙間の先）へ飛ぶ
+    // （区間の切り替わりの隙間の手前では、読み込んだ範囲の終わりより少し前で止まり、
     //   jumpGap からは「まだ読み込まれた所にいる」と見えて飛ばないことがある）
+    // 飛ぶ先がまだ読み込まれていなければ、数え続けて、読み込まれたら飛ぶ
     let lastPosition = -1
     let stuckChecks = 0
     const jumpIfStuck = () => {
@@ -379,15 +405,10 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
             return
         }
         if (++stuckChecks < STUCK_CHECKS) return
-        const ranges = video.buffered
-        for (let i = 0; i < ranges.length; i++) {
-            const start = ranges.start(i)
-            if (start > t && start - t < MAX_GAP_JUMP_SECONDS) {
-                stuckChecks = 0
-                video.currentTime = start + 0.01
-                return
-            }
-        }
+        const target = stuckJumpTarget(timeline, t, bufferedRanges())
+        if (target === null) return
+        stuckChecks = 0
+        video.currentTime = target
     }
 
     const onTimeUpdate = () => update()
@@ -453,5 +474,5 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
 
 type ReviewPlayer = ReturnType<typeof createReviewPlayer>
 
-export { createReviewPlayer, snapToRecorded }
+export { createReviewPlayer, snapToRecorded, stuckJumpTarget }
 export type { ReviewPlayer }

@@ -31,9 +31,8 @@ describe('regionInFrame（タブ全体のコマの中の、プレイヤーの位
         expect(region).toEqual({ x: 100, y: 128, width: 1000, height: 562.5 })
     })
 
-    it('スクロールして表示領域からはみ出した所は、写っている所だけにする', () => {
+    it('スクロールして表示領域からはみ出しても、プレイヤー全体の位置を返す（はみ出した所は描く時に切り詰められて黒になり、見えている所だけが拡大されない）', () => {
         const region = regionInFrame({ width: 1600, height: 900 }, { ...rect, y: -100 }, { innerWidth: 1600, innerHeight: 900, clientWidth: 1600 })
-        expect(region).toEqual({ x: 100, y: 0, width: 1000, height: 462.5 })
-        expect(regionInFrame({ width: 1600, height: 900 }, { ...rect, y: 1000 }, { innerWidth: 1600, innerHeight: 900, clientWidth: 1600 }).height).toBe(0)
+        expect(region).toEqual({ x: 100, y: -100, width: 1000, height: 562.5 })
     })
 })
