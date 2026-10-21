@@ -11,6 +11,7 @@ import { createReviewPlayer, type ReviewPlayer } from './player'
 import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '../time-format'
 import { KIND_ICON_PATHS, SCREEN_DOT } from '../kind-icons'
 import { createRowFitter } from './fit'
+import { downloadBlob, formatDateForFileName } from '../feature'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -53,6 +54,7 @@ const ICONS = {
     pause: '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>',
     muted: icon('<path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M22 9l-6 6M16 9l6 6"></path>'),
     sound: icon('<path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"></path>'),
+    camera: icon('<path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle>'),
 }
 // 種類の切り替えのアイコン（録画バーの種類のチップと同じ形）
 const KIND_ICONS: Record<RecordingKind, string> = {
@@ -71,7 +73,8 @@ const OPTIONS = `
     <div class="kinds" role="group" aria-label="録画の種類" hidden>
       ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}の録画を見る" hidden>${KIND_ICONS[kind]}</button>`).join('')}
     </div>
-    <button type="button" class="mute" title="音（M）"></button>`
+    <button type="button" class="mute" title="音（M）"></button>
+    <button type="button" class="shot" aria-label="スクリーンショットを保存" title="今の場面のスクリーンショットを保存">${ICONS.camera}</button>`
 const LIVE = `
     <button type="button" class="live" title="最新の録画へ戻る（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブ</span></button>`
 
@@ -80,6 +83,7 @@ const TEMPLATE = `
 <div class="stage">
   <video playsinline></video>
   <div class="message" role="status" hidden></div>
+  <div class="flash" role="status" hidden></div>
 </div>
 <div class="bar">
   <input class="seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="再生位置">
@@ -121,6 +125,8 @@ type ReviewViewOptions = {
     programId?: string
     // 番組が始まった時刻（録画の時間の横に、番組の経過時間を出す。分からなければ出さない）
     programBeginAt?: number | null
+    // スクリーンショットのファイル名の始め（配信者_タイトル。後ろに場面の時刻を付ける）
+    screenshotName?: () => string
     // 録画を始めた時刻（録画の時間を出す。指定しなければ、最初に録った所の時刻）
     recordingStartedAt?: number | null
     onChange?: (state: ReviewViewState) => void
@@ -128,7 +134,7 @@ type ReviewViewOptions = {
 
 type TimeBases = Pick<ReviewViewOptions, 'programBeginAt' | 'recordingStartedAt'>
 
-const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, onChange, ...options }: ReviewViewOptions) => {
+const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, programId, onChange, screenshotName, ...options }: ReviewViewOptions) => {
     // 時間を数える基準（録画を消した後などに、setTimeBases で差し替える）
     let bases: TimeBases = { programBeginAt: options.programBeginAt, recordingStartedAt: options.recordingStartedAt }
     const doc = root.ownerDocument
@@ -147,6 +153,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const backButton = $<HTMLButtonElement>('.back')
     const forwardButton = $<HTMLButtonElement>('.forward')
     const muteButton = $<HTMLButtonElement>('.mute')
+    const shotButton = $<HTMLButtonElement>('.shot')
+    const flash = $<HTMLDivElement>('.flash')
     const liveButton = $<HTMLButtonElement>('.live')
     const clock = $<HTMLSpanElement>('.clock')
     const programTime = $<HTMLSpanElement>('.program-time')
@@ -449,6 +457,37 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
 
     const skip = (seconds: number) => player.seek(player.position + seconds, { backward: seconds < 0 })
+
+    // ---- スクリーンショット（今表示している場面を、録画の解像度の PNG で保存する）----
+    let flashTimer: ReturnType<typeof setTimeout> | undefined
+    const showFlash = (text: string) => {
+        flash.textContent = text
+        flash.hidden = false
+        clearTimeout(flashTimer)
+        flashTimer = setTimeout(() => { flash.hidden = true }, 2000)
+    }
+    const saveScreenshot = () => {
+        if (timeline.isEmpty || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
+            showFlash('保存できる場面がありません')
+            return
+        }
+        const canvas = doc.createElement('canvas')
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const wallClock = timeline.wallClockAt(player.position) ?? Date.now()
+        canvas.toBlob((blob) => {
+            if (!blob) {
+                showFlash('スクリーンショットを保存できませんでした')
+                return
+            }
+            const name = [screenshotName?.(), formatDateForFileName(wallClock)].filter(Boolean).join('_')
+            downloadBlob(blob, `${name}.png`)
+            showFlash('スクリーンショットを保存しました')
+        }, 'image/png')
+    }
     const togglePlay = () => {
         if (video.paused) {
             playVideo()
@@ -526,6 +565,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     forwardButton.addEventListener('click', () => skip(SKIP_SECONDS))
     playButton.addEventListener('click', togglePlay)
     muteButton.addEventListener('click', toggleMute)
+    shotButton.addEventListener('click', saveScreenshot)
     liveButton.addEventListener('click', goLive)
     for (const button of kindButtons) button.addEventListener('click', () => selectKind(button.dataset.kind as RecordingKind))
     // 動画を押すと再生・一時停止する
@@ -707,6 +747,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             unsubscribe?.()
             clearInterval(syncTimer)
             clearInterval(renderTimer)
+            clearTimeout(flashTimer)
             rowFitter.destroy()
             clearTimeout(scrubTimer)
             doc.removeEventListener('keydown', onKeyDown)

@@ -635,7 +635,7 @@ export default async () => {
 
     // プレイバックのウィンドウを開く・閉じる（録画は止めない）
     const togglePlayback = () => {
-        togglePlaybackWindow({ programId, title, programBeginAt: beginAt, onClose: () => setPlaybackButton(false) })
+        togglePlaybackWindow({ programId, title, programBeginAt: beginAt, screenshotName: [userName, title].filter(Boolean).join('_'), onClose: () => setPlaybackButton(false) })
             .then(() => setPlaybackButton(isPlaybackOpen()))
             .catch((error) => console.log("プレイバックのウィンドウを開けませんでした:", error))
     }

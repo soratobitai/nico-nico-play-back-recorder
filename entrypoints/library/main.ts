@@ -420,6 +420,10 @@ const renderProgram = () => {
             readFragments: db.getFragmentBlobs,
             programBeginAt: program.beginAt,
             recordingStartedAt: program.startedAt,
+            screenshotName: () => {
+                const current = programs.find(p => p.key === key) ?? program
+                return [current.userName, current.title].filter(Boolean).join('_')
+            },
             onChange: onViewChange,
         })
         viewKey = key
