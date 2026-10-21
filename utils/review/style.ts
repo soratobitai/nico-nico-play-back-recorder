@@ -45,11 +45,12 @@ const REVIEW_STYLE = `
   font-size: 13px; color: #d4d6dd; background: rgba(0, 0, 0, 0.72);
 }
 .review .message[hidden] { display: none; }
-/* スクリーンショットを保存した時などの短いお知らせ */
+/* スクリーンショットや動画を保存した時などの短いお知らせ（狭い時は折り返す） */
 .review .flash {
   position: absolute; left: 50%; top: 12px; transform: translateX(-50%);
+  width: max-content; max-width: calc(100% - 24px); box-sizing: border-box;
   padding: 6px 12px; border-radius: 8px;
-  background: rgba(0, 0, 0, 0.72); color: #fff; font-size: 12px; white-space: nowrap;
+  background: rgba(0, 0, 0, 0.72); color: #fff; font-size: 12px; text-align: center;
   pointer-events: none;
 }
 .review .flash[hidden] { display: none; }
@@ -202,7 +203,7 @@ const REVIEW_STYLE = `
 .review[data-hide~="labels"] :is(.back, .forward, .mute) .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .review[data-hide~="skip"] :is(.back, .forward),
 .review[data-hide~="play"] .play,
-.review[data-hide~="shot"] .shot,
+.review[data-hide~="shot"] :is(.shot, .clip),
 .review[data-hide~="program"] .program-time,
 .review[data-hide~="ago"] .ago,
 .review[data-hide~="behind"] .behind { display: none; }

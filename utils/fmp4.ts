@@ -230,6 +230,13 @@ const splitFmp4Blob = async (blob: Blob): Promise<{ init: Blob, fragments: Fragm
     return { init: blob.slice(0, initEnd), fragments }
 }
 
+// 断片（moof + mdat）の、先頭の moof の大きさ（保存先から読んだ断片を、ファイルにまとめる時に使う）
+const moofSizeOf = async (fragment: Blob) => {
+    const header = new Uint8Array(await fragment.slice(0, 16).arrayBuffer())
+    if (header.length < 8 || readBoxType(header, 0) !== 'moof') throw new Error('MP4 の断片に moof がありません')
+    return readBoxSize(new DataView(header.buffer), 0).size
+}
+
 type Fmp4Segment = { init: Blob, fragments: { blob: Blob, moofSize: number }[] }
 
 // 区間（初期化セグメント＋断片）をつないで、1本の MP4 ファイルにする（再エンコードしない）
@@ -299,5 +306,5 @@ const initSignature = (init: Uint8Array): string => {
 
 const isMp4MimeType = (mimeType: string) => mimeType.toLowerCase().startsWith('video/mp4')
 
-export { createFmp4Splitter, splitFmp4Blob, buildFmp4File, parseInit, parseMoof, initSignature, isMp4MimeType }
+export { createFmp4Splitter, splitFmp4Blob, buildFmp4File, moofSizeOf, parseInit, parseMoof, initSignature, isMp4MimeType }
 export type { Fragment, FragmentBlob, Fmp4Segment }

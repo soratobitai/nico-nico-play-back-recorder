@@ -6,8 +6,10 @@ import type { Timeline } from '@/utils/review/timeline'
 import type { TimelineFragment, TimelineSegment } from '@/utils/library/db'
 import type { LiveFeedEvent } from '@/utils/review/live-feed'
 import { downloadBlob } from '@/utils/feature'
+import { buildClipFiles } from '@/utils/review/clip'
 
 vi.mock('@/utils/feature', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/feature')>()), downloadBlob: vi.fn() }))
+vi.mock('@/utils/review/clip', () => ({ buildClipFiles: vi.fn() }))
 
 type FakePlayer = { timeline: Timeline, position: number, seek: ReturnType<typeof vi.fn>, destroy: ReturnType<typeof vi.fn> }
 const players: FakePlayer[] = []
@@ -149,5 +151,32 @@ describe('スクリーンショット', () => {
         expect(root.querySelector<HTMLElement>('.flash')!.textContent).toBe('スクリーンショットを保存しました')
         view.destroy()
         vi.restoreAllMocks()
+    })
+})
+
+describe('この場面の前後を動画で保存', () => {
+    it('見ている場面の前後30秒ずつを切り出して、配信者_タイトル_切り出した始めの時刻 の名前で保存する', async () => {
+        const download = vi.mocked(downloadBlob)
+        download.mockClear()
+        const clip = new Blob(['mp4'])
+        vi.mocked(buildClipFiles).mockResolvedValue([{ blob: clip, startedAt: new Date(2026, 9, 21, 9, 29, 36).getTime(), duration: 60.2 }])
+        const root = document.getElementById('root')!
+        const readFragments = async () => []
+        const view = mountReviewView({
+            root, mode: 'library', readTimeline: async () => [segment('A', 'comments', new Date(2026, 9, 21, 9, 30, 0).getTime(), 30, null)],
+            readFragments, screenshotName: () => 'user_title',
+        })
+        await flush()
+        current().seek(66)
+
+        root.querySelector<HTMLButtonElement>('.clip')!.click()
+        expect(root.querySelector<HTMLElement>('.flash')!.textContent).toBe('動画を作っています…')
+        await flush()
+
+        expect(buildClipFiles).toHaveBeenCalledWith(current().timeline, 36, 96, readFragments)
+        // 録画一覧の「保存」と同じく、コメントなし以外は種類を名前に付ける
+        expect(download).toHaveBeenCalledWith(clip, 'user_title_2026-10-21 092936_コメントあり.mp4')
+        expect(root.querySelector<HTMLElement>('.flash')!.textContent).toBe('60秒の動画を保存しました')
+        view.destroy()
     })
 })

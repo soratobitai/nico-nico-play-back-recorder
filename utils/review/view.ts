@@ -12,6 +12,7 @@ import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '.
 import { KIND_ICON_PATHS, SCREEN_DOT } from '../kind-icons'
 import { createRowFitter } from './fit'
 import { downloadBlob, formatDateForFileName } from '../feature'
+import { buildClipFiles } from './clip'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -20,6 +21,8 @@ const LIVE_EDGE_SECONDS = 8
 // ライブからこれ以内なら「ライブ」とみなす（録画は数秒ごとの断片で届くので、少し遅れる）
 const LIVE_THRESHOLD_SECONDS = 15
 const SKIP_SECONDS = 10
+// 「この場面の前後を動画で保存」で切り出す長さ（場面の前と後ろ、それぞれ）
+const CLIP_SECONDS = 30
 // 保存先から番組の録画を読み直す間隔（録画中に増えた分や、容量の上限を超えて消された部分を反映する）
 const SYNC_INTERVAL_MS = 30 * 1000
 // 再生できない所を飛ばすのは、1分にこの回数まで（それより多ければ、飛ばし続けずにお知らせする）
@@ -55,6 +58,7 @@ const ICONS = {
     muted: icon('<path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M22 9l-6 6M16 9l6 6"></path>'),
     sound: icon('<path d="M11 5L6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"></path>'),
     camera: icon('<path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle>'),
+    film: icon('<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 4v16M17 4v16M3 8h4M3 12h4M3 16h4M17 8h4M17 12h4M17 16h4"></path>'),
 }
 // 種類の切り替えのアイコン（録画バーの種類のチップと同じ形）
 const KIND_ICONS: Record<RecordingKind, string> = {
@@ -74,7 +78,8 @@ const OPTIONS = `
       ${KIND_ORDER.map(kind => `<button type="button" class="kind kind-${kind}" data-kind="${kind}" aria-pressed="false" aria-label="${KIND_LABELS[kind]}" title="${KIND_LABELS[kind]}の録画を見る" hidden>${KIND_ICONS[kind]}</button>`).join('')}
     </div>
     <button type="button" class="mute" title="音（M）"></button>
-    <button type="button" class="shot" aria-label="スクリーンショットを保存" title="今の場面のスクリーンショットを保存">${ICONS.camera}</button>`
+    <button type="button" class="shot" aria-label="スクリーンショットを保存" title="今の場面のスクリーンショットを保存">${ICONS.camera}</button>
+    <button type="button" class="clip" aria-label="この場面の前後を動画で保存" title="この場面の前後${CLIP_SECONDS}秒ずつ（${CLIP_SECONDS * 2 / 60}分）を動画で保存">${ICONS.film}</button>`
 const LIVE = `
     <button type="button" class="live" title="最新の録画へ戻る（L）"><span class="live-dot" aria-hidden="true"></span><span class="label live-label">ライブ</span></button>`
 
@@ -125,7 +130,7 @@ type ReviewViewOptions = {
     programId?: string
     // 番組が始まった時刻（録画の時間の横に、番組の経過時間を出す。分からなければ出さない）
     programBeginAt?: number | null
-    // スクリーンショットのファイル名の始め（配信者_タイトル。後ろに場面の時刻を付ける）
+    // スクリーンショットと、場面の前後の動画のファイル名の始め（配信者_タイトル。後ろに場面の時刻を付ける）
     screenshotName?: () => string
     // 録画を始めた時刻（録画の時間を出す。指定しなければ、最初に録った所の時刻）
     recordingStartedAt?: number | null
@@ -154,6 +159,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const forwardButton = $<HTMLButtonElement>('.forward')
     const muteButton = $<HTMLButtonElement>('.mute')
     const shotButton = $<HTMLButtonElement>('.shot')
+    const clipButton = $<HTMLButtonElement>('.clip')
     const flash = $<HTMLDivElement>('.flash')
     const liveButton = $<HTMLButtonElement>('.live')
     const clock = $<HTMLSpanElement>('.clock')
@@ -460,11 +466,12 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
 
     // ---- スクリーンショット（今表示している場面を、録画の解像度の PNG で保存する）----
     let flashTimer: ReturnType<typeof setTimeout> | undefined
-    const showFlash = (text: string) => {
+    // ms: 出しておく時間（null なら、次のお知らせまで出しておく）
+    const showFlash = (text: string, ms: number | null = 2000) => {
         flash.textContent = text
         flash.hidden = false
         clearTimeout(flashTimer)
-        flashTimer = setTimeout(() => { flash.hidden = true }, 2000)
+        if (ms !== null) flashTimer = setTimeout(() => { flash.hidden = true }, ms)
     }
     const saveScreenshot = () => {
         if (timeline.isEmpty || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth) {
@@ -487,6 +494,43 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             downloadBlob(blob, `${name}.png`)
             showFlash('スクリーンショットを保存しました')
         }, 'image/png')
+    }
+
+    // ---- この場面の前後を、動画で保存する（録画の区切りとは別に、保存先の数秒ごとの断片の単位で切り出す）----
+    let clipping = false
+    const saveClip = async () => {
+        if (clipping) return
+        if (timeline.isEmpty) {
+            showFlash('保存できる場面がありません')
+            return
+        }
+        clipping = true
+        clipButton.disabled = true
+        showFlash('動画を作っています…', null)
+        const kind = selectedKind
+        const t = player.position
+        try {
+            const files = await buildClipFiles(timeline, t - CLIP_SECONDS, t + CLIP_SECONDS, readFragments)
+            if (files.length === 0) {
+                showFlash('保存できる場面がありません')
+                return
+            }
+            for (const [i, file] of files.entries()) {
+                const name = [screenshotName?.(), formatDateForFileName(file.startedAt)].filter(Boolean).join('_')
+                downloadBlob(file.blob, `${name}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.mp4`)
+                if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
+            }
+            const seconds = Math.round(files.reduce((sum, file) => sum + file.duration, 0))
+            showFlash(files.length > 1
+                ? `${seconds}秒の動画を、${files.length}個のファイルに分けて保存しました（画質が変わった所で分かれます）`
+                : `${seconds}秒の動画を保存しました`, files.length > 1 ? 5000 : 2000)
+        } catch (error) {
+            console.error('動画を保存できませんでした:', error)
+            showFlash('動画を保存できませんでした')
+        } finally {
+            clipping = false
+            clipButton.disabled = false
+        }
     }
     const togglePlay = () => {
         if (video.paused) {
@@ -566,6 +610,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     playButton.addEventListener('click', togglePlay)
     muteButton.addEventListener('click', toggleMute)
     shotButton.addEventListener('click', saveScreenshot)
+    clipButton.addEventListener('click', () => void saveClip())
     liveButton.addEventListener('click', goLive)
     for (const button of kindButtons) button.addEventListener('click', () => selectKind(button.dataset.kind as RecordingKind))
     // 動画を押すと再生・一時停止する
