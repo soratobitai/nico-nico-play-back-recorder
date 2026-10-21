@@ -464,6 +464,10 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
 
     const skip = (seconds: number) => player.seek(player.position + seconds, { backward: seconds < 0 })
 
+    // 保存するファイルの名前（配信者_タイトル_時刻。録画一覧の「保存」と同じく、コメントなし以外は種類を付ける）
+    const saveFileName = (kind: RecordingKind, wallClock: number, extension: string) =>
+        `${[screenshotName?.(), formatDateForFileName(wallClock)].filter(Boolean).join('_')}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.${extension}`
+
     // ---- スクリーンショット（今表示している場面を、録画の解像度の PNG で保存する）----
     let flashTimer: ReturnType<typeof setTimeout> | undefined
     // ms: 出しておく時間（null なら、次のお知らせまで出しておく）
@@ -484,14 +488,13 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         const ctx = canvas.getContext('2d')
         if (!ctx) return
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        const wallClock = timeline.wallClockAt(player.position) ?? Date.now()
+        const name = saveFileName(selectedKind, timeline.wallClockAt(player.position) ?? Date.now(), 'png')
         canvas.toBlob((blob) => {
             if (!blob) {
                 showFlash('スクリーンショットを保存できませんでした')
                 return
             }
-            const name = [screenshotName?.(), formatDateForFileName(wallClock)].filter(Boolean).join('_')
-            downloadBlob(blob, `${name}.png`)
+            downloadBlob(blob, name)
             showFlash('スクリーンショットを保存しました')
         }, 'image/png')
     }
@@ -504,8 +507,9 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             showFlash('保存できる場面がありません')
             return
         }
+        // 作っている間は押せないように見せる（disabled にすると、キーボードで操作していた人のフォーカスが外れるので使わない）
         clipping = true
-        clipButton.disabled = true
+        clipButton.setAttribute('aria-disabled', 'true')
         showFlash('動画を作っています…', null)
         const kind = selectedKind
         const t = player.position
@@ -516,8 +520,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
                 return
             }
             for (const [i, file] of files.entries()) {
-                const name = [screenshotName?.(), formatDateForFileName(file.startedAt)].filter(Boolean).join('_')
-                downloadBlob(file.blob, `${name}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.mp4`)
+                downloadBlob(file.blob, saveFileName(kind, file.startedAt, 'mp4'))
                 if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
             }
             const seconds = Math.round(files.reduce((sum, file) => sum + file.duration, 0))
@@ -529,7 +532,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             showFlash('動画を保存できませんでした')
         } finally {
             clipping = false
-            clipButton.disabled = false
+            clipButton.removeAttribute('aria-disabled')
         }
     }
     const togglePlay = () => {
@@ -611,6 +614,9 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     muteButton.addEventListener('click', toggleMute)
     shotButton.addEventListener('click', saveScreenshot)
     clipButton.addEventListener('click', () => void saveClip())
+    // 保存のボタンは、マウスで押してもフォーカスを移さない（押した後のスペースで、再生・一時停止のつもりが
+    // もう一度保存されないように。キーボードで移った時は、そのボタンを押せる）
+    for (const button of [shotButton, clipButton]) button.addEventListener('mousedown', event => event.preventDefault())
     liveButton.addEventListener('click', goLive)
     for (const button of kindButtons) button.addEventListener('click', () => selectKind(button.dataset.kind as RecordingKind))
     // 動画を押すと再生・一時停止する

@@ -110,7 +110,7 @@ const REVIEW_STYLE = `
   transition: background-color 0.12s, color 0.12s, border-color 0.12s;
 }
 .review button:hover { background: var(--surface-hover); color: #fff; }
-.review button:disabled { opacity: 0.4; cursor: default; background: transparent; }
+.review button:is(:disabled, [aria-disabled="true"]) { opacity: 0.4; cursor: default; background: transparent; }
 .review button:focus-visible, .review .seek:focus-visible { outline: 2px solid #9dbcff; outline-offset: 1px; }
 .review button svg { flex: none; width: 18px; height: 18px; }
 .review button[hidden] { display: none; }
