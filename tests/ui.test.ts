@@ -263,7 +263,7 @@ describe('getProgramData', () => {
     })
 })
 
-describe('録画バーの「前後1分」', () => {
+describe('録画バーの「直前1分」', () => {
     it('使えない環境（mp4 で録画できない）ではボタンを出さない', () => {
         insertRecorderBar(options())
         expect($<HTMLButtonElement>('#clipButton').hidden).toBe(true)
@@ -281,25 +281,23 @@ describe('録画バーの「前後1分」', () => {
 
         setRecorderState('recording')
         expect(button.hasAttribute('aria-disabled')).toBe(false)
-        expect(button.title).toContain('押した時の前後30秒ずつ（計1分）')
+        expect(button.title).toContain('押した時までの1分（直前1分）')
         button.click()
         expect(saveClip).toHaveBeenCalledTimes(1)
     })
 
-    it('後ろの分が録画されるのを待っている間は、残りの秒数を出し、押せないように見せる', () => {
+    it('作っている間は、そうと分かるようにして、押せないように見せる', () => {
         insertRecorderBar(options({ saveClip: vi.fn() }))
         setRecorderState('recording')
         const button = $<HTMLButtonElement>('#clipButton')
 
-        setClipWaiting(30)
+        setClipWaiting(true)
         expect(button.hasAttribute('data-waiting')).toBe(true)
-        expect(button.querySelector('.npr-clip-count')!.textContent).toBe('30')
         expect(button.getAttribute('aria-disabled')).toBe('true')
-        expect(button.title).toContain('あと30秒')
+        expect(button.title).toContain('作っています')
 
-        setClipWaiting(null)
+        setClipWaiting(false)
         expect(button.hasAttribute('data-waiting')).toBe(false)
-        expect(button.querySelector('.npr-clip-count')!.textContent).toBe('')
         expect(button.hasAttribute('aria-disabled')).toBe(false)
     })
 })

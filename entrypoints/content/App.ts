@@ -10,7 +10,7 @@ import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen
 import { checkLiveStatus } from '../../services/api'
 import { isPlaybackSupported, isPlaybackOpen, togglePlaybackWindow } from '../../utils/review/window'
 import { sceneFileName } from '../../utils/review/view'
-import { CLIP_SECONDS, buildClipFileAt, recordedUntil } from '../../utils/review/clip'
+import { RECENT_CLIP_SECONDS, buildRecentClipFile, recordedUntil } from '../../utils/review/clip'
 import { requestOpenLibrary } from '../../utils/library/open-library'
 import { isExtensionContextValid } from '../../utils/library/client'
 import type { RecordingKind } from '../../utils/library/db'
@@ -619,13 +619,14 @@ export default async () => {
             .catch((error) => console.log("プレイバックのウィンドウを開けませんでした:", error))
     }
 
-    // ---- 録画バーの「前後1分」 ----
-    // 押した時の前後 CLIP_SECONDS 秒ずつを、後ろの分が録画されて保存されるのを待ってから、1本の mp4 にして保存する。
+    // ---- 録画バーの「直前1分」 ----
+    // 押した時までの RECENT_CLIP_SECONDS 秒を、1本の mp4 にして保存する（ライブで「今の」と思ってから押すので、押した時より前を残す）。
+    // 録画は数秒ごとに保存しているので、押した時までの分が保存されるのを少し待ってから作る。
     // 録っている種類のうち、画面に見えているものに近い種類を使う（画面録画 → コメントあり → コメントなし）
     const CLIP_KIND_ORDER: RecordingKind[] = ['screen', 'comments', 'video']
-    // 後ろの分が保存されるのを待つ上限（押してから CLIP_SECONDS 秒たった後に）と、保存先を確かめる間隔
-    const CLIP_WAIT_LIMIT_MS = 15 * 1000
-    const CLIP_POLL_MS = 1500
+    // 押した時までの分が保存されるのを待つ上限と、保存先を確かめる間隔
+    const CLIP_WAIT_LIMIT_MS = 10 * 1000
+    const CLIP_POLL_MS = 1000
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
     let clipPending = false
     const saveClip = async () => {
@@ -636,26 +637,19 @@ export default async () => {
             return
         }
         const pressedAt = Date.now()
-        const until = pressedAt + CLIP_SECONDS * 1000
         clipPending = true
-        showBarHint(`${CLIP_SECONDS}秒後に、押した時の前後${CLIP_SECONDS}秒ずつを動画で保存します`)
+        setClipWaiting(true)
         try {
-            // 後ろの分が録画されるまで、残りの秒数を出して待つ
-            while (Date.now() < until) {
-                setClipWaiting(Math.ceil((until - Date.now()) / 1000))
-                await sleep(Math.min(1000, until - Date.now()))
-            }
-            setClipWaiting(0)
-            // 保存されるのを待つ（録画が止まった時は、止めた時の分が保存されるのを少し待ってから、それまでの分で作る）
+            // 押した時までの分が保存されるのを待つ（録画が止まった時は、止めた時の分が保存されるのを少し待ってから、それまでの分で作る）
             let segments = await getTimeline(programId)
             const deadline = Date.now() + CLIP_WAIT_LIMIT_MS
             let checksAfterStop = 0
-            while (recordedUntil(segments, kind) < until && Date.now() < deadline) {
+            while (recordedUntil(segments, kind) < pressedAt && Date.now() < deadline) {
                 if (!recorders.has(kind) && ++checksAfterStop > 2) break
                 await sleep(CLIP_POLL_MS)
                 segments = await getTimeline(programId)
             }
-            const file = await buildClipFileAt(segments, kind, pressedAt, CLIP_SECONDS, getFragmentBlobs)
+            const file = await buildRecentClipFile(segments, kind, pressedAt, RECENT_CLIP_SECONDS, getFragmentBlobs)
             if (!file) {
                 showBarHint('保存できる録画がありませんでした')
                 return
@@ -663,11 +657,11 @@ export default async () => {
             downloadBlob(file.blob, sceneFileName([userName, title].filter(Boolean).join('_'), kind, file.startedAt, 'mp4'))
             showBarHint(`${Math.round(file.duration)}秒の動画を保存しました`)
         } catch (error) {
-            console.log('前後の動画を保存できませんでした:', error)
+            console.log('直前の動画を保存できませんでした:', error)
             showBarHint('動画を保存できませんでした')
         } finally {
             clipPending = false
-            setClipWaiting(null)
+            setClipWaiting(false)
         }
     }
 
@@ -689,7 +683,7 @@ export default async () => {
         toggleScreenCapture: isScreenCaptureSupported() ? toggleScreenCapture : null,
         // プレイバックは mp4 の録画だけ（webm でしか録画できない環境では使えない）
         togglePlayback: isPlaybackSupported() && segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? togglePlayback : null,
-        // 前後1分も、mp4 の録画だけ（断片をつないで切り出すため）
+        // 直前1分も、mp4 の録画だけ（断片をつないで切り出すため）
         saveClip: segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? () => void saveClip() : null,
         // 録画一覧のページを、この番組を選んだ状態で開く
         openRecordings: () => {

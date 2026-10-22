@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { splitFmp4Blob, type FragmentBlob } from '@/utils/fmp4'
 import { Timeline } from '@/utils/review/timeline'
-import { buildClipFile, buildClipFileAt, recordedUntil } from '@/utils/review/clip'
+import { buildClipFile, buildRecentClipFile, recordedUntil } from '@/utils/review/clip'
 import type { RecordingKind, TimelineSegment } from '@/utils/library/db'
 
 // MediaRecorder（Chrome）で録った約8秒の MP4
@@ -126,24 +126,32 @@ describe('この場面の前後を動画で保存', () => {
     })
 })
 
-describe('録画バーの「前後1分」（録った時刻で場面を指す）', () => {
+describe('録画バーの「直前1分」（録った時刻までを切り出す）', () => {
     const stored = (segmentId: string, kind: RecordingKind, startedAt: number): TimelineSegment => ({
         segmentId, kind, mimeType: 'video/mp4', startedAt, endedAt: null, init,
         fragments: fragments.map((f, index) => ({ index, startTime: f.startTime, duration: f.duration, keyframe: f.keyframe })),
     })
     const read = (blobsOf: Record<string, Blob[]>) => async (segmentId: string, indexes: number[]) => indexes.map(i => blobsOf[segmentId][i])
 
-    it('指定した種類の録画から、録った時刻の前後を切り出す', async () => {
+    it('指定した種類の録画から、録った時刻までを切り出す（その後は入れない）', async () => {
         const comments = new Blob(['not mp4'])
         const segments = [stored('V', 'video', 1_000_000), stored('C', 'comments', 1_000_000)]
+        // 2つ目の断片の途中で押した: 2つ目の断片まで（1つ目からは 0.5 秒だけ前）
         const wall = 1_000_000 + (fragments[1].startTime + fragments[1].duration / 2) * 1000
+        const before = fragments[1].duration / 2 + 0.5
 
-        const file = (await buildClipFileAt(segments, 'video', wall, 0.1, read({ V: fragments.map(f => f.blob), C: fragments.map(() => comments) })))!
+        const file = (await buildRecentClipFile(segments, 'video', wall, before, read({ V: fragments.map(f => f.blob), C: fragments.map(() => comments) })))!
 
-        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes([fragments[1]]))
-        expect(file.startedAt).toBe(1_000_000 + fragments[1].startTime * 1000)
+        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes(fragments.slice(0, 2)))
+        expect(file.startedAt).toBe(1_000_000 + fragments[0].startTime * 1000)
         // その種類の録画がなければ、何も作らない
-        expect(await buildClipFileAt(segments, 'screen', wall, 30, read({}))).toBeNull()
+        expect(await buildRecentClipFile(segments, 'screen', wall, 60, read({}))).toBeNull()
+    })
+
+    it('押した時が保存した最後より後なら、最後までを切り出す', async () => {
+        const segments = [stored('V', 'video', 1_000_000)]
+        const file = (await buildRecentClipFile(segments, 'video', 1_000_000 + 60_000, 60, read({ V: fragments.map(f => f.blob) })))!
+        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes(fragments))
     })
 
     it('種類ごとに、いつまで保存したかを、録った時刻で返す', () => {

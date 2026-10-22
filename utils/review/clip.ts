@@ -8,8 +8,10 @@ import { buildFmp4File, initSignature, moofSizeOf } from '../fmp4'
 import { MAX_CONTINUOUS_GAP_SECONDS, Timeline, type PlacedFragment, type PlacedSegment } from './timeline'
 import type { RecordingKind, TimelineSegment } from '../library/db'
 
-// 場面の前後に切り出す長さ（前と後ろ、それぞれ。プレイバック・録画一覧・録画バーの「前後1分」）
+// 場面の前後に切り出す長さ（前と後ろ、それぞれ。プレイバック・録画一覧の「前後1分」）
 const CLIP_SECONDS = 30
+// 録画バーの「直前1分」で切り出す長さ（押した時までの分）
+const RECENT_CLIP_SECONDS = 60
 
 type ClipFile = {
     blob: Blob
@@ -49,9 +51,11 @@ const signatureOf = async (init: Blob) => {
 }
 
 // 時間軸の at（秒）の前後 seconds 秒を切り出す。切り出せる録画がなければ null
-const buildClipFile = async (timeline: Timeline, at: number, seconds: number, readFragments: ReadFragments): Promise<ClipFile | null> => {
-    const from = at - seconds
-    const to = at + seconds
+const buildClipFile = (timeline: Timeline, at: number, seconds: number, readFragments: ReadFragments) =>
+    buildClip(timeline, at, at - seconds, at + seconds, readFragments)
+
+// 時間軸の from〜to（秒）を切り出す。at は場面の位置（途切れた所などで分かれる時は、場面を含む方を作る）
+const buildClip = async (timeline: Timeline, at: number, from: number, to: number, readFragments: ReadFragments): Promise<ClipFile | null> => {
     // 区間ごとに、範囲にかかる断片を区間の中の順に選ぶ（区間どうしが少し重なっていても、混ぜない）
     // 最初の断片がキーフレームから始まらなければ、同じ区間の続けて録った断片の中で、キーフレームまでさかのぼる
     // （読んでいる間に時間軸が変わっても（消された・読み直した）、選んだ時の区間を使う）
@@ -111,12 +115,12 @@ const buildClipFile = async (timeline: Timeline, at: number, seconds: number, re
     }
 }
 
-// 録った時刻 wallClock（ミリ秒）の前後 seconds 秒を、kind の録画から切り出す（録画バーの「前後1分」で使う）
-const buildClipFileAt = async (segments: TimelineSegment[], kind: RecordingKind, wallClock: number, seconds: number, readFragments: ReadFragments) => {
+// 録った時刻 wallClock（ミリ秒）までの seconds 秒を、kind の録画から切り出す（録画バーの「直前1分」で使う）
+const buildRecentClipFile = async (segments: TimelineSegment[], kind: RecordingKind, wallClock: number, seconds: number, readFragments: ReadFragments) => {
     const timeline = new Timeline()
     timeline.sync(segments.filter(segment => segment.kind === kind))
     const at = timeline.timeAtWallClock(wallClock)
-    return at === null ? null : buildClipFile(timeline, at, seconds, readFragments)
+    return at === null ? null : buildClip(timeline, at, at - seconds, at, readFragments)
 }
 
 // kind の録画を、いつまで保存したか（録った時刻。ミリ秒）。なければ 0
@@ -124,5 +128,5 @@ const recordedUntil = (segments: TimelineSegment[], kind: RecordingKind) => segm
     .filter(segment => segment.kind === kind)
     .reduce((latest, segment) => segment.fragments.reduce((end, f) => Math.max(end, segment.startedAt + (f.startTime + f.duration) * 1000), latest), 0)
 
-export { CLIP_SECONDS, buildClipFile, buildClipFileAt, recordedUntil, splitRuns }
+export { CLIP_SECONDS, RECENT_CLIP_SECONDS, buildClipFile, buildRecentClipFile, recordedUntil, splitRuns }
 export type { ClipFile }
