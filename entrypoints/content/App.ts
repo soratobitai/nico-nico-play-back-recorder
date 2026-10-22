@@ -51,6 +51,7 @@ type VideoKind = typeof VIDEO_KINDS[number]
 
 // このタブで録画する種類（録画バーのチップで切り替える。タブごとに別々で、そのタブを閉じるまで覚えておく。
 // 番組を移ったり、ページを読み直したりしても、同じタブなら続けて使う）
+// 設定画面の種類は、ページを開いた時に使う（チップで選んでいないタブで）。設定画面で変えても、開いているタブの録画は変えない
 type TabKinds = { video: boolean, comments: boolean }
 const TAB_KINDS_KEY = 'nico-playback-recorder:record-kinds'
 const loadTabKinds = (): TabKinds | null => {
@@ -67,14 +68,6 @@ const saveTabKinds = (kinds: TabKinds) => {
         sessionStorage.setItem(TAB_KINDS_KEY, JSON.stringify(kinds))
     } catch {
         // 覚えておけなくても、このページでは切り替えたまま録画する
-    }
-}
-// このタブで選んだ種類を忘れる（設定の種類に従う）
-const clearTabKinds = () => {
-    try {
-        sessionStorage.removeItem(TAB_KINDS_KEY)
-    } catch {
-        // 読めないなら、覚えてもいない
     }
 }
 
@@ -385,22 +378,6 @@ export default async () => {
         setKindChips(kinds)
         applyKinds()
     }
-    // 設定画面で録画する種類を変えた: このタブも設定の種類に従う（チップで選んだ種類は忘れる）。
-    // 録画に反映するのは、設定画面を閉じた時（「少なくとも1つ」のために、切り替える途中で両方を選んだ状態を通ることがあり、
-    // その間の短い録画を作らないように）
-    let settingsKindsChanged = false
-    const useSettingsKinds = (kinds: TabKinds) => {
-        clearTabKinds()
-        recordVideo = kinds.video
-        recordWithComments = kinds.comments
-        setKindChips(kinds)
-        settingsKindsChanged = true
-    }
-    const applySettingsKinds = () => {
-        if (!settingsKindsChanged) return
-        settingsKindsChanged = false
-        applyKinds()
-    }
 
     // 拡張機能が更新された後の古いページでは、設定の保存や録画一覧などの拡張機能の機能を使えない。
     // 黙って効かないままにせず、ページを開き直すように知らせる
@@ -694,9 +671,8 @@ export default async () => {
         }
     }
 
-    // 設定モーダルを初期化
-    // 設定で録画する種類を変えた時は、このタブにも使う（他のタブは、そのタブの種類のまま）
-    const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported(), onRecordKindsChange: useSettingsKinds, onClose: applySettingsKinds })
+    // 設定モーダルを初期化（録画する種類を変えても、このタブの録画は変えない。ページを開いた時に使う種類）
+    const settingsModal = new SettingsModal({ screenCaptureSupported: isScreenCaptureSupported() })
 
     // 動画の解像度の変更・読み込み直しを見張る（録画バーのボタンで録画を始められるようになる前から。
     // ページを開いてすぐ「画面録画」を押した直後に画質が上がった時も、録り直せるように）

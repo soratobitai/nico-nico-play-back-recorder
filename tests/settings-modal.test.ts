@@ -310,7 +310,7 @@ describe('設定画面', () => {
             checkbox(id).dispatchEvent(new Event('change'))
         }
 
-        it('コメントなし・コメントありを選べ、選ぶと保存する（録画バーのチップと同じ設定）', async () => {
+        it('コメントなし・コメントありを選べ、選ぶと保存する（ページを開いた時に録画する種類。録画バーのチップはタブごと）', async () => {
             modal.show()
             expect([checkbox('recordVideoCheckbox').checked, checkbox('recordCommentsCheckbox').checked]).toEqual([true, false])
 
@@ -340,35 +340,11 @@ describe('設定画面', () => {
             expect(checkbox('recordCommentsCheckbox').checked).toBe(true)
         })
 
-        it('変えた種類を、設定画面を開いたタブに知らせる（そのタブにもすぐ使う）', async () => {
-            modal.close()
-            const onRecordKindsChange = vi.fn()
-            modal = new SettingsModal({ onRecordKindsChange })
-            await flush()
+        it('ページを開いた時に使う種類で、開いているタブの録画は変えないことを説明する', () => {
             modal.show()
-
-            toggle('recordCommentsCheckbox')
-            await flush()
-            expect(onRecordKindsChange).toHaveBeenLastCalledWith({ video: true, comments: true })
-
-            // 両方は外せない（知らせない）
-            toggle('recordVideoCheckbox')
-            toggle('recordCommentsCheckbox')
-            await flush()
-            expect(onRecordKindsChange).toHaveBeenLastCalledWith({ video: false, comments: true })
-            expect(onRecordKindsChange).toHaveBeenCalledTimes(2)
-        })
-
-        it('閉じた時に知らせる（変えた種類を、閉じた時にタブの録画に反映する）', async () => {
-            modal.close()
-            const onClose = vi.fn()
-            modal = new SettingsModal({ onClose })
-            await flush()
-            modal.show()
-            expect(onClose).not.toHaveBeenCalled()
-            modal.close()
-            modal.close() // 閉じている時は知らせない
-            expect(onClose).toHaveBeenCalledTimes(1)
+            const note = document.querySelector('.npr-kinds-note')?.textContent ?? ''
+            expect(note).toContain('ページを開いた時に録画する種類です')
+            expect(note).toContain('開いているタブの録画は変わりません')
         })
 
         it('画面録画はスイッチにせず、録画バーの「画面録画」で始めることだけ説明する', async () => {
