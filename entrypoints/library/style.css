@@ -241,6 +241,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   align-items: center;
   gap: 8px;
 }
+.legacy-notice:focus { outline: none; }
 .legacy-notice[data-phase="interrupted"] { border-color: rgba(255, 138, 149, 0.4); background: rgba(255, 138, 149, 0.08); }
 .legacy-text { margin: 0; flex: 1 1 100%; font-size: 12px; line-height: 1.6; }
 .legacy-detail { margin: 0; flex: 1 1 100%; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

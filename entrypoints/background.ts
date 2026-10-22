@@ -1,7 +1,7 @@
 import { BRIDGE_TOKEN_KEY, BRIDGE_TOKEN_MESSAGE, CLOSE_SEGMENTS_MESSAGE } from '@/utils/library/protocol'
 import { closeSegments } from '@/utils/library/db'
 import { OPEN_LIBRARY_MESSAGE, openLibrary } from '@/utils/library/open-library'
-import { LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE, LEGACY_IMPORT_TAB_KEY, LEGACY_IMPORT_RUN_KEY, isLegacyImportPage } from '@/utils/library/legacy-import'
+import { LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE, LEGACY_IMPORT_TAB_KEY, legacyImportRunKey, isLegacyImportPage } from '@/utils/library/legacy-import'
 
 // ニコ生のページに埋め込む bridge を使ってよい相手（content script）だけに渡す合言葉
 // ニコ生のページ側のスクリプトはこの service worker と話せないので、合言葉を知ることができない
@@ -27,10 +27,10 @@ const isImportTab = async (tabId: number | undefined, url: string | undefined) =
 // 録画一覧が取り込み用に開いたタブでなければならない
 const checkImportRun = async (sender: chrome.runtime.MessageSender, run: unknown) => {
     if (typeof run !== 'string' || !run) return false
-    const { [LEGACY_IMPORT_RUN_KEY]: expected } = await chrome.storage.session.get(LEGACY_IMPORT_RUN_KEY)
-    if (run !== expected) return false
+    const key = legacyImportRunKey(run)
+    if (!(key in await chrome.storage.session.get(key))) return false
     if (sender.frameId === 0 && !(await isImportTab(sender.tab?.id, sender.url))) return false
-    await chrome.storage.session.remove(LEGACY_IMPORT_RUN_KEY)
+    await chrome.storage.session.remove(key)
     return true
 }
 

@@ -44,8 +44,10 @@ const legacyImportRunOf = (url: string) => {
 }
 // 取り込むために開いたタブ（埋め込めなかった時だけ。chrome.storage.session。録画一覧を閉じても、取り込み終えたら background が閉じる）
 const LEGACY_IMPORT_TAB_KEY = 'legacyImportTabId'
-// まだ使われていない合言葉（chrome.storage.session。content script からは読めない。取り込み用のページが確かめたら消す）
-const LEGACY_IMPORT_RUN_KEY = 'legacyImportRun'
+// まだ使われていない合言葉（chrome.storage.session に合言葉ごとに置く。content script からは読めない。取り込み用のページが確かめたら消す）
+const legacyImportRunKey = (run: string) => `legacyImportRun:${run}`
+// 取り込んだ後も録画を続けられるよう、容量の上限まで空けておく大きさ（これより空きが少なくなるなら上限を上げ、上げられなければ入る分だけ取り込む）
+const LEGACY_IMPORT_HEADROOM = 1024 ** 3
 
 type LegacyImportMessage = {
     type: typeof LEGACY_IMPORT_PROGRESS_MESSAGE
@@ -57,7 +59,7 @@ type LegacyImportMessage = {
 
 export {
     LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE,
-    LEGACY_IMPORT_URL, LEGACY_COUNT_URL, LEGACY_IMPORT_TAB_KEY, LEGACY_IMPORT_RUN_KEY,
+    LEGACY_IMPORT_URL, LEGACY_COUNT_URL, LEGACY_IMPORT_TAB_KEY, LEGACY_IMPORT_HEADROOM, legacyImportRunKey,
     isLegacyImportPage, isLegacyCountPage, legacyImportUrl, legacyImportRunOf,
 }
 export type { LegacyImportMessage }

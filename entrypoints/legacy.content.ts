@@ -9,7 +9,7 @@ import { isExtensionContextValid } from '@/utils/library/client'
 import { LEGACY_RECORDINGS, MAX_STORAGE_SIZE } from '@/utils/storage'
 import {
     LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE,
-    isLegacyImportPage, isLegacyCountPage, legacyImportRunOf, type LegacyImportMessage,
+    LEGACY_IMPORT_HEADROOM, isLegacyImportPage, isLegacyCountPage, legacyImportRunOf, type LegacyImportMessage,
 } from '@/utils/library/legacy-import'
 
 // 取り込んでいる間、進み具合が変わらなくても知らせ直す間隔（大きな録画を読んでいる間に、録画一覧が止まったとみなさないように）
@@ -55,10 +55,11 @@ const reportLegacyRecordings = async ({ keepWhenNone = false } = {}) => {
     }
 }
 
-// 容量の上限を超えずに移せるか（超えると、移した録画が古い順に削除されてしまうので、残りは移さずに以前の保存先に残す）
+// 容量の上限まで、録画を続ける分の空き（LEGACY_IMPORT_HEADROOM）を残して移せるか
+// （上限いっぱいまで移すと、次の録画で、移した録画が古い順に削除されてしまうので、入らない録画は以前の保存先に残す）
 const canFit = async (bytes: number) => {
     const [usage, limit] = await Promise.all([getUsage(), MAX_STORAGE_SIZE.getValue()])
-    return usage.bytes + bytes <= limit
+    return usage.bytes + bytes + LEGACY_IMPORT_HEADROOM <= limit
 }
 
 export default defineContentScript({
@@ -89,7 +90,9 @@ export default defineContentScript({
             if (running || !isExtensionContextValid()) return
             running = true
             cancelled = false
-            let last: LegacyImportProgress = { done: 0, total: 0, bytesDone: 0, bytesTotal: 0, title: '' }
+            let last: LegacyImportProgress = { done: 0, migrated: 0, failed: 0, total: 0, bytesDone: 0, bytesTotal: 0, title: '' }
+            // 始めたことをすぐに知らせる（以前の録画を調べるのに時間がかかっても、録画一覧が始まらなかったとみなさないように）
+            send(last)
             const heartbeat = setInterval(() => send(last), HEARTBEAT_MS)
             importLegacy({
                 onProgress: (progress) => {
@@ -98,22 +101,24 @@ export default defineContentScript({
                 },
                 isCancelled: () => cancelled,
                 canFit,
-                // 1本移すたびに残りを知らせる（途中で止まっても、録画一覧に出る数と、上限を上げる大きさが合うように）
+                // 1本移すたびと取り込み終えた時に、残りを知らせる（途中で止まっても、録画一覧に出る数と、上限を上げる大きさが合うように）
                 onRemaining: (remaining) => void setLegacyRecordings(remaining).catch(() => {}),
             })
                 .then(async ({ remaining, ...finished }) => {
-                    // 残った数を知らせてから、終わったと知らせる（終わったと知らせると、取り込み用のタブは閉じられる）
-                    // 他のタブで取り込んでいた時は、そちらが知らせる。
+                    // 以前の録画がなかった時は、ないと知らせてから、終わったと知らせる（終わったと知らせると、取り込み用のタブは閉じられる）。
+                    // あった時は、取り込みが残りを知らせている。他のタブで取り込んでいた時は、そちらが知らせる。
                     // 埋め込んだ枠で何も見つからなかった時は、ニコ生のサイトデータが見えなかったのかもしれないので、知らせない
                     // （録画一覧が、タブで開いて取り込み直す）
                     const found = finished.migrated > 0 || finished.failed > 0 || !!remaining
-                    if (!finished.busy && (!embedded || found)) await setLegacyRecordings(remaining).catch(() => {})
+                    if (!finished.busy && !embedded && !found) await setLegacyRecordings(null).catch(() => {})
                     return finished
                 })
                 .catch(async (error) => {
                     console.error('以前の録画を取り込めませんでした:', error)
                     await Promise.race([reportLegacyRecordings({ keepWhenNone: embedded }), new Promise(resolve => setTimeout(resolve, RECOUNT_TIMEOUT_MS))])
-                    return { migrated: last.done, failed: 0, cancelled: false, full: false, busy: false, error: String(error) }
+                    return {
+                        migrated: last.migrated, failed: last.failed, cancelled: false, full: false, diskFull: false, busy: false, error: String(error),
+                    }
                 })
                 .then((finished) => {
                     clearInterval(heartbeat)
@@ -143,7 +148,7 @@ export default defineContentScript({
             const requested = importPage ? legacyImportRunOf(location.href) : null
             if (requested) {
                 void isRequestedRun(requested).then((ok) => {
-                    if (!ok) return
+                    if (!ok || running) return
                     run = requested
                     startImport()
                 })
@@ -159,6 +164,8 @@ export default defineContentScript({
         }
         void isRequestedRun(requested).then((ok) => {
             if (!ok) return void reportLegacyRecordings()
+            // 確かめている間に、録画一覧が新しい合言葉で始めていたら、そちらで続ける
+            if (running) return
             run = requested
             startImport()
         })

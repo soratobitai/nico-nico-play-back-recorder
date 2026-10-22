@@ -2,12 +2,12 @@
 // 以前の録画はニコ生のサイトデータにあるので、取り込み用のニコ生のページを見えない枠で埋め込んで、そのページに取り込んでもらう
 // （utils/library/legacy-import.ts。新しいタブは開かない。埋め込んだページから読めない時だけ、裏のタブで開く）。
 // 取り込んでいる間は、番組の一覧の上に進み具合を出す。
-// 取り込んだ録画が容量の上限ですぐに消えないよう、上限を超える（近くなる）時は、上限を上げてから取り込む。
+// 取り込んだ録画が容量の上限ですぐに消えないよう、上限を超える（録画を続ける分の空きがなくなる）時は、上限を上げてから取り込む。
 // 録画一覧を開いた時は、数える用のページを埋め込んで、以前の録画が残っているかを数え直す（ニコ生のページを開いていなくても出す）
 import { LEGACY_RECORDINGS, MAX_STORAGE_SIZE, type LegacyRecordings } from '@/utils/storage'
 import {
     LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE,
-    LEGACY_COUNT_URL, LEGACY_IMPORT_TAB_KEY, LEGACY_IMPORT_RUN_KEY, legacyImportUrl, type LegacyImportMessage,
+    LEGACY_COUNT_URL, LEGACY_IMPORT_TAB_KEY, LEGACY_IMPORT_HEADROOM, legacyImportRunKey, legacyImportUrl, type LegacyImportMessage,
 } from '@/utils/library/legacy-import'
 import type { LegacyImportProgress } from '@/utils/library/migrate'
 
@@ -40,9 +40,9 @@ type LegacyImportOptions = {
     reload: () => Promise<void> // 番組の一覧を読み直す
 }
 
-// 取り込んだ後の大きさに合わせた上限（録画を続ける分の余裕を少し足して、GB 単位に切り上げる。最大まで）
+// 取り込んだ後も、録画を続ける分の空き（LEGACY_IMPORT_HEADROOM）が残る上限（GB 単位に切り上げる。最大まで）
 // 今の上限がこれより小さければ、取り込む前に上げる（取り込んだ後の録画で、取り込んだ録画がすぐに消えないように）
-const neededLimit = (after: number) => Math.min(MAX_STORAGE_SIZE_LIMIT, Math.ceil(after / GB + 1) * GB)
+const neededLimit = (after: number) => Math.min(MAX_STORAGE_SIZE_LIMIT, Math.ceil((after + LEGACY_IMPORT_HEADROOM) / GB) * GB)
 
 // 見えない枠（ニコ生のページを埋め込む）
 const hiddenFrame = (url: string) => {
@@ -58,7 +58,7 @@ const hiddenFrame = (url: string) => {
 
 // 何も取り込まずに終わった（埋め込んだページから、ニコ生のサイトデータが見えなかったのかもしれない）
 const sawNothing = (result: Finished) =>
-    result.migrated === 0 && result.failed === 0 && !result.cancelled && !result.busy && !result.full
+    result.migrated === 0 && result.failed === 0 && !result.cancelled && !result.busy && !result.full && !result.diskFull
 
 const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, reload }: LegacyImportOptions) => {
     let legacy: LegacyRecordings | null = null
@@ -73,8 +73,12 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     // 今の取り込みの合言葉（この合言葉の付いた知らせだけを受け取る）と、知らせてきたページ（やめる時に送る先）
     let run: string | null = null
     let source: { tabId: number, frameId: number } | null = null
+    // やめるように頼んだ（止まったとみなした後に、遅れて進み具合が届いても「やめています」のままにする）
+    let cancelRequested = false
     // 取り込む時に上げた容量の上限（上げていなければ null）
     let raised: { from: number, to: number } | null = null
+    // 確認の画面で、使用量を調べた回（開き直した時に、前に開いた時の結果で書き換えないように）
+    let capacityCheck = 0
     // この録画一覧のタブ（取り込んでいる間、メモリの節約のために破棄されないようにする）
     const ownTab = chrome.tabs.getCurrent().catch(() => undefined)
 
@@ -92,6 +96,8 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         return node
     }
     const gb = (bytes: number) => `${Math.round(bytes / GB)} GB`
+    // 容量の上限（GB 単位ならそのまま、そうでなければ使用量と同じ書き方）
+    const formatLimit = (bytes: number) => bytes % GB === 0 ? gb(bytes) : formatBytes(bytes)
 
     const importTabId = async () => {
         const { [LEGACY_IMPORT_TAB_KEY]: tabId } = await chrome.storage.session.get(LEGACY_IMPORT_TAB_KEY)
@@ -107,14 +113,23 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         }, 2000)
     }
 
-    // 1本も取り込まなかった時は、上げた上限を戻す（その間に設定で変えられていたら、そのままにする）
+    // 1本も取り込まなかった時は、上げた上限を戻す
+    // （その間に設定で変えられていたら・戻すと今の使用量が上限を超える時は、そのままにする。使用量を調べられなければ戻さない）
     const restoreLimit = () => {
         const previous = raised
         raised = null
         if (!previous) return
-        void MAX_STORAGE_SIZE.getValue()
-            .then(limit => limit === previous.to ? MAX_STORAGE_SIZE.setValue(previous.from) : undefined)
-            .catch(() => {})
+        void (async () => {
+            const [limit, usage] = await Promise.all([MAX_STORAGE_SIZE.getValue(), usageBytes()])
+            if (limit === previous.to && usage <= previous.from) await MAX_STORAGE_SIZE.setValue(previous.from)
+        })().catch(() => {})
+    }
+
+    // 今の取り込みの知らせを、もう受け取らない（まだ使われていない合言葉は消す）
+    const dropRun = () => {
+        if (run) void chrome.storage.session.remove(legacyImportRunKey(run)).catch(() => {})
+        run = null
+        source = null
     }
 
     // 今の段階（待っている間に、進み具合が届くなどして変わる）
@@ -131,7 +146,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         }
         if (next.phase === 'finished' || next.phase === 'idle') {
             removeImportFrame()
-            if (next.phase === 'idle') run = null
+            if (next.phase === 'idle') dropRun()
         }
         render(changed)
     }
@@ -149,7 +164,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     }
     // 容量の上限を上げたことの説明
     const raisedNote = () => raised
-        ? element('p', 'legacy-detail', `取り込んだ録画が消されないよう、容量の上限を ${formatBytes(raised.from)} から ${gb(raised.to)} に上げました（設定で変えられます）。`)
+        ? element('p', 'legacy-detail', `取り込んだ録画が消されないよう、容量の上限を ${formatLimit(raised.from)} から ${formatLimit(raised.to)} に上げました（設定で変えられます）。`)
         : null
     // 取り込み方の説明（埋め込んだページで取り込む時は、録画一覧を閉じると止まる）
     const modeNote = () => mode === 'frame'
@@ -159,18 +174,25 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     const finishedText = (result: Finished) => {
         if (result.busy) return '他のタブで取り込んでいます。終わってから、もう一度お試しください。'
         if (result.error) return `取り込めませんでした（${result.migrated}本は取り込みました）。もう一度取り込むと、続きから取り込みます。`
-        const text = result.cancelled ? `取り込みをやめました（${result.migrated}本を取り込みました）。残りは後で取り込めます。`
-            : result.full ? `容量の上限に達したので、${result.migrated}本を取り込み、残りは以前の保存先に残しました。いらない録画を削除してから、もう一度取り込んでください。`
-            : result.migrated === 0 && result.failed === 0 ? '取り込む録画は見つかりませんでした。'
-            : `以前の録画を ${result.migrated}本取り込みました。`
-        return result.failed > 0 ? `${text}${result.failed}本は取り込めなかったので、以前の保存先に残しました（もう一度取り込むと、取り込み直します）。` : text
+        const texts = [
+            result.cancelled ? `取り込みをやめました（${result.migrated}本を取り込みました）。残りは後で取り込めます。`
+                : result.migrated > 0 ? `以前の録画を ${result.migrated}本取り込みました。`
+                : result.failed > 0 || result.full || result.diskFull ? '以前の録画を取り込めませんでした。'
+                : '取り込む録画は見つかりませんでした。',
+        ]
+        if (result.failed > 0) texts.push(`${result.failed}本は読み込めなかったので、以前の保存先に残しました（もう一度取り込むと、取り込み直します）。`)
+        if (result.diskFull) texts.push('PC の空き容量が足りなくなったので、残りは以前の保存先に残しました。空き容量を増やしてから、もう一度取り込んでください。')
+        else if (result.full) texts.push('容量の上限に入らない録画は、以前の保存先に残しました。いらない録画を削除してから、もう一度取り込んでください。')
+        return texts.join('')
     }
 
     const updateRunning = (progress: LegacyImportProgress, cancelling: boolean) => {
         if (!running) return
-        running.text.textContent = `以前の録画を取り込んでいます（${progress.done} / ${progress.total}本）`
+        // 始めてすぐは、取り込む録画を調べている（数が分かるまで）
+        const counting = progress.total === 0
+        running.text.textContent = counting ? '取り込む録画を調べています…' : `以前の録画を取り込んでいます（${progress.done} / ${progress.total}本）`
         if (progress.bytesTotal > 0) running.bar.value = progress.bytesDone / progress.bytesTotal
-        running.detail.textContent = `${formatBytes(progress.bytesDone)} / ${formatBytes(progress.bytesTotal)}${progress.title ? `・${progress.title}` : ''}`
+        running.detail.textContent = counting ? '' : `${formatBytes(progress.bytesDone)} / ${formatBytes(progress.bytesTotal)}${progress.title ? `・${progress.title}` : ''}`
         running.cancel.textContent = cancelling ? 'やめています…' : 'やめる'
         // disabled にすると、キーボードで押した人のフォーカスが外れるので、押せないように見せるだけにする（もう一度押しても何もしない）
         running.cancel.setAttribute('aria-disabled', String(cancelling))
@@ -209,7 +231,8 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
                 const { result } = state
                 announce = finishedText(result)
                 parts.push(element('p', 'legacy-text', announce), raisedNote())
-                if ((result.error || result.busy || result.cancelled || result.full || result.failed > 0) && legacy) parts.push(button('もう一度…', openDialog))
+                const retry = result.error || result.busy || result.cancelled || result.full || result.diskFull || result.failed > 0
+                if (retry && legacy) parts.push(button('もう一度…', openDialog))
                 parts.push(button('閉じる', () => setState({ phase: 'idle' })))
                 break
             }
@@ -224,38 +247,40 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
                 break
         }
         const shown = parts.filter((part): part is HTMLElement => part !== null)
-        // フォーカスしていたボタンが作り直してなくなったら、お知らせの最初のボタンへ（ページの先頭へ外れないように）
+        // フォーカスしていたボタンが作り直してなくなったら、お知らせの最初のボタン（なければお知らせ）へ（ページの先頭へ外れないように）
         const hadFocus = notice.contains(document.activeElement)
         notice.replaceChildren(...shown)
         notice.hidden = shown.length === 0
         notice.dataset.phase = state.phase
-        if (hadFocus) notice.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+        if (hadFocus && !notice.hidden) (notice.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? notice).focus()
         if (phaseChanged && announce) status.textContent = announce
     }
 
-    // ---- 始める前の確認（容量の上限と比べる。超える・近くなる時は、上げてから取り込む） ----
-    const renderCapacity = async () => {
+    // ---- 始める前の確認（容量の上限と比べる。超える・空きがなくなる時は、上げてから取り込む） ----
+    const renderCapacity = async (check: number) => {
         if (!legacy) return
         const usage = await usageBytes()
         const limit = await MAX_STORAGE_SIZE.getValue()
         const after = usage + legacy.bytes
         const target = neededLimit(after)
         const quota = (await navigator.storage?.estimate?.().catch(() => null))?.quota ?? null
+        if (check !== capacityCheck) return
         const capacity = $<HTMLDivElement>('.legacy-capacity')
         const startButton = $<HTMLButtonElement>('#legacyStart')
         const parts: HTMLElement[] = [
-            element('p', undefined, `今の使用量 ${formatBytes(usage)} / 上限 ${formatBytes(limit)}。取り込むと、約 ${formatBytes(after)} になります。`),
+            element('p', undefined, `今の使用量 ${formatBytes(usage)} / 上限 ${formatLimit(limit)}。取り込むと、約 ${formatBytes(after)} になります。`),
         ]
-        startButton.className = 'button primary'
-        if (after > MAX_STORAGE_SIZE_LIMIT) {
+        const headroom = gb(LEGACY_IMPORT_HEADROOM)
+        if (after + LEGACY_IMPORT_HEADROOM > MAX_STORAGE_SIZE_LIMIT) {
             // 上限の最大でも入らない: 入る分だけ取り込み、残りは以前の保存先に残す（取り込んでから削除されないように）
-            const raise = limit < MAX_STORAGE_SIZE_LIMIT
+            const raise = target > limit
             const warning = element('div', 'legacy-warning')
-            warning.append(element('p', undefined, `容量の上限は ${gb(MAX_STORAGE_SIZE_LIMIT)} までです。${raise ? `上限を ${gb(MAX_STORAGE_SIZE_LIMIT)} に上げて、` : ''}入る分だけ取り込み、入らない分（約 ${formatBytes(after - MAX_STORAGE_SIZE_LIMIT)}）は以前の保存先に残します。先にいらない録画を削除すると、すべて取り込めます。`))
+            warning.append(element('p', undefined, `容量の上限は ${gb(MAX_STORAGE_SIZE_LIMIT)} までです。${raise ? `上限を ${gb(MAX_STORAGE_SIZE_LIMIT)} に上げて、` : ''}この後の録画のための空き（${headroom}）を残して入る分だけ取り込み、入らない分（約 ${formatBytes(after + LEGACY_IMPORT_HEADROOM - MAX_STORAGE_SIZE_LIMIT)}）は以前の保存先に残します。先にいらない録画を削除すると、すべて取り込めます。`))
             parts.push(warning)
             startButton.textContent = raise ? `上限を ${gb(MAX_STORAGE_SIZE_LIMIT)} に上げて取り込む` : '入る分だけ取り込む'
         } else if (target > limit) {
-            parts.push(element('p', 'legacy-ok', `${after > limit ? '今の上限を超える' : '上限に近くなる'}ので、取り込んだ録画が古い順に削除されないよう、容量の上限を ${gb(target)} に上げてから取り込みます（上限は、後で設定から変えられます）。`))
+            const reason = after > limit ? '今の上限を超える' : `取り込むと、この後の録画のための空き（${headroom}）がなくなる`
+            parts.push(element('p', 'legacy-ok', `${reason}ので、取り込んだ録画が古い順に削除されないよう、容量の上限を ${gb(target)} に上げてから取り込みます（上限は、後で設定から変えられます）。`))
             startButton.textContent = `上限を ${gb(target)} に上げて取り込む`
         } else {
             parts.push(element('p', 'legacy-ok', '上限の中に収まります（この後の録画で上限を超えると、古い録画から削除されます）。'))
@@ -270,7 +295,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         capacity.replaceChildren(...parts)
     }
 
-    // 取り込むと上限を超える（近くなる）時は、上限を上げる（上げた時は、上げる前と後を返す）
+    // 取り込むと上限を超える（空きがなくなる）時は、上限を上げる（上げた時は、上げる前と後を返す）
     const raiseLimitIfNeeded = async () => {
         if (!legacy) return null
         const limit = await MAX_STORAGE_SIZE.getValue()
@@ -284,15 +309,19 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         if (!legacy) return
         $('#legacySummary').textContent = `以前のバージョン（1.2.2 まで）で録画した ${legacy.count}本（約 ${formatBytes(legacy.bytes)}）を、この録画一覧に移します。`
         // 使用量を調べ終えて、上限をどうするかを出すまでは、始められないようにする
+        const check = ++capacityCheck
         const startButton = $<HTMLButtonElement>('#legacyStart')
         startButton.disabled = true
+        startButton.className = 'button primary'
         $<HTMLDivElement>('.legacy-capacity').replaceChildren(element('p', undefined, '今の使用量を調べています…'))
-        void renderCapacity()
+        void renderCapacity(check)
             .catch((error) => {
                 console.error('使用量を調べられませんでした:', error)
-                $<HTMLDivElement>('.legacy-capacity').replaceChildren(element('p', undefined, '今の使用量を調べられませんでした。'))
+                if (check === capacityCheck) $<HTMLDivElement>('.legacy-capacity').replaceChildren(element('p', undefined, '今の使用量を調べられませんでした。'))
             })
-            .finally(() => { startButton.disabled = false })
+            .finally(() => {
+                if (check === capacityCheck) startButton.disabled = false
+            })
         dialog.showModal()
     }
     $('#legacyClose').addEventListener('click', () => dialog.close())
@@ -315,12 +344,12 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     }
     const removeCountFrame = () => countFrame.remove()
 
-    // 新しい合言葉を決める（取り込み用のページが background に確かめる）
+    // 新しい合言葉を決める（取り込み用のページが background に確かめる。前の合言葉は、使われていなければ消す）
     const newRun = async () => {
+        dropRun()
         const next = crypto.randomUUID()
         run = next
-        source = null
-        await chrome.storage.session.set({ [LEGACY_IMPORT_RUN_KEY]: next })
+        await chrome.storage.session.set({ [legacyImportRunKey(next)]: true })
         return next
     }
 
@@ -347,52 +376,65 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
             await chrome.storage.session.set({ [LEGACY_IMPORT_TAB_KEY]: tab.id })
         } catch (error) {
             console.error('取り込むためのページを開けませんでした:', error)
-            run = null
+            dropRun()
             restoreLimit()
             setState({ phase: 'interrupted', reason: 'ニコ生のページを開けませんでした。' })
         }
     }
 
-    // 始まらなかった: 埋め込んだページを外し、開いたタブが取り込み用のページのままなら閉じる
+    // 始まらなかった: 埋め込んだページを外し、開いたタブは覚えるのをやめる（取り込み用のページのままなら閉じる）
     const giveUpStarting = () => {
         removeImportFrame()
         const tabId = mode === 'tab' ? openedTabId : null
         if (tabId !== null) {
-            void chrome.tabs.sendMessage(tabId, { type: LEGACY_IMPORT_CANCEL_MESSAGE }).catch(() => null).then(async (reply) => {
-                if (reply?.importPage !== true) return
-                await chrome.storage.session.remove(LEGACY_IMPORT_TAB_KEY)
-                await chrome.tabs.remove(tabId)
-            }).catch(() => {})
+            void (async () => {
+                const reply = await chrome.tabs.sendMessage(tabId, { type: LEGACY_IMPORT_CANCEL_MESSAGE }).catch(() => null)
+                if ((await importTabId()) === tabId) await chrome.storage.session.remove(LEGACY_IMPORT_TAB_KEY)
+                if (reply?.importPage === true) await chrome.tabs.remove(tabId)
+            })().catch(() => {})
         }
-        run = null
+        dropRun()
         restoreLimit()
         setState({ phase: 'interrupted', reason: '取り込みを始められませんでした。' })
     }
 
     // 前に開いたタブが取り込み用のページのまま残っていれば、そのタブで続きを取り込む（他のページへ移ったタブは、使わず閉じもしない）
+    // 前の取り込み（止まったとみなしたもの）は、ここで終わりにする（埋め込んだページは外し、知らせも受け取らない）
     const startImport = async () => {
         if (phase() === 'starting' || phase() === 'running') return
         removeCountFrame()
+        removeImportFrame()
+        dropRun()
+        mode = null
+        cancelRequested = false
+        raised = null
         setState({ phase: 'starting' })
+        // 待っている間に、始められなかったことになった（時間切れ など）ら、やめる
+        const abandoned = () => phase() !== 'starting'
         try {
             raised = await raiseLimitIfNeeded()
+            if (abandoned()) return
             const previous = await importTabId()
             if (previous !== null) {
                 const next = crypto.randomUUID()
                 run = next
-                source = null
                 const reply = await chrome.tabs.sendMessage(previous, { type: LEGACY_IMPORT_START_MESSAGE, run: next }).catch(() => null)
+                if (abandoned()) return
                 if (reply?.ok === true) {
                     mode = 'tab'
                     openedTabId = previous
                     return
                 }
+                run = null
                 await chrome.storage.session.remove(LEGACY_IMPORT_TAB_KEY)
             }
+            if (abandoned()) return
             await startInFrame()
         } catch (error) {
             console.error('取り込みを始められませんでした:', error)
-            run = null
+            if (abandoned()) return
+            removeImportFrame()
+            dropRun()
             restoreLimit()
             setState({ phase: 'interrupted', reason: '取り込みを始められませんでした。' })
         }
@@ -400,6 +442,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
 
     const cancelImport = async () => {
         if (state.phase !== 'running' || state.cancelling || !source) return
+        cancelRequested = true
         setState({ ...state, cancelling: true })
         // 進み具合を知らせてきたページ（埋め込んだページなら、このタブの中の枠）に送る
         await chrome.tabs.sendMessage(source.tabId, { type: LEGACY_IMPORT_CANCEL_MESSAGE }, { frameId: source.frameId }).catch(() => {})
@@ -416,15 +459,16 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
                 void startInTab()
                 return
             }
-            run = null
-            if (result.migrated === 0) restoreLimit()
+            dropRun()
+            // 他のタブで取り込んでいる時は、そちらが上げた上限で取り込んでいるかもしれないので戻さない
+            if (result.migrated === 0 && !result.busy) restoreLimit()
             setState({ phase: 'finished', result })
             void reload()
             return
         }
         clearTimeout(frameTimer)
         const previous = state.phase === 'running' ? state.progress : null
-        setState({ phase: 'running', progress: message.progress, cancelling: state.phase === 'running' && state.cancelling })
+        setState({ phase: 'running', progress: message.progress, cancelling: cancelRequested })
         if (message.progress.done !== previous?.done) scheduleReload()
     })
 
@@ -434,8 +478,8 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
             if (tabId !== closedTabId) return
             await chrome.storage.session.remove(LEGACY_IMPORT_TAB_KEY)
             await new Promise(resolve => setTimeout(resolve, 1000))
-            if (mode === 'tab' && (phase() === 'starting' || phase() === 'running')) {
-                run = null
+            if (mode === 'tab' && openedTabId === closedTabId && (phase() === 'starting' || phase() === 'running')) {
+                dropRun()
                 setState({ phase: 'interrupted', reason: '取り込むために開いたニコ生のページが閉じられたため、取り込みが中断しました。' })
             }
         })
@@ -443,7 +487,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
 
     // 埋め込んだページで取り込んでいる間に閉じようとしたら、確かめる（閉じると止まる）
     window.addEventListener('beforeunload', (event) => {
-        if (mode === 'frame' && importFrame && (phase() === 'starting' || phase() === 'running')) event.preventDefault()
+        if (importFrame) event.preventDefault()
     })
 
     // 以前の録画が残っているか（ニコ生のページを開いた時・この録画一覧を開いた時・取り込んでいる間に1本移すたびに書き込まれる）
@@ -453,6 +497,11 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     }
     LEGACY_RECORDINGS.watch(applyLegacy)
     void LEGACY_RECORDINGS.getValue().then(applyLegacy)
+
+    // 取り込みの途中で開き直した（閉じる前に取り込んでいた）タブでも、破棄されるようにしておく
+    setDiscardable(true)
+    // お知らせのボタンがなくなった時に、フォーカスを置けるように
+    notice.tabIndex = -1
 
     // 開いた時に数え直す（数える用のページを少しの間だけ埋め込む。取り込みを始めたら外す）
     const countFrame = hiddenFrame(LEGACY_COUNT_URL)

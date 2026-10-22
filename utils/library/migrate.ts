@@ -45,8 +45,14 @@ const isWebm = async (blob: Blob) => {
     return head.length === 4 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3
 }
 // 録画ファイルの先頭か（録画処理を始め直すと、ファイルの先頭から書き出す）
-const startsNewFile = async (blob: Blob) =>
-    String.fromCharCode(...await readHead(blob, 4, 8)) === 'ftyp' || await isWebm(blob)
+// 読めない一時データは先頭ではないものとする（数える・取り込む全体を止めずに、その録画だけ移せずに残す）
+const startsNewFile = async (blob: Blob) => {
+    try {
+        return String.fromCharCode(...await readHead(blob, 4, 8)) === 'ftyp' || await isWebm(blob)
+    } catch {
+        return false
+    }
+}
 
 // 1本の録画を区間として移し、送ったとおりに保存されたかを確かめる（確かめられなければエラー）
 // MP4 として読めなければ、そのまま（分けて送り、保存する時に順につなぐ）移す
@@ -112,9 +118,10 @@ type LegacyItem = { segmentId: string, recording: LegacyRecording, bytes: number
 // 一時データを、録画処理を始め直したところ（ファイルの先頭から始まる一時データ）で分ける
 // （以前のバージョンの中には、タブごとに同じ録画の番号を使い続けたものがあり、別の録画の一時データが混ざることがある）
 const splitTempsRuns = async (group: ChunkRecord[]) => {
+    const starts = await Promise.all(group.map(temp => startsNewFile(temp.blob)))
     const runs: ChunkRecord[][] = []
-    for (const temp of group) {
-        if (runs.length === 0 || await startsNewFile(temp.blob)) runs.push([temp])
+    for (const [i, temp] of group.entries()) {
+        if (runs.length === 0 || starts[i]) runs.push([temp])
         else runs[runs.length - 1].push(temp)
     }
     return runs
@@ -201,7 +208,9 @@ const countLegacyRecordingsUnlessImporting = async (): Promise<LegacySummary | n
 }
 
 type LegacyImportProgress = {
-    done: number // 移し終えた（移せなかったものも含む）本数
+    done: number // 移し終えた（移せなかったもの・入らなかったものも含む）本数
+    migrated: number // そのうち、移せた本数
+    failed: number // そのうち、移せなかった（以前の保存先に残した）本数
     total: number
     bytesDone: number
     bytesTotal: number
@@ -211,74 +220,103 @@ type LegacyImportOptions = {
     onProgress?: (progress: LegacyImportProgress) => void
     // やめるように言われた（移している1本を移し終えてから、やめる）
     isCancelled?: () => boolean
-    // この大きさの録画を、容量の上限を超えずに移せるか（移せなければ、残りは移さずに以前の保存先に残す）
+    // この大きさの録画を、容量の上限を超えずに移せるか（移せなければ、その録画は移さずに以前の保存先に残す）
     canFit?: (bytes: number) => Promise<boolean>
-    // 1本移すたびに、以前の保存先に残っている録画（移せなかったものも含む）
+    // 1本移すたびと、取り込み終えた時に、以前の保存先に残っている録画（移せなかったものも含む）
     onRemaining?: (remaining: LegacySummary | null) => void
 }
-// failed: 移せなかった（以前の保存先に残した）本数。full: 容量の上限に達したので、残りを移さなかった
+// failed: 移せなかった（以前の保存先に残した）本数。full: 容量の上限に入らない録画を、移さずに残した
+// diskFull: PC の空き容量が足りなくなったので、残りを移さなかった
 // remaining: 取り込まずに残った録画（取り込み終えた後に数え直したもの。なければ null）
-type LegacyImportResult = { migrated: number, failed: number, cancelled: boolean, full: boolean, busy: boolean, remaining: LegacySummary | null }
+type LegacyImportResult = {
+    migrated: number, failed: number, cancelled: boolean, full: boolean, diskFull: boolean, busy: boolean, remaining: LegacySummary | null
+}
 
 const migrate = async (call: Call, { onProgress, isCancelled, canFit, onRemaining }: LegacyImportOptions): Promise<LegacyImportResult> => {
     const { items, activeTempsLeft } = await planLegacyItems()
     const progress: LegacyImportProgress = {
-        done: 0, total: items.length, bytesDone: 0, bytesTotal: items.reduce((sum, item) => sum + item.bytes, 0), title: '',
+        done: 0, migrated: 0, failed: 0, total: items.length,
+        bytesDone: 0, bytesTotal: items.reduce((sum, item) => sum + item.bytes, 0), title: '',
     }
     onProgress?.({ ...progress })
-    let migrated = 0
-    const failed: LegacyItem[] = []
+    // 以前の保存先に残した録画（移せなかった・入らなかった・移したが以前の保存先から消せなかった）
+    const left = new Set<LegacyItem>()
     let cancelled = false
     let full = false
+    let diskFull = false
     for (const [i, item] of items.entries()) {
         if (isCancelled?.()) {
             cancelled = true
             break
         }
-        if (canFit && !(await canFit(item.bytes))) {
-            full = true
-            break
-        }
         progress.title = item.recording.title
         onProgress?.({ ...progress })
         const before = progress.bytesDone
+        let imported = false
         try {
-            await importRecording(call, item.segmentId, item.recording, (bytes) => {
-                progress.bytesDone = Math.min(before + item.bytes, progress.bytesDone + bytes)
-                onProgress?.({ ...progress })
-            })
-            await item.remove()
-            migrated++
+            // 前に途中まで移した分があれば先に消してから、入るかを確かめる（途中まで移した分を、使用量に数えないように）
+            await call({ type: 'deleteSegments', segmentIds: [item.segmentId] })
+            if (canFit && !(await canFit(item.bytes))) {
+                // 入らない録画は以前の保存先に残す（後の小さい録画は入るかもしれないので、続ける）
+                full = true
+                left.add(item)
+            } else {
+                await importRecording(call, item.segmentId, item.recording, (bytes) => {
+                    progress.bytesDone = Math.min(before + item.bytes, progress.bytesDone + bytes)
+                    onProgress?.({ ...progress })
+                })
+                imported = true
+            }
         } catch (error) {
-            if (isBridgeUnavailable(error)) throw error
             // 移せなかった録画は以前の保存先に残し、途中まで移した分は消す（もう一度取り込むと、移し直す）
             await call({ type: 'deleteSegments', segmentIds: [item.segmentId] }).catch(() => {})
+            if (isBridgeUnavailable(error)) throw error
+            left.add(item)
             if (isQuotaExceeded(error)) {
-                full = true
+                diskFull = true
                 break
             }
             console.error('以前の録画を1本移せませんでした（以前の保存先に残します）:', error)
-            failed.push(item)
+            progress.failed++
+        }
+        if (imported) {
+            progress.migrated++
+            // 移した録画は、以前の保存先から消す（消せなくても、移した録画は残す。もう一度取り込むと、同じ録画として置き換える）
+            await item.remove().catch((error) => {
+                console.error('移した以前の録画を、以前の保存先から消せませんでした:', error)
+                left.add(item)
+            })
         }
         progress.done++
         progress.bytesDone = before + item.bytes
         onProgress?.({ ...progress })
-        onRemaining?.(summarize([...failed, ...items.slice(i + 1)]))
+        onRemaining?.(summarize([...left, ...items.slice(i + 1)]))
     }
 
     // 残っているものを数え直す（取り込んでいる間に、古いバージョンが書き足した録画も残す）。
     // 何も残っていなければ、以前の保存先を消す（消した後に開き直すと、他のタブの接続で待たされることがあるので、残りはここで返す）
-    const left = await planLegacyItems()
-    const remaining = summarize(left.items)
-    if (!cancelled && !full && !remaining && !left.activeTempsLeft && !activeTempsLeft) await deleteLegacyDatabase()
+    let remaining: LegacySummary | null
+    let settled = false
+    try {
+        const after = await planLegacyItems()
+        remaining = summarize(after.items)
+        settled = !after.activeTempsLeft && !activeTempsLeft
+    } catch (error) {
+        // 数え直せなかった（以前の保存先が消された など）: 残っているはずの録画を返す
+        console.error('取り込んだ後に、以前の録画を数え直せませんでした:', error)
+        remaining = summarize([...new Set([...left, ...items.slice(progress.done)])])
+    }
+    if (!cancelled && !full && !diskFull && !remaining && settled) await deleteLegacyDatabase()
     else await closeLegacyDatabase()
-    return { migrated, failed: failed.length, cancelled, full, busy: false, remaining }
+    // 取り込んでいる印を持ったまま、残りを知らせる（他のタブが取り込みの前に数えた古い数で、後から上書きされないように）
+    if (items.length > 0 || remaining) onRemaining?.(remaining)
+    return { migrated: progress.migrated, failed: progress.failed, cancelled, full, diskFull, busy: false, remaining }
 }
 
 // 以前の録画を移す。移すものがなければ何もしない。他のタブで移している最中なら busy
 // call は拡張機能側に直接保存するもの（一時保存に回すと、移したつもりで消してしまうため）
 const importLegacyRecordings = async (call: Call, options: LegacyImportOptions = {}): Promise<LegacyImportResult> => {
-    const none = { migrated: 0, failed: 0, cancelled: false, full: false, busy: false, remaining: null }
+    const none = { migrated: 0, failed: 0, cancelled: false, full: false, diskFull: false, busy: false, remaining: null }
     if (!(await hasLegacyDatabase())) return none
     // 複数のタブで同時に移さない（同じ録画が2本になる）
     if (!navigator.locks) return migrate(call, options)
