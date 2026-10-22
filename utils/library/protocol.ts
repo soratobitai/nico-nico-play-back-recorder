@@ -7,6 +7,7 @@ type BridgeRequest =
     | { type: 'appendFragments', segmentId: string, fragments: NewFragment[] }
     | { type: 'finishSegment', segmentId: string, endedAt: number, mimeType?: string }
     | { type: 'getTimeline', programId: string }
+    | { type: 'getTimelineForSegments', segmentIds: string[] }
     | { type: 'getFragmentBlobs', segmentId: string, indexes: number[] }
     | { type: 'getUsage' }
     | { type: 'enforceLimit', maxBytes: number }
@@ -24,6 +25,7 @@ type BridgeResults = {
     appendFragments: void
     finishSegment: SegmentSummary | null
     getTimeline: TimelineSegment[]
+    getTimelineForSegments: TimelineSegment[]
     getFragmentBlobs: (Blob | null)[]
     getUsage: Usage
     enforceLimit: DeletedSpace

@@ -5,7 +5,7 @@
 // （つなぐと再生できない・離れた時刻の場面が続いて見えるため）。1回で1本だけ作る
 // （続けて何本もダウンロードすると、2本目から Chrome に止められるため）
 import { buildFmp4File, initSignature, moofSizeOf } from '../fmp4'
-import { MAX_CONTINUOUS_GAP_SECONDS, Timeline, type PlacedFragment, type PlacedSegment } from './timeline'
+import { MAX_CONTINUOUS_GAP_SECONDS, MAX_OVERLAP_SECONDS, Timeline, type PlacedFragment, type PlacedSegment } from './timeline'
 import type { RecordingKind, TimelineSegment } from '../library/db'
 
 // 場面の前後に切り出す長さ（前と後ろ、それぞれ。プレイバック・録画一覧の「前後1分」）
@@ -52,10 +52,11 @@ const signatureOf = async (init: Blob) => {
 
 // 時間軸の at（秒）の前後 seconds 秒を切り出す。切り出せる録画がなければ null
 const buildClipFile = (timeline: Timeline, at: number, seconds: number, readFragments: ReadFragments) =>
-    buildClip(timeline, at, at - seconds, at + seconds, readFragments)
+    buildClip(timeline, at, at - seconds, at + seconds, readFragments, 'scene')
 
-// 時間軸の from〜to（秒）を切り出す。at は場面の位置（途切れた所などで分かれる時は、場面を含む方を作る）
-const buildClip = async (timeline: Timeline, at: number, from: number, to: number, readFragments: ReadFragments): Promise<ClipFile | null> => {
+// 時間軸の from〜to（秒）を切り出す。途切れた所などで分かれる時は、
+// pick が 'scene' なら場面の位置 at を含む方、'longest' なら一番長い方を作る
+const buildClip = async (timeline: Timeline, at: number, from: number, to: number, readFragments: ReadFragments, pick: 'scene' | 'longest'): Promise<ClipFile | null> => {
     // 区間ごとに、範囲にかかる断片を区間の中の順に選ぶ（区間どうしが少し重なっていても、混ぜない）
     // 最初の断片がキーフレームから始まらなければ、同じ区間の続けて録った断片の中で、キーフレームまでさかのぼる
     // （読んでいる間に時間軸が変わっても（消された・読み直した）、選んだ時の区間を使う）
@@ -85,6 +86,7 @@ const buildClip = async (timeline: Timeline, at: number, from: number, to: numbe
     if (runs.length === 0) return null
 
     // 1本につなげる所（設定が同じで、録った時刻が続いている）ごとにまとめる
+    // （前の区間と大きく重なる区間は、同じ番組を別のタブで同時に録っていたものなので、つながない）
     const signatures = new Map<string, string | null>()
     for (const segment of segments.values()) signatures.set(segment.segmentId, await signatureOf(segment.init))
     const wallStart = (f: LoadedFragment) => segments.get(f.segmentId)!.startedAt + f.startTime * 1000
@@ -94,14 +96,19 @@ const buildClip = async (timeline: Timeline, at: number, from: number, to: numbe
         const previous = group?.[group.length - 1]
         const tail = previous?.[previous.length - 1]
         const signature = signatures.get(run[0].segmentId) ?? null
+        const gap = tail ? wallStart(run[0]) - (wallStart(tail) + tail.duration * 1000) : 0
         const joinable = !!previous && !!tail && signature !== null && signature === signatures.get(previous[0].segmentId)
-            && wallStart(run[0]) - (wallStart(tail) + tail.duration * 1000) <= MAX_CONTINUOUS_GAP_SECONDS * 1000
+            && gap <= MAX_CONTINUOUS_GAP_SECONDS * 1000 && gap >= -MAX_OVERLAP_SECONDS * 1000
         if (joinable) group.push(run)
         else groups.push([run])
     }
-    // 場面を含むまとまり（場面が抜けた所にあれば、その次のまとまり）
+    // 断片の長さは映像と音声の早い方の始め〜遅い方の終わりなので、足し合わせずに、まとまりの始めから終わりまでで数える
+    const durationOf = (group: LoadedFragment[][]) => group.reduce((sum, run) => sum + run[run.length - 1].startTime + run[run.length - 1].duration - run[0].startTime, 0)
+    // 場面を含むまとまり（場面が抜けた所にあれば、その次のまとまり）、または一番長いまとまり（同じ長さなら新しい方）
     const endOf = (group: LoadedFragment[][]) => { const run = group[group.length - 1]; return run[run.length - 1].end }
-    const group = groups.find(g => at < endOf(g)) ?? groups[groups.length - 1]
+    const group = pick === 'longest'
+        ? groups.reduce((best, g) => durationOf(g) >= durationOf(best) ? g : best)
+        : groups.find(g => at < endOf(g)) ?? groups[groups.length - 1]
 
     const parts = await Promise.all(group.map(async run => ({
         init: segments.get(run[0].segmentId)!.init,
@@ -110,17 +117,21 @@ const buildClip = async (timeline: Timeline, at: number, from: number, to: numbe
     return {
         blob: await buildFmp4File(parts),
         startedAt: wallStart(group[0][0]),
-        // 断片の長さは映像と音声の早い方の始め〜遅い方の終わりなので、足し合わせずに、まとまりの始めから終わりまでで数える
-        duration: group.reduce((sum, run) => sum + run[run.length - 1].startTime + run[run.length - 1].duration - run[0].startTime, 0),
+        duration: durationOf(group),
     }
 }
 
 // 録った時刻 wallClock（ミリ秒）までの seconds 秒を、kind の録画から切り出す（録画バーの「直前1分」で使う）
+// 画質が変わった所などで分かれる時は、一番長い方を作る（変わった直後に押しても、数秒だけにならないように）。
+// その時刻までの seconds 秒に録った場面がなければ（その間を録っていない）、作らない
 const buildRecentClipFile = async (segments: TimelineSegment[], kind: RecordingKind, wallClock: number, seconds: number, readFragments: ReadFragments) => {
     const timeline = new Timeline()
     timeline.sync(segments.filter(segment => segment.kind === kind))
     const at = timeline.timeAtWallClock(wallClock)
-    return at === null ? null : buildClip(timeline, at, at - seconds, at, readFragments)
+    if (at === null) return null
+    const file = await buildClip(timeline, at, at - seconds, at, readFragments, 'longest')
+    if (!file || file.startedAt > wallClock || file.startedAt + file.duration * 1000 < wallClock - seconds * 1000) return null
+    return file
 }
 
 // kind の録画を、いつまで保存したか（録った時刻。ミリ秒）。なければ 0

@@ -18,6 +18,20 @@ describe('startScreenCapture', () => {
     })
 })
 
+describe('startScreenCapture（プレイヤーはあるが使えない環境）', () => {
+    it('コマを受け取る API がなければ、共有の確認を出さずに例外にする', async () => {
+        const getDisplayMedia = vi.fn()
+        vi.stubGlobal('navigator', { ...navigator, mediaDevices: { getDisplayMedia } })
+        document.body.innerHTML = '<div class="___player-display-screen___x"></div>'
+
+        await expect(startScreenCapture(720, () => {})).rejects.toThrow('この環境では画面ごと録画できません')
+
+        expect(getDisplayMedia).not.toHaveBeenCalled()
+        vi.unstubAllGlobals()
+        document.body.innerHTML = ''
+    })
+})
+
 describe('regionInFrame（タブ全体のコマの中の、プレイヤーの位置）', () => {
     const rect = { x: 100, y: 128, width: 1000, height: 562.5 }
 

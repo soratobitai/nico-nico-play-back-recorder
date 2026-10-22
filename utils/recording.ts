@@ -100,6 +100,10 @@ const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<
 // このページで録っていて、まだ確定していない区間（ページを閉じる時に、background に確定してもらう）
 const openSegmentIds = new Set<string>()
 const getOpenSegmentIds = () => [...openSegmentIds]
+// このページで録った区間（録った順。録画バーの「直前1分」で、同じ番組を他のタブで録った分を使わないように）
+type PageSegment = Pick<NewSegment, 'segmentId' | 'kind' | 'startedAt'>
+const pageSegments: PageSegment[] = []
+const getPageSegments = (): readonly PageSegment[] => pageSegments
 
 // 区間を作る時に、容量不足なら空ける量（サムネイルなどの分）
 const SEGMENT_RECORD_BYTES = 1024 * 1024
@@ -112,6 +116,7 @@ const SEGMENT_RECORD_BYTES = 1024 * 1024
 const createSegmentWriter = (segment: NewSegment) => {
     const splitter = segment.format === 'fmp4' ? createFmp4Splitter() : null
     openSegmentIds.add(segment.segmentId)
+    pageSegments.push({ segmentId: segment.segmentId, kind: segment.kind, startedAt: segment.startedAt })
     let index = 0
     let opaqueEnd = 0 // webm などの、これまでに書き込んだ長さ（秒）
 
@@ -233,6 +238,7 @@ export {
     retryOnQuotaExceeded,
     createSegmentWriter,
     getOpenSegmentIds,
+    getPageSegments,
     segmentFormatOf,
     resetTimeoutCheck,
 }

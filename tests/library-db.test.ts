@@ -120,6 +120,17 @@ describe('見直し用の読み出し', () => {
         expect(await timeline[1].init.text()).toBe('init')
     })
 
+    it('区切った最後の断片を、区間の始めから続く長い断片として保存していた録画は、前の断片の続きに直して返す', async () => {
+        await createSegment(segment('A', 1000))
+        await setSegmentInit('A', new Blob(['init']))
+        // 最後の断片（サンプルのない音声のトラックの時刻 0 から数えていた）: 0〜3.03 秒として保存されている
+        await appendFragments('A', [fragment(0, 1000), fragment(1, 2000), fragment(2, 3000), { ...fragment(3, 4000), startTime: 0, duration: 3.03 }])
+
+        const [timeline] = await getTimeline('lv1')
+
+        expect(timeline.fragments.map(f => [f.startTime, Math.round(f.duration * 100) / 100])).toEqual([[0, 1], [1, 1], [2, 1], [3, 0.03]])
+    })
+
     it('断片のデータを読み、消された断片は null にする', async () => {
         await createSegment(segment('A', 1000))
         await appendFragments('A', [{ ...fragment(0, 1000), blob: new Blob(['a']) }, { ...fragment(2, 3000), blob: new Blob(['c']) }])

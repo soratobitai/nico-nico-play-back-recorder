@@ -311,11 +311,23 @@ const getTimelineForSegments = (segmentIds: string[]) => withTransaction([SEGMEN
     return toTimeline(tx, segments.filter((s): s is SegmentRecord => !!s))
 })
 
+// 断片の時刻を、前の断片の続きに直す（これまでに保存した録画では、5分ごとに区切って止めた時の最後の断片を、
+// その中のサンプルのない音声のトラックの時刻 0 から数えて、区間の始めから続く長い断片として保存していた。
+// 時間軸の上で区間の始めに並んで、再生する位置や切り出す範囲を間違えないように）
+const repairTimings = (fragments: FragmentRecord[]) => fragments.map((fragment, i) => {
+    const previous = fragments[i - 1]
+    if (!previous) return fragment
+    const previousEnd = previous.startTime + previous.duration
+    const end = fragment.startTime + fragment.duration
+    if (fragment.startTime + 0.5 >= previous.startTime || end <= previousEnd) return fragment
+    return { ...fragment, startTime: previousEnd, duration: end - previousEnd }
+})
+
 const toTimeline = async (tx: IDBTransaction, segments: SegmentRecord[]) => {
     const timeline: TimelineSegment[] = []
     for (const segment of segments.sort((a, b) => a.startedAt - b.startedAt)) {
         if (segment.format !== 'fmp4' || !segment.init) continue
-        const fragments = await getSegmentFragments(tx.objectStore(FRAGMENTS), segment.segmentId)
+        const fragments = repairTimings(await getSegmentFragments(tx.objectStore(FRAGMENTS), segment.segmentId))
         timeline.push({
             segmentId: segment.segmentId, kind: segment.kind, mimeType: segment.mimeType,
             startedAt: segment.startedAt, endedAt: segment.endedAt, init: segment.init,

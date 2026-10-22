@@ -40,6 +40,67 @@ const trackStartTimes = async (blob: Blob) => {
     return out
 }
 
+// fixture の断片の、音声のトラックをサンプルのない空のもの（時刻 0）にする
+// （Chrome の MediaRecorder は、5分ごとに区切って止めた時の最後の断片をこうすることがある）
+const withEmptyAudio = (bytes: Uint8Array, audioTrackId: number) => {
+    const out = bytes.slice()
+    const view = new DataView(out.buffer)
+    const type = (p: number) => String.fromCharCode(...out.subarray(p + 4, p + 8))
+    const moofEnd = view.getUint32(0)
+    for (let p = 8; p < moofEnd;) {
+        const size = view.getUint32(p)
+        if (type(p) === 'traf') {
+            let track = -1
+            for (let q = p + 8; q < p + size;) {
+                const s = view.getUint32(q)
+                if (type(q) === 'tfhd') track = view.getUint32(q + 12)
+                if (track === audioTrackId && type(q) === 'tfdt') {
+                    if (out[q + 8] === 1) view.setBigUint64(q + 12, 0n)
+                    else view.setUint32(q + 12, 0)
+                }
+                if (track === audioTrackId && type(q) === 'trun') view.setUint32(q + 12, 0) // sample_count
+                q += s
+            }
+        }
+        p += size
+    }
+    return out
+}
+
+describe('サンプルのない音声のトラック（時刻 0）がある断片', () => {
+    const load = async () => {
+        const { init, fragments } = await splitFmp4Blob(fixtureBlob)
+        const tracks = parseInit(new Uint8Array(await init.arrayBuffer()))
+        const audio = [...tracks].find(([, track]) => !track.isVideo)![0]
+        const last = fragments[fragments.length - 1]
+        const emptied = new Blob([withEmptyAudio(new Uint8Array(await last.blob.arrayBuffer()), audio)])
+        return { init, fragments, tracks, audio, last, emptied }
+    }
+
+    it('断片の時刻は、サンプルのあるトラックで数える（区間の始めからの長い断片にしない）', async () => {
+        const { init, fragments, last, emptied } = await load()
+        const file = new Blob([init, ...fragments.slice(0, -1).map(f => f.blob), emptied])
+
+        const parsed = (await splitFmp4Blob(file)).fragments
+
+        expect(parsed[parsed.length - 1].startTime).toBeGreaterThan(fragments[fragments.length - 2].startTime)
+        expect(parsed[parsed.length - 1].startTime).toBeCloseTo(last.startTime, 1)
+    })
+
+    it('途中から切り出してつなぐ時も、0 秒から始まり、空のトラックの時刻も前へ戻らない', async () => {
+        const { init, fragments, tracks, audio, last, emptied } = await load()
+        const parts = [{ init, fragments: [...fragments.slice(1, -1), { blob: emptied, moofSize: last.moofSize }] }]
+
+        const file = await buildFmp4File(parts)
+
+        const saved = await trackStartTimes(file)
+        expect(Math.min(...Object.values(saved[0].starts))).toBeCloseTo(0, 1)
+        const lastStarts = saved[saved.length - 1].starts
+        const video = [...tracks].find(([, track]) => track.isVideo)![0]
+        expect(lastStarts[audio]).toBeCloseTo(lastStarts[video], 1)
+    })
+})
+
 describe('createFmp4Splitter（録画中のデータを分ける）', () => {
     it('どんな区切りで届いても、初期化セグメントを1回だけ出し、残りを断片に分ける', () => {
         for (const sizes of [[fixture.length], [1000], [7, 13, 4096], [36, 1216, 50000]]) {

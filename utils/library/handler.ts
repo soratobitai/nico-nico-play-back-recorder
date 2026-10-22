@@ -9,6 +9,7 @@ const handleBridgeRequest = (request: BridgeRequest): Promise<unknown> => {
         case 'appendFragments': return db.appendFragments(request.segmentId, request.fragments)
         case 'finishSegment': return db.finishSegment(request.segmentId, request.endedAt, request.mimeType)
         case 'getTimeline': return db.getTimeline(request.programId)
+        case 'getTimelineForSegments': return db.getTimelineForSegments(request.segmentIds)
         case 'getFragmentBlobs': return db.getFragmentBlobs(request.segmentId, request.indexes)
         case 'getUsage': return db.getUsage()
         case 'enforceLimit': return db.enforceLimit(request.maxBytes)

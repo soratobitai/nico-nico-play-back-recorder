@@ -275,5 +275,5 @@ const planBuffer = (timeline: Timeline, t: number, appended: ReadonlySet<string>
     return { append, removeBefore, removeFrom }
 }
 
-export { Timeline, planBuffer, fragmentKey, MAX_CONTINUOUS_GAP_SECONDS }
+export { Timeline, planBuffer, fragmentKey, MAX_CONTINUOUS_GAP_SECONDS, MAX_OVERLAP_SECONDS }
 export type { PlacedFragment, PlacedSegment, BufferPlan, BufferWindow }

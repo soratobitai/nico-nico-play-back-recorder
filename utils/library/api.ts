@@ -87,6 +87,7 @@ const setSegmentInit = (segmentId: string, init: Blob) => callLibrary({ type: 's
 const appendFragments = (segmentId: string, fragments: NewFragment[]) => callLibrary({ type: 'appendFragments', segmentId, fragments })
 const finishSegment = (segmentId: string, endedAt: number, mimeType?: string) => callLibrary({ type: 'finishSegment', segmentId, endedAt, mimeType })
 const getTimeline = (programId: string) => callLibrary({ type: 'getTimeline', programId })
+const getTimelineForSegments = (segmentIds: string[]) => callLibrary({ type: 'getTimelineForSegments', segmentIds })
 const getFragmentBlobs = (segmentId: string, indexes: number[]) => callLibrary({ type: 'getFragmentBlobs', segmentId, indexes })
 const getUsage = () => callLibrary({ type: 'getUsage' })
 const enforceLimit = (maxBytes: number) => callLibrary({ type: 'enforceLimit', maxBytes })
@@ -141,7 +142,7 @@ const importLegacy = (options?: Parameters<typeof importLegacyRecordings>[1]) =>
 export {
     isPendingSegment,
     createSegment, setSegmentInit, appendFragments, finishSegment,
-    getTimeline, getFragmentBlobs,
+    getTimeline, getTimelineForSegments, getFragmentBlobs,
     getUsage, enforceLimit, freeSpace, closeStaleSegments, deleteSegments, clearAll, estimateStorage, flushPending, importLegacy,
     setPendingLimit,
 }

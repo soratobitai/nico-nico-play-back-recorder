@@ -124,6 +124,25 @@ describe('この場面の前後を動画で保存', () => {
     it('録画がなければ、何も作らない', async () => {
         expect(await buildClipFile(new Timeline(), 0, 30, async () => [])).toBeNull()
     })
+
+    it('同じ番組を別のタブで同時に録っていた区間（大きく重なる）は、つながない（同じ場面が2回入らない）', async () => {
+        // B は A が録っている途中に始まり、並べた時は少ししか重ならなかったが、A が続いて 2 秒より大きく重なった
+        const toInput = (segmentId: string, startedAt: number, count: number) => ({
+            segmentId, kind: 'video' as const, mimeType: 'video/mp4', startedAt, endedAt: null, init,
+            fragments: fragments.slice(0, count).map((f, index) => ({ index, startTime: f.startTime, duration: f.duration, keyframe: f.keyframe })),
+        })
+        const bStart = 1_000_000 + Math.round((fragments[1].startTime + fragments[1].duration - 0.7) * 1000)
+        const timeline = new Timeline()
+        timeline.sync([toInput('A', 1_000_000, 2)])
+        timeline.sync([toInput('A', 1_000_000, 2), toInput('B', bStart, fragments.length)])
+        timeline.sync([toInput('A', 1_000_000, fragments.length), toInput('B', bStart, fragments.length)])
+        expect(timeline.placedSegments.map(s => s.segmentId)).toEqual(['A', 'B'])
+        const read = async (_: string, indexes: number[]) => indexes.map(i => fragments[i].blob)
+
+        const file = (await buildClipFile(timeline, 1, 100, read))!
+
+        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes(fragments))
+    })
 })
 
 describe('録画バーの「直前1分」（録った時刻までを切り出す）', () => {
@@ -148,9 +167,22 @@ describe('録画バーの「直前1分」（録った時刻までを切り出す
         expect(await buildRecentClipFile(segments, 'screen', wall, 60, read({}))).toBeNull()
     })
 
-    it('押した時が保存した最後より後なら、最後までを切り出す', async () => {
+    it('押した時が保存した最後より後なら、最後までを切り出す。その1分に録った場面がなければ作らない', async () => {
         const segments = [stored('V', 'video', 1_000_000)]
         const file = (await buildRecentClipFile(segments, 'video', 1_000_000 + 60_000, 60, read({ V: fragments.map(f => f.blob) })))!
+        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes(fragments))
+        // 1時間後に押した（その間を録っていない）: 古い録画を保存しない
+        expect(await buildRecentClipFile(segments, 'video', 1_000_000 + 3_600_000, 60, read({ V: fragments.map(f => f.blob) }))).toBeNull()
+    })
+
+    it('画質が変わった所で分かれる時は、一番長い方を作る（変わった直後に押しても、数秒だけにならない）', async () => {
+        const second = 1_000_000 + Math.round(length * 1000) + 500
+        const other = { ...stored('W', 'video', second), init: await otherResolution(), fragments: [{ index: 0, startTime: fragments[0].startTime, duration: fragments[0].duration, keyframe: true }] }
+        const segments = [stored('V', 'video', 1_000_000), other]
+
+        const file = (await buildRecentClipFile(segments, 'video', second + 1000, 60, read({ V: fragments.map(f => f.blob), W: [fragments[0].blob] })))!
+
+        expect(file.startedAt).toBe(1_000_000 + fragments[0].startTime * 1000)
         expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes(fragments))
     })
 

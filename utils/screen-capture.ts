@@ -77,6 +77,11 @@ const startScreenCapture = async (videoHeight: number, onEnded: () => void): Pro
             viewport = measureViewport()
         }
         const resizeObserver = new ResizeObserver(measure)
+        // プレイヤーを動かすスクロール（ページ・プレイヤーを含む要素）の時だけ測り直す（コメントの一覧などのスクロールでは測らない）
+        const onScroll = (event: Event) => {
+            const target = event.target
+            if (target === document || (target instanceof Node && target.contains(player))) measure()
+        }
 
         // 全画面表示などでプレイヤーの大きさが変わっても、録画の解像度は変えない
         const { width, height } = getOutputSize(videoHeight, rect)
@@ -89,7 +94,7 @@ const startScreenCapture = async (videoHeight: number, onEnded: () => void): Pro
         // 測り直しは、描き直しを作れてから始める（作れずに例外になった時に、残らないように）
         resizeObserver.observe(player)
         window.addEventListener('resize', measure)
-        window.addEventListener('scroll', measure, { capture: true, passive: true })
+        window.addEventListener('scroll', onScroll, { capture: true, passive: true })
         const measureTimer = setInterval(measure, 1000)
 
         videoTrack.addEventListener('ended', onEnded, { once: true })
@@ -101,7 +106,7 @@ const startScreenCapture = async (videoHeight: number, onEnded: () => void): Pro
                 resizeObserver.disconnect()
                 clearInterval(measureTimer)
                 window.removeEventListener('resize', measure)
-                window.removeEventListener('scroll', measure, { capture: true })
+                window.removeEventListener('scroll', onScroll, { capture: true })
                 pipeline.stop()
                 display.getTracks().forEach(track => track.stop())
             },

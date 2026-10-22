@@ -11,6 +11,8 @@ const READ_BATCH = 4
 const LIVE_CACHE_SIZE = 60
 // 読み込んだ範囲の、これより小さな隙間（映像と音声の境目のずれなど）は、録っていない間でなくても飛ばす
 const SMALL_HOLE_SECONDS = 1
+// 止まった位置が、読み込んだ範囲の終わりからこれだけ以内なら、その終わりで止まったとみなす（Chrome は少し手前で止まる）
+const NEAR_RANGE_END_SECONDS = 1.5
 // 録っていない間・止まっていないかを確かめる間隔と、止まったとみなすまでの回数（1秒）
 const GAP_CHECK_MS = 500
 const STUCK_CHECKS = 2
@@ -29,26 +31,23 @@ const beforeTail = (fragment: PlacedFragment) => Math.max(fragment.start, fragme
 type BufferedRange = { start: number, end: number }
 
 // 再生が t で先へ進まない時に、飛ぶ先（飛ばないなら null）
-// - 時間軸の上で、t の先に録っていない間（区間の切り替わり・壊れて外した所・消された所）があり、
-//   その先が読み込まれていれば、間がどれだけ長くても、その先へ
-// - そうでなければ、読み込んだ範囲のごく小さな隙間（映像と音声の境目のずれなど）だけ飛ぶ。
-//   同じ区間の続きは、まだ読み込んでいる途中なので飛ばない（飛ぶと、録った場面を見落とす）
-const stuckJumpTarget = (timeline: Timeline, t: number, ranges: readonly BufferedRange[]): number | null => {
-    const ahead = ranges.filter(range => range.start > t)
-    const flat = timeline.fragments
-    const i = timeline.indexAt(t)
-    const here = flat[i]
-    const next = flat[i + 1]
-    const gapEnd = !here ? null
-        : here.start > t + 0.05 ? here.start // 録っていない間にいる
-            : next && next.start > here.end + 0.001 ? next.start // この断片の後が空いている
-                : null
-    if (gapEnd !== null) {
-        const range = ahead.find(r => r.end > gapEnd + 0.1)
-        if (range) return Math.max(range.start, gapEnd) + 0.01
-    }
-    const hole = ahead.find(range => range.start - t < SMALL_HOLE_SECONDS)
-    return hole ? hole.start + 0.01 : null
+// t を含む読み込んだ範囲の終わり（なければ t）から、次の読み込んだ範囲の始めまでの間を見る:
+// - ごく小さな隙間（映像と音声の境目のずれなど）なら飛ぶ
+// - その間に、まだ読み込んでいない録画の断片がなければ飛ぶ（間がどれだけ長くても）。
+//   録っていない間（区間の切り替わり・壊れて外した所・消された所）や、読み込んだのに抜けた所
+//   （少し重なった区間の断片を読み込んで、前に読み込んだ部分が消えた所）
+// - まだ読み込んでいない断片があれば、読み込みを待つ（飛ぶと、録った場面を見落とす）
+// 読み込んだ範囲の終わりより前で止まっている時は、ここでは飛ばない
+// isLoaded: その断片を読み込んだか
+const stuckJumpTarget = (timeline: Timeline, t: number, ranges: readonly BufferedRange[], isLoaded: (fragment: PlacedFragment) => boolean): number | null => {
+    const current = ranges.find(range => range.start <= t + 0.05 && t < range.end)
+    const from = current ? current.end : t
+    if (from - t > NEAR_RANGE_END_SECONDS) return null
+    const next = ranges.find(range => range.start > t && range.start >= from - 0.05)
+    if (!next) return null
+    if (next.start - from < SMALL_HOLE_SECONDS) return next.start + 0.01
+    const loading = timeline.fragments.some(f => f.start < next.start - 0.05 && f.end > from + 0.05 && !isLoaded(f))
+    return loading ? null : next.start + 0.01
 }
 
 // 移る位置を、読み込める所に合わせる
@@ -353,6 +352,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         update()
     }
 
+    const isAppended = (fragment: PlacedFragment) => appended.has(fragmentKey(fragment))
     const bufferedRanges = (): BufferedRange[] => {
         const ranges = video.buffered
         return Array.from({ length: ranges.length }, (_, i) => ({ start: ranges.start(i), end: ranges.end(i) }))
@@ -382,7 +382,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         // 移っている途中なら、読み込みを待つ（その位置の断片を読み込んでいる）
         if (video.seeking) return
         // 録っていない間の先や、映像と音声の境目のずれなどの小さな隙間の先が読み込まれていれば、そこへ
-        const target = stuckJumpTarget(timeline, t, bufferedRanges())
+        const target = stuckJumpTarget(timeline, t, bufferedRanges(), isAppended)
         if (target !== null) video.currentTime = target
     }
 
@@ -405,7 +405,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
             return
         }
         if (++stuckChecks < STUCK_CHECKS) return
-        const target = stuckJumpTarget(timeline, t, bufferedRanges())
+        const target = stuckJumpTarget(timeline, t, bufferedRanges(), isAppended)
         if (target === null) return
         stuckChecks = 0
         video.currentTime = target

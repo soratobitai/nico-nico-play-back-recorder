@@ -8,7 +8,9 @@ type Tracks = Map<number, TrackInfo>
 
 // 断片の中の、1つのトラック（映像・音声）の情報。時刻を書き換えるために moof の中での位置も持つ
 // startsWithSync: 最初のサンプルが、それだけで表示できるフレーム（キーフレーム）か
-type TrackFragment = { trackId: number, tfdtOffset: number, tfdtVersion: number, baseTime: number, duration: number, startsWithSync: boolean }
+// sampleCount: サンプルの数（0 のこともある。Chrome の MediaRecorder は、5分ごとに区切って止めた時の最後の断片に、
+//   サンプルのない音声のトラックを、時刻 0 で入れることがある。時刻の計算には使わない）
+type TrackFragment = { trackId: number, tfdtOffset: number, tfdtVersion: number, baseTime: number, duration: number, startsWithSync: boolean, sampleCount: number }
 type MoofInfo = { sequenceOffset: number, trackFragments: TrackFragment[] }
 
 // keyframe: 映像がキーフレームから始まる（この断片から再生を始められる）
@@ -106,10 +108,12 @@ const parseMoof = (moof: Uint8Array, tracks: Tracks): MoofInfo => {
         const baseTime = tfdtVersion === 1 ? Number(view.getBigUint64(tfdt.bodyStart + 4)) : view.getUint32(tfdt.bodyStart + 4)
 
         let duration = 0
+        let samples = 0
         let firstSampleFlags: number | null = null
         for (const trun of children(traf, 'trun')) {
             const trunFlags = view.getUint32(trun.bodyStart) & 0xffffff
             const sampleCount = view.getUint32(trun.bodyStart + 4)
+            samples += sampleCount
             let r = trun.bodyStart + 8
             if (trunFlags & 0x1) r += 4 // data_offset
             const firstFlags = (trunFlags & 0x4) ? view.getUint32(r) : null // first_sample_flags
@@ -126,7 +130,7 @@ const parseMoof = (moof: Uint8Array, tracks: Tracks): MoofInfo => {
         }
         // sample_is_non_sync_sample が立っていなければキーフレーム
         const startsWithSync = firstSampleFlags === null || ((firstSampleFlags >> 16) & 1) === 0
-        return { trackId, tfdtOffset: tfdt.bodyStart + 4, tfdtVersion, baseTime, duration, startsWithSync }
+        return { trackId, tfdtOffset: tfdt.bodyStart + 4, tfdtVersion, baseTime, duration, startsWithSync, sampleCount: samples }
     })
     return { sequenceOffset: mfhd.bodyStart + 4, trackFragments }
 }
@@ -137,11 +141,17 @@ const timescaleOf = (tracks: Tracks, trackId: number) => {
     return track.timescale
 }
 
+// サンプルのあるトラック（なければ全部。時刻 0 の空のトラックで、断片の時刻を間違えないように）
+const timedTracks = (info: MoofInfo) => {
+    const withSamples = info.trackFragments.filter(t => t.sampleCount > 0)
+    return withSamples.length > 0 ? withSamples : info.trackFragments
+}
+
 // 断片の開始時刻と長さ（秒）。映像と音声で少し違うので、早い方の開始〜遅い方の終わりとする
 const fragmentTiming = (info: MoofInfo, tracks: Tracks): FragmentTiming => {
     let start = Infinity
     let end = 0
-    for (const t of info.trackFragments) {
+    for (const t of timedTracks(info)) {
         const timescale = timescaleOf(tracks, t.trackId)
         start = Math.min(start, t.baseTime / timescale)
         end = Math.max(end, (t.baseTime + t.duration) / timescale)
@@ -257,24 +267,31 @@ const buildFmp4File = async (segments: Fmp4Segment[]): Promise<Blob> => {
         const infos = moofs.map(moof => parseMoof(moof, tracks))
 
         // この区間の始まり（どのトラックでも最も早い時刻）を、これまでの区間の終わりにそろえる
-        // （古い断片が消されて途中から始まる区間も、0 秒から始まるファイルになる）
-        const startSeconds = Math.min(...infos.flatMap(info => info.trackFragments.map(t => t.baseTime / timescaleOf(tracks, t.trackId))))
+        // （古い断片が消されて途中から始まる区間も、0 秒から始まるファイルになる）。サンプルのないトラックの時刻は数えない
+        const startSeconds = Math.min(...infos.flatMap(info => timedTracks(info).map(t => t.baseTime / timescaleOf(tracks, t.trackId))))
         let endSeconds = offsetSeconds
+        const shiftSeconds = offsetSeconds - startSeconds
 
         segment.fragments.forEach((fragment, i) => {
             const moof = moofs[i].slice()
             const view = new DataView(moof.buffer)
             view.setUint32(infos[i].sequenceOffset, sequence++)
+            // サンプルのないトラックは、この断片のサンプルのあるトラックと同じ時刻にする（時刻 0 のままだと前へ戻る）
+            const timed = timedTracks(infos[i])
+            const fragmentStart = Math.min(...timed.map(t => t.baseTime / timescaleOf(tracks, t.trackId))) + shiftSeconds
             for (const t of infos[i].trackFragments) {
                 const timescale = timescaleOf(tracks, t.trackId)
-                const value = t.baseTime + Math.round((offsetSeconds - startSeconds) * timescale)
+                // （トラックごとに時間の単位が違うので、丸めでわずかに 0 より前になることがある。0 にそろえる）
+                const value = Math.max(0, timed.includes(t)
+                    ? t.baseTime + Math.round(shiftSeconds * timescale)
+                    : Math.round(fragmentStart * timescale))
                 if (t.tfdtVersion === 1) {
                     view.setBigUint64(t.tfdtOffset, BigInt(value))
                 } else {
                     if (value > 0xffffffff) throw new Error('録画が長すぎて1本のファイルにまとめられません')
                     view.setUint32(t.tfdtOffset, value)
                 }
-                endSeconds = Math.max(endSeconds, (value + t.duration) / timescale)
+                if (timed.includes(t)) endSeconds = Math.max(endSeconds, (value + t.duration) / timescale)
             }
             parts.push(moof, fragment.blob.slice(fragment.moofSize))
         })

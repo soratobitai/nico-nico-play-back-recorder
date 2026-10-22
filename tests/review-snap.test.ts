@@ -41,6 +41,9 @@ describe('snapToRecorded', () => {
 
 describe('stuckJumpTarget（再生が進まない時に飛ぶ先）', () => {
     const range = (start: number, end: number) => ({ start, end })
+    const all = () => true
+    // 読み込んだ範囲（ranges）に入っている断片だけを、読み込んだとする
+    const loadedIn = (ranges: { start: number, end: number }[]) => (f: { start: number, end: number }) => ranges.some(r => f.start >= r.start - 0.05 && f.end <= r.end + 0.05)
     // A: 0〜8.9秒、区間の切り替わりの0.1秒の隙間をあけて B: 9〜18秒
     const boundary = () => {
         const t = new Timeline()
@@ -58,26 +61,60 @@ describe('stuckJumpTarget（再生が進まない時に飛ぶ先）', () => {
     }
 
     it('区間の切り替わりの隙間の手前（読み込んだ範囲の終わりより少し前）で止まったら、次の区間へ飛ぶ', () => {
-        expect(stuckJumpTarget(boundary(), 8.4, [range(0, 8.9), range(9, 18)])).toBeCloseTo(9.01)
+        expect(stuckJumpTarget(boundary(), 8.4, [range(0, 8.9), range(9, 18)], all)).toBeCloseTo(9.01)
+    })
+
+    it('隙間の前の最後の断片が短くても、読み込んだ範囲の終わりから見て、隙間の先へ飛ぶ', () => {
+        // A の最後の断片が 0.2 秒だけで、録り直しで 1.3 秒あいて B が始まる。Chrome は A の 2つ目の断片の中（5.7）で止まる
+        const t = new Timeline()
+        t.sync([
+            segment('A', 100_000, [fragment(0, 0, 3), fragment(1, 3, 3), fragment(2, 6, 0.2)]),
+            segment('B', 107_500, [fragment(0, 0, 3), fragment(1, 3, 3)]),
+        ])
+        expect(stuckJumpTarget(t, 5.7, [range(0, 6.2), range(7.5, 13.5)], all)).toBeCloseTo(7.51)
     })
 
     it('録っていない間が長くても（壊れて外した所・消された所）、その先が読み込まれていれば飛ぶ', () => {
         const t = continuous()
         for (const index of [2, 3, 4, 5, 6]) t.removeFragment('A', index) // 6〜21秒がない
-        expect(stuckJumpTarget(t, 5.5, [range(0, 6), range(21, 24)])).toBeCloseTo(21.01)
+        expect(stuckJumpTarget(t, 5.5, [range(0, 6), range(21, 24)], all)).toBeCloseTo(21.01)
         // その先がまだ読み込まれていなければ、待つ
-        expect(stuckJumpTarget(t, 5.5, [range(0, 6)])).toBeNull()
+        expect(stuckJumpTarget(t, 5.5, [range(0, 6)], all)).toBeNull()
     })
 
     it('同じ区間の続きを読み込んでいる途中なら、先の読み込み済みの所へ飛ばない（録った場面を見落とさない）', () => {
-        expect(stuckJumpTarget(continuous(), 5.5, [range(0, 6), range(9, 24)])).toBeNull()
+        const ranges = [range(0, 6), range(9, 24)]
+        expect(stuckJumpTarget(continuous(), 5.5, ranges, loadedIn(ranges))).toBeNull()
+    })
+
+    it('隙間の先の区間がまだ読み込まれていなければ、前に読み込んで残っている遠くの範囲へは飛ばない', () => {
+        // A: 0〜12、B: 15〜45（まだ読み込んでいない）、前に読み込んだ 45〜75 が残っている
+        const t = new Timeline()
+        t.sync([
+            segment('A', 100_000, Array.from({ length: 4 }, (_, i) => fragment(i, i * 3, 3))),
+            segment('B', 115_000, Array.from({ length: 20 }, (_, i) => fragment(i, i * 3, 3))),
+        ])
+        const ranges = [range(0, 12), range(45, 75)]
+        expect(stuckJumpTarget(t, 11.5, ranges, loadedIn(ranges))).toBeNull()
+    })
+
+    it('少し重なった区間で、読み込んだのに抜けた所（後から読み込んだ断片で消えた所）は飛ぶ', () => {
+        // A の最後の断片（6〜6.2）が、0.3 秒重なって始まった B の最初の断片（5.9〜8.9）の中にある。
+        // B0 を読み込んだ後に A2 を読み込むと、B0 の 6.2 から後が消える（B0 は読み込み済みのまま）
+        const t = new Timeline()
+        t.sync([
+            segment('A', 100_000, [fragment(0, 0, 3), fragment(1, 3, 3), fragment(2, 6, 0.2)]),
+            segment('B', 105_900, [fragment(0, 0, 3), fragment(1, 3, 3)]),
+        ])
+        expect(stuckJumpTarget(t, 5.7, [range(0, 6.2), range(8.9, 11.9)], all)).toBeCloseTo(8.91)
     })
 
     it('映像と音声の境目のずれなどの、ごく小さな隙間は飛ぶ', () => {
-        expect(stuckJumpTarget(continuous(), 5.5, [range(0, 5.95), range(6.2, 24)])).toBeCloseTo(6.21)
+        expect(stuckJumpTarget(continuous(), 5.5, [range(0, 5.95), range(6.2, 24)], all)).toBeCloseTo(6.21)
     })
 
-    it('最新の所（先に何もない）では飛ばない', () => {
-        expect(stuckJumpTarget(continuous(), 23.5, [range(0, 24)])).toBeNull()
+    it('最新の所（先に何もない）や、読み込んだ範囲の途中で止まった時は飛ばない', () => {
+        expect(stuckJumpTarget(continuous(), 23.5, [range(0, 24)], all)).toBeNull()
+        expect(stuckJumpTarget(continuous(), 2, [range(0, 12), range(15, 24)], all)).toBeNull()
     })
 })

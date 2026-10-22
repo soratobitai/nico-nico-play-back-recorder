@@ -1,5 +1,5 @@
-import { enforceLimit, flushPending, closeStaleSegments, setPendingLimit, isPendingSegment, getTimeline, getFragmentBlobs } from "../../utils/library/api"
-import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds } from "../../utils/recording"
+import { enforceLimit, flushPending, closeStaleSegments, setPendingLimit, isPendingSegment, getTimelineForSegments, getFragmentBlobs } from "../../utils/library/api"
+import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds, getPageSegments } from "../../utils/recording"
 import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
 import { getProgramData, captureThumbnail, downloadBlob } from "../../utils/feature"
 import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setKindChips, setKindRecording, showBarHint } from "../../utils/ui"
@@ -622,32 +622,49 @@ export default async () => {
     // ---- 録画バーの「直前1分」 ----
     // 押した時までの RECENT_CLIP_SECONDS 秒を、1本の mp4 にして保存する（ライブで「今の」と思ってから押すので、押した時より前を残す）。
     // 録画は数秒ごとに保存しているので、押した時までの分が保存されるのを少し待ってから作る。
-    // 録っている種類のうち、画面に見えているものに近い種類を使う（画面録画 → コメントあり → コメントなし）
+    // このページで録った区間だけを使う（同じ番組を他のタブで録った分は使わない）。
+    // 録っている種類のうち、画面に見えているものに近い種類を使う（画面録画 → コメントあり → コメントなし）。
+    // ただし、押した時の1分前から録れている種類を先にする（録り始めたばかりの種類で、短い動画にならないように）
     const CLIP_KIND_ORDER: RecordingKind[] = ['screen', 'comments', 'video']
     // 押した時までの分が保存されるのを待つ上限と、保存先を確かめる間隔
     const CLIP_WAIT_LIMIT_MS = 10 * 1000
     const CLIP_POLL_MS = 1000
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+    // このページで録った kind の区間のうち、wallClock までの seconds 秒にかかるもの（その時より前に始めた最後の区間から）
+    const recentSegmentIds = (kind: RecordingKind, wallClock: number, seconds: number) => {
+        const list = getPageSegments().filter(segment => segment.kind === kind)
+        const from = list.findLastIndex(segment => segment.startedAt <= wallClock - seconds * 1000)
+        return list.slice(Math.max(0, from)).map(segment => segment.segmentId)
+    }
+    // 録っている種類（画質が変わって録り直すのを待っている間も、録っているものとする）
+    const isRecordingKind = (kind: RecordingKind) => recorders.has(kind) || restartPending.has(kind as VideoKind)
+    const chooseClipKind = (wallClock: number) => {
+        const kinds = CLIP_KIND_ORDER.filter(isRecordingKind)
+        const firstStart = (kind: RecordingKind) => getPageSegments().find(segment => segment.kind === kind)?.startedAt ?? Infinity
+        return kinds.find(kind => firstStart(kind) <= wallClock - RECENT_CLIP_SECONDS * 1000)
+            ?? kinds.reduce<RecordingKind | undefined>((best, kind) => best === undefined || firstStart(kind) < firstStart(best) ? kind : best, undefined)
+    }
     let clipPending = false
     const saveClip = async () => {
         if (clipPending || !extensionAvailable()) return
-        const kind = CLIP_KIND_ORDER.find(k => recorders.has(k))
+        const pressedAt = Date.now()
+        const kind = chooseClipKind(pressedAt)
         if (!kind) {
             showBarHint('録画中に使えます（録画した場面は、プレイバックや録画一覧から保存できます）')
             return
         }
-        const pressedAt = Date.now()
         clipPending = true
         setClipWaiting(true)
         try {
             // 押した時までの分が保存されるのを待つ（録画が止まった時は、止めた時の分が保存されるのを少し待ってから、それまでの分で作る）
-            let segments = await getTimeline(programId)
+            const read = () => getTimelineForSegments(recentSegmentIds(kind, pressedAt, RECENT_CLIP_SECONDS))
+            let segments = await read()
             const deadline = Date.now() + CLIP_WAIT_LIMIT_MS
             let checksAfterStop = 0
             while (recordedUntil(segments, kind) < pressedAt && Date.now() < deadline) {
-                if (!recorders.has(kind) && ++checksAfterStop > 2) break
+                if (!isRecordingKind(kind) && ++checksAfterStop > 2) break
                 await sleep(CLIP_POLL_MS)
-                segments = await getTimeline(programId)
+                segments = await read()
             }
             const file = await buildRecentClipFile(segments, kind, pressedAt, RECENT_CLIP_SECONDS, getFragmentBlobs)
             if (!file) {

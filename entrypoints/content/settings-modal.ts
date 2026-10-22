@@ -268,7 +268,7 @@ class SettingsModal {
                     : 'この環境では使えません'}</span>
                 </span>
               </div>
-              <p class="npr-option-desc npr-kinds-note">ページを開いた時に録画する種類です（ここで変えても、開いているタブの録画は変わりません。録画バーのボタンでは、そのタブだけ切り替えられます）。選んだ種類は、別々の録画として同時に録ります</p>
+              <p class="npr-option-desc npr-kinds-note">ページを開いた時に録画する種類です（ここで変えても、開いているタブの録画は変わりません。録画バーのボタンでは、そのタブだけ切り替えられ、そのタブを閉じるまで選んだ種類のままです）。選んだ種類は、別々の録画として同時に録ります</p>
               <p class="npr-kinds-message" role="status"></p>
             </section>
 
