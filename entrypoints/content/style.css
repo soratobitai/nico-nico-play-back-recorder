@@ -151,11 +151,13 @@
   100% { box-shadow: 0 0 0 0 rgba(var(--npr-rec-rgb), 0); }
 }
 
-/* チップの上に出る短いお知らせ */
+/* バーの上に出る短いお知らせ（狭い時は折り返す） */
 .npr-hint {
   position: absolute;
   left: 10px;
   bottom: calc(100% + 8px);
+  max-width: calc(100% - 20px);
+  box-sizing: border-box;
   padding: 5px 9px;
   border-radius: 6px;
   background: #24262d;
@@ -163,7 +165,6 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   color: var(--npr-text);
   font-size: 11px;
-  white-space: nowrap;
   opacity: 0;
   transform: translateY(4px);
   transition: opacity 0.15s, transform 0.15s;

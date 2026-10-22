@@ -63,7 +63,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   cursor: pointer;
 }
 .button:hover { background: var(--raised-hover); }
-.button:disabled { opacity: 0.45; cursor: default; }
+.button:is(:disabled, [aria-disabled="true"]) { opacity: 0.45; cursor: default; }
 .button.small { height: 28px; padding: 0 10px; font-size: 12px; }
 .button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .button.primary:hover { background: #6f9bff; }

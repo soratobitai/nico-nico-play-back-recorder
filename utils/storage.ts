@@ -62,6 +62,14 @@ export const FIXED_RESOLUTION_HEIGHT = storage.defineItem<number>(
     }
 )
 
+// 一時保存（ニコ生のページの IndexedDB）に書く依頼に付ける印の鍵（base64。ニコ生のページのスクリプトは読めない。utils/library/pending.ts）
+export const PENDING_SIGNING_KEY = storage.defineItem<string | null>(
+    'local:PENDING_SIGNING_KEY',
+    {
+        fallback: null,
+    }
+)
+
 // 以前のバージョン（1.2.2 まで）の録画が、ニコ生のサイトデータに残っているか（数と大きさ。なければ null）
 // ニコ生のページを開いた時に調べて書き込み、録画一覧で取り込み（手動）を勧める
 export type LegacyRecordings = { count: number, bytes: number }

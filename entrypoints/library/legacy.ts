@@ -29,7 +29,7 @@ type LegacyImportOptions = {
     notice: HTMLElement // 番組の一覧の上のお知らせ
     status: HTMLElement // 読み上げ用（段階が変わった時だけ書き換える）
     dialog: HTMLDialogElement
-    usageBytes: () => number // 今の使用量
+    usageBytes: () => Promise<number> // 今の使用量
     formatBytes: (bytes: number) => string
     reload: () => Promise<void> // 番組の一覧を読み直す
 }
@@ -101,7 +101,8 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         if (progress.bytesTotal > 0) running.bar.value = progress.bytesDone / progress.bytesTotal
         running.detail.textContent = `${formatBytes(progress.bytesDone)} / ${formatBytes(progress.bytesTotal)}${progress.title ? `・${progress.title}` : ''}`
         running.cancel.textContent = cancelling ? 'やめています…' : 'やめる'
-        running.cancel.disabled = cancelling
+        // disabled にすると、キーボードで押した人のフォーカスが外れるので、押せないように見せるだけにする（もう一度押しても何もしない）
+        running.cancel.setAttribute('aria-disabled', String(cancelling))
     }
 
     const render = (phaseChanged: boolean) => {
@@ -166,7 +167,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     // ---- 始める前の確認（容量の上限と比べる） ----
     const renderCapacity = async () => {
         if (!legacy) return
-        const usage = usageBytes()
+        const usage = await usageBytes()
         const limit = await MAX_STORAGE_SIZE.getValue()
         const after = usage + legacy.bytes
         const needed = Math.min(MAX_STORAGE_SIZE_LIMIT, Math.ceil(after / GB + 1) * GB) // 録画中の分の余裕を少し
@@ -234,7 +235,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     }
 
     const cancelImport = async () => {
-        if (state.phase !== 'running') return
+        if (state.phase !== 'running' || state.cancelling) return
         setState({ ...state, cancelling: true })
         const tabId = await importTabId()
         if (tabId !== null) await chrome.tabs.sendMessage(tabId, { type: LEGACY_IMPORT_CANCEL_MESSAGE }).catch(() => {})

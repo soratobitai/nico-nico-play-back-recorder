@@ -67,7 +67,13 @@ const createFramePipeline = (
             const { value: frame, done } = await reader.read()
             if (done || !frame) break
             try {
-                draw(ctx, frame)
+                // 1コマ描けなかっただけなら、そのコマを飛ばして続ける（描き直しを止めると、その後の映像がなくなる）
+                try {
+                    draw(ctx, frame)
+                } catch (error) {
+                    console.log('映像の1コマを描けませんでした:', error)
+                    continue
+                }
                 // 書き込んだコマは generator 側で解放される
                 await writer.write(new VideoFrame(canvas, { timestamp: frame.timestamp }))
             } finally {

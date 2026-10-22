@@ -304,7 +304,7 @@ class SettingsModal {
                 <label for="storageRange">保存する容量の上限</label>
                 <span class="npr-value"><span id="storageGB">${toGB(s.MAX_STORAGE_SIZE)}</span> GB</span>
               </div>
-              <input id="storageRange" class="npr-range" type="range" min="${1 * GB}" max="${MAX_STORAGE_SIZE_LIMIT}" step="${1 * GB}" value="${s.MAX_STORAGE_SIZE}" />
+              <input id="storageRange" class="npr-range" type="range" min="${1 * GB}" max="${MAX_STORAGE_SIZE_LIMIT}" step="${1 * GB}" value="${s.MAX_STORAGE_SIZE}" aria-valuetext="${toGB(s.MAX_STORAGE_SIZE)} GB" />
               <p class="npr-option-desc">上限を超えたら、古い録画から順に削除します${recommended}</p>
               <div class="npr-usage">
                 <div class="usage-info"></div>
@@ -480,6 +480,8 @@ class SettingsModal {
 
   private updateStorageLabel(value: number) {
     const gb = String(toGB(value))
+    // 読み上げでは、バイト数ではなく「10 GB」と読む
+    this.modal?.querySelector('#storageRange')?.setAttribute('aria-valuetext', `${gb} GB`)
     const storageGB = this.modal?.querySelector('#storageGB')
     if (storageGB) storageGB.textContent = gb
     const usageStorageGB = this.modal?.querySelector('#usageStorageGB')

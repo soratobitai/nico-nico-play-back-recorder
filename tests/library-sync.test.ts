@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { savePendingRequest, flushPendingRequests, clearPendingRequests } from '@/utils/library/pending'
+import { setPendingSigningKey, savePendingRequest, flushPendingRequests, clearPendingRequests } from '@/utils/library/pending'
 import { migrateLegacyRecordings, importLegacyRecordings, summarizeLegacyRecordings, type LegacyImportProgress } from '@/utils/library/migrate'
 import { handleBridgeRequest } from '@/utils/library/handler'
 import { clearAll, listAllSegments, buildDownloadFiles } from '@/utils/library/db'
@@ -20,13 +20,33 @@ const deleteDatabase = (name: string) => new Promise<void>((resolve, reject) => 
     request.onerror = () => reject(request.error)
 })
 
+class Discardable extends Error {}
 class Unavailable extends Error {}
-const isUnavailable = (error: unknown) => error instanceof Unavailable
+const isDiscardable = (error: unknown) => error instanceof Discardable
 const finish = (segmentId: string): BridgeRequest => ({ type: 'finishSegment', segmentId, endedAt: 0 })
+const flush = (send: (request: BridgeRequest) => Promise<unknown>) => flushPendingRequests({ send, isDiscardable })
+
+// ページのスクリプトが、一時保存の DB に直接書き込む
+const addRaw = async (value: unknown) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('PlaybackPending', 1)
+        request.onupgradeneeded = () => request.result.createObjectStore('requests', { autoIncrement: true })
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('requests', 'readwrite')
+        tx.objectStore('requests').add(value)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+    })
+    db.close()
+}
 
 describe('一時保存した書き込み', () => {
     beforeEach(async () => {
         await deleteDatabase('PlaybackPending')
+        await setPendingSigningKey(new Uint8Array(32).fill(7))
     })
 
     it('保存した順に送り、送れたものは消す', async () => {
@@ -34,12 +54,12 @@ describe('一時保存した書き込み', () => {
         await savePendingRequest(finish('B'))
         const sent: BridgeRequest[] = []
 
-        expect(await flushPendingRequests(async request => { sent.push(request) }, isUnavailable)).toEqual({ sent: 2, complete: true })
+        expect(await flush(async request => { sent.push(request) })).toEqual({ sent: 2, complete: true })
         expect(sent).toEqual([finish('A'), finish('B')])
-        expect(await flushPendingRequests(async request => { sent.push(request) }, isUnavailable)).toEqual({ sent: 0, complete: true })
+        expect(await flush(async request => { sent.push(request) })).toEqual({ sent: 0, complete: true })
     })
 
-    it('送り先とやり取りできなくなったら、残りは消さずに次の機会に送る', async () => {
+    it('送れなかった（やり取りできない・容量不足 など）ら、残りは消さずに次の機会に送る', async () => {
         await savePendingRequest(finish('A'))
         await savePendingRequest(finish('B'))
         await savePendingRequest(finish('C'))
@@ -50,24 +70,45 @@ describe('一時保存した書き込み', () => {
             sent.push(segmentId)
         }
 
-        expect(await flushPendingRequests(send('B'), isUnavailable)).toEqual({ sent: 1, complete: false })
-        expect(await flushPendingRequests(send(''), isUnavailable)).toEqual({ sent: 2, complete: true })
+        expect(await flush(send('B'))).toEqual({ sent: 1, complete: false })
+        expect(await flush(send(''))).toEqual({ sent: 2, complete: true })
         expect(sent).toEqual(['A', 'B', 'C'])
     })
 
-    it('それ以外のエラー（区間が消されていた など）になった書き込みは捨てて先へ進む', async () => {
+    it('送っても意味がないエラー（区間が消されていた など）になった書き込みは捨てて先へ進む', async () => {
         await savePendingRequest(finish('A'))
         await savePendingRequest(finish('B'))
         const sent: string[] = []
 
-        await flushPendingRequests(async (request) => {
+        await flush(async (request) => {
             const { segmentId } = request as { segmentId: string }
-            if (segmentId === 'A') throw new Error('not found')
+            if (segmentId === 'A') throw new Discardable('not found')
             sent.push(segmentId)
-        }, isUnavailable)
+        })
 
         expect(sent).toEqual(['B'])
-        expect(await flushPendingRequests(async () => {}, isUnavailable)).toEqual({ sent: 0, complete: true })
+        expect(await flush(async () => {})).toEqual({ sent: 0, complete: true })
+    })
+
+    it('ページのスクリプトが入れた依頼（印がない・印が違う・録画中の書き込みでない）は、送らずに捨てる', async () => {
+        await savePendingRequest(finish('A'))
+        await addRaw({ type: 'clearAll' }) // 以前の形（印なし）
+        await addRaw({ request: { type: 'clearAll' }, signature: new ArrayBuffer(32) })
+        await addRaw({ request: finish('B'), signature: new ArrayBuffer(32) }) // 印が違う
+        // 鍵を知らないので、正しい印は作れない。印の付いた本物の依頼を書き換えても、印が合わなくなる
+        const sent: BridgeRequest[] = []
+
+        expect(await flush(async request => { sent.push(request) })).toEqual({ sent: 1, complete: true })
+        expect(sent).toEqual([finish('A')])
+    })
+
+    it('鍵が違えば（別の鍵で付けた印）、送らない', async () => {
+        await savePendingRequest(finish('A'))
+        await setPendingSigningKey(new Uint8Array(32).fill(9))
+        const sent: BridgeRequest[] = []
+
+        expect(await flush(async request => { sent.push(request) })).toEqual({ sent: 0, complete: true })
+        expect(sent).toEqual([])
     })
 
     it('すべての録画を削除する時は、録画のデータ（断片）だけ消し、区間を作る依頼などは残す（録画中の区間の続きを保存できるように）', async () => {
@@ -79,12 +120,12 @@ describe('一時保存した書き込み', () => {
         await clearPendingRequests()
 
         const sent: string[] = []
-        await flushPendingRequests(async (request) => { sent.push(request.type) }, isUnavailable)
+        await flush(async (request) => { sent.push(request.type) })
         expect(sent).toEqual(['createSegment', 'setSegmentInit', 'finishSegment'])
     })
 
     it('一時保存したことがなければ、DB を作らない', async () => {
-        expect(await flushPendingRequests(async () => {}, isUnavailable)).toEqual({ sent: 0, complete: true })
+        expect(await flush(async () => {})).toEqual({ sent: 0, complete: true })
         expect(await databaseExists('PlaybackPending')).toBe(false)
     })
 })

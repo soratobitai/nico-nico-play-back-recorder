@@ -15,6 +15,12 @@ describe('checkLiveStatus', () => {
         expect(await checkLiveStatus()).toBe('ON_AIR')
     })
 
+    it('ページが録っている番組と別の番組を出していたら（チャンネルの URL で次の番組が始まった など）、録っている番組は終わっている', async () => {
+        respond(`<script id="embedded-data" data-props='{"program":{"status":"ON_AIR","nicoliveProgramId":"lv2"}}'></script>`)
+        expect(await checkLiveStatus('lv1')).toBe('ENDED')
+        expect(await checkLiveStatus('lv2')).toBe('ON_AIR')
+    })
+
     it('番組がない（404・410）は NOT_FOUND（取り直しても変わらないので、取得の失敗とは分ける）', async () => {
         respond('', 404)
         expect(await checkLiveStatus()).toBe('NOT_FOUND')

@@ -1,18 +1,32 @@
 // 以前のバージョンの録画（ニコ生のサイトデータに残っているもの）を調べ、取り込み用のページでは取り込む
 // ニコ生のどのページでも、残っているかを数えて録画一覧に知らせる。
 // 録画一覧が開いた取り込み用のページ（utils/library/legacy-import.ts の LEGACY_IMPORT_URL）では、開いてすぐ取り込む
+// （取り込み用の URL は誰でも開けるので、録画一覧が開いたタブかを background に確かめてから）
 import { summarizeLegacyRecordings, type LegacyImportProgress, type LegacySummary } from '@/utils/library/migrate'
 import { importLegacy } from '@/utils/library/api'
 import { isExtensionContextValid } from '@/utils/library/client'
 import { LEGACY_RECORDINGS } from '@/utils/storage'
 import {
-    LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE, isLegacyImportPage, type LegacyImportMessage,
+    LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE, isLegacyImportPage, type LegacyImportMessage,
 } from '@/utils/library/legacy-import'
 
 // 取り込んでいる間、進み具合が変わらなくても知らせ直す間隔（大きな録画を読んでいる間に、録画一覧が止まったとみなさないように）
 const HEARTBEAT_MS = 20 * 1000
 // 取り込みに失敗した後に、残りを数え直すのを待つ時間の上限（保存先を開けずに待たされても、終わったと知らせられるように）
 const RECOUNT_TIMEOUT_MS = 5 * 1000
+// 録画一覧が開いたタブかを確かめ直す間隔と回数（録画一覧は、タブを開いてから、そのタブを覚える）
+const CHECK_INTERVAL_MS = 500
+const CHECK_ATTEMPTS = 20
+
+// 録画一覧が取り込み用に開いたタブか（他のサイトのリンクなどから取り込み用の URL を開いただけでは、取り込まない）
+const isRegisteredImportTab = async () => {
+    for (let i = 0; i < CHECK_ATTEMPTS; i++) {
+        const reply = await chrome.runtime.sendMessage({ type: LEGACY_IMPORT_CHECK_MESSAGE }).catch(() => null)
+        if (reply?.ok) return true
+        await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL_MS))
+    }
+    return false
+}
 
 const setLegacyRecordings = async (next: LegacySummary | null) => {
     const current = await LEGACY_RECORDINGS.getValue()
@@ -85,7 +99,13 @@ export default defineContentScript({
             if (importPage) startImport()
         })
 
-        if (importPage) startImport()
-        else void reportLegacyRecordings()
+        if (!importPage) {
+            void reportLegacyRecordings()
+            return
+        }
+        void isRegisteredImportTab().then((registered) => {
+            if (registered) startImport()
+            else void reportLegacyRecordings()
+        })
     },
 })

@@ -8,7 +8,7 @@ import type { TimelineFragment, TimelineSegment } from '@/utils/library/db'
 
 // MediaSource を使う再生の代わり（作られた時の時間軸と、移った位置を覚える）
 type OnError = (error: unknown, fragment: Timeline['fragments'][number]) => void
-type FakePlayer = { timeline: Timeline, onError: OnError, position: number, seek: ReturnType<typeof vi.fn>, destroy: ReturnType<typeof vi.fn> }
+type FakePlayer = { timeline: Timeline, onError: OnError, position: number, seek: ReturnType<typeof vi.fn>, destroy: ReturnType<typeof vi.fn>, continueAfterEnd: ReturnType<typeof vi.fn> }
 const players: FakePlayer[] = []
 vi.mock('@/utils/review/player', () => ({
     createReviewPlayer: vi.fn(({ timeline, onError }: { timeline: Timeline, onError: OnError }) => {
@@ -18,6 +18,7 @@ vi.mock('@/utils/review/player', () => ({
             position: 0,
             seek: vi.fn((t: number) => { player.position = t }),
             destroy: vi.fn(),
+            continueAfterEnd: vi.fn(),
             update: () => {},
             cacheFragment: () => {},
         }
@@ -356,6 +357,41 @@ describe('キー操作', () => {
         expect(play).toHaveBeenCalled()
         view.destroy()
     })
+
+    it('文字のキーは、大文字でも効く（CapsLock・Shift を押していても）', async () => {
+        const root = document.getElementById('root')!
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => recordings(), readFragments: async () => [] })
+        await flush()
+        const video = root.querySelector('video')!
+        const muted = video.muted
+
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'M', bubbles: true, cancelable: true }))
+
+        expect(video.muted).toBe(!muted)
+        view.destroy()
+    })
+})
+
+describe('最後まで再生して終わった後', () => {
+    it('続きが届いたら（録画中の番組）、始めへ戻らず、続きを読み込んでから続きの位置で再生する', async () => {
+        const root = document.getElementById('root')!
+        let stored = recordings()
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => stored, readFragments: async () => [] })
+        await flush()
+        const video = root.querySelector('video')!
+        const play = vi.spyOn(video, 'play').mockResolvedValue()
+        root.querySelector<HTMLButtonElement>('.play')!.click() // 再生する
+        Object.defineProperty(video, 'ended', { get: () => true, configurable: true })
+        Object.defineProperty(video, 'currentTime', { get: () => 15.5, set: () => {}, configurable: true })
+        play.mockClear()
+
+        stored = [...recordings(), segment('C', 115_600, 2)]
+        await view.refresh()
+
+        expect(current().continueAfterEnd).toHaveBeenCalledWith(15.5)
+        expect(play).not.toHaveBeenCalled()
+        view.destroy()
+    })
 })
 
 describe('見ている録画が消された時', () => {
@@ -388,6 +424,21 @@ describe('見ている録画が消された時', () => {
         await view.refresh()
         expect(players.length).toBe(created + 1)
         expect(current().position).toBeCloseTo(9.5) // B の始め
+        view.destroy()
+    })
+
+    it('この先の区間が消されたら（読み込み済みかもしれない）、再生を作り直して、消した録画を再生しない', async () => {
+        const root = document.getElementById('root')!
+        let stored = recordings()
+        const view = mountReviewView({ root, mode: 'library', readTimeline: async () => stored, readFragments: async () => [] })
+        await flush()
+        current().seek(1) // A の中。B は読み込み済みかもしれない
+        const created = players.length
+
+        stored = recordings().filter(s => s.segmentId !== 'B')
+        await view.refresh()
+        expect(players.length).toBe(created + 1)
+        expect(current().position).toBeCloseTo(1) // 見ていた所のまま
         view.destroy()
     })
 

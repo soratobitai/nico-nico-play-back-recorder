@@ -1,7 +1,7 @@
 import { BRIDGE_TOKEN_KEY, BRIDGE_TOKEN_MESSAGE, CLOSE_SEGMENTS_MESSAGE } from '@/utils/library/protocol'
 import { closeSegments } from '@/utils/library/db'
 import { OPEN_LIBRARY_MESSAGE, openLibrary } from '@/utils/library/open-library'
-import { LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_TAB_KEY, isLegacyImportPage } from '@/utils/library/legacy-import'
+import { LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE, LEGACY_IMPORT_TAB_KEY, isLegacyImportPage } from '@/utils/library/legacy-import'
 
 // ニコ生のページに埋め込む bridge を使ってよい相手（content script）だけに渡す合言葉
 // ニコ生のページ側のスクリプトはこの service worker と話せないので、合言葉を知ることができない
@@ -16,10 +16,15 @@ const getBridgeToken = () => tokenPromise ??= (async () => {
     return token
 })()
 
-// 取り込み用に開いたタブで、まだ取り込み用のページのまま（他のページへ移っていない）なら閉じる
-const closeImportTab = async (tabId: number | undefined, url: string | undefined) => {
+// 録画一覧が取り込み用に開いたタブで、まだ取り込み用のページのまま（他のページへ移っていない）か
+const isImportTab = async (tabId: number | undefined, url: string | undefined) => {
     const { [LEGACY_IMPORT_TAB_KEY]: importTabId } = await chrome.storage.session.get(LEGACY_IMPORT_TAB_KEY)
-    if (tabId === undefined || tabId !== importTabId || !isLegacyImportPage(url)) return
+    return tabId !== undefined && tabId === importTabId && isLegacyImportPage(url)
+}
+
+// 取り込み用に開いたタブで、まだ取り込み用のページのままなら閉じる
+const closeImportTab = async (tabId: number | undefined, url: string | undefined) => {
+    if (tabId === undefined || !(await isImportTab(tabId, url))) return
     await chrome.storage.session.remove(LEGACY_IMPORT_TAB_KEY)
     await chrome.tabs.remove(tabId)
 }
@@ -37,6 +42,11 @@ export default defineBackground(() => {
             const segmentIds = message.segmentIds.filter((id: unknown): id is string => typeof id === 'string')
             closeSegments(segmentIds).catch(error => console.error('閉じられたページの録画を確定できませんでした:', error))
             return
+        }
+        // 取り込み用のページが、録画一覧が開いたタブか（取り込み用の URL は誰でも開けるので、URL だけでは取り込まない）
+        if (message?.type === LEGACY_IMPORT_CHECK_MESSAGE) {
+            isImportTab(sender.tab.id, sender.url).then(ok => sendResponse({ ok })).catch(() => sendResponse({ ok: false }))
+            return true
         }
         // 以前の録画を取り込むために録画一覧が開いたタブは、取り込み終えたら閉じる（録画一覧を閉じた後でも）
         if (message?.type === LEGACY_IMPORT_PROGRESS_MESSAGE && message.finished) {

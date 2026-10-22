@@ -109,6 +109,19 @@ describe('Timeline（見直し用の時間軸）', () => {
         expect(timeline.segment('A')).toBeUndefined()
     })
 
+    it('少し重なった区間で、他の区間の断片にすっぽり入る断片は並べない（読み込むと先の断片の後ろが消えるので。断片の終わりも順に並ぶ）', () => {
+        // A の最後の断片（6〜6.2）が、0.3 秒重なって始まった B の最初の断片（5.9〜8.9）の中にある
+        const timeline = new Timeline()
+        timeline.sync([
+            segment('A', 100_000, [...fragments(2), { index: 2, startTime: 6, duration: 0.2, keyframe: true }]),
+            segment('B', 105_900, fragments(3)),
+        ])
+        expect(starts(timeline).map(([id, index]) => `${id}${index}`)).toEqual(['A0', 'A1', 'B0', 'B1', 'B2'])
+        const ends = timeline.fragments.map(f => f.end)
+        expect(ends).toEqual([...ends].sort((a, b) => a - b))
+        expect(timeline.fragments[timeline.indexAt(7)].segmentId).toBe('B')
+    })
+
     it('indexAt は時刻を含む断片、間にある時は次の断片、最後より後なら最後の断片を返す', () => {
         const timeline = new Timeline()
         timeline.sync([segment('A', 100_000, fragments(2)), segment('B', 108_000, fragments(2))]) // A: 0〜6、B: 8〜14

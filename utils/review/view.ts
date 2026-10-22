@@ -21,6 +21,8 @@ const LIVE_EDGE_SECONDS = 8
 // ライブからこれ以内なら「ライブ」とみなす（録画は数秒ごとの断片で届くので、少し遅れる）
 const LIVE_THRESHOLD_SECONDS = 15
 const SKIP_SECONDS = 10
+// この先、読み込んでいるかもしれない長さ（player の BUFFER_WINDOW.keepAhead。この中の録画が消されたら作り直す）
+const PRELOAD_SECONDS = 90
 // 保存先から番組の録画を読み直す間隔（録画中に増えた分や、容量の上限を超えて消された部分を反映する）
 const SYNC_INTERVAL_MS = 30 * 1000
 // 再生できない所を飛ばすのは、1分にこの回数まで（それより多ければ、飛ばし続けずにお知らせする）
@@ -104,7 +106,7 @@ const isExtensionGone = () => {
 }
 
 // 場面を保存するファイルの名前（配信者_タイトル_時刻。録画一覧の「保存」と同じく、コメントなし以外は種類を付ける）
-// プレイバック・録画一覧・録画バーの「前後1分」で使う
+// プレイバック・録画一覧の「前後1分」と、録画バーの「直前1分」で使う
 const sceneFileName = (prefix: string | undefined, kind: RecordingKind, wallClock: number, extension: string) =>
     `${[prefix, formatDateForFileName(wallClock)].filter(Boolean).join('_')}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.${extension}`
 
@@ -227,7 +229,11 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     const playVideo = () => {
         wantsPlaying = true
         // 最後まで再生して止まった後に続きが増えていたら（録画中の番組）、最初からではなく続きから再生する
-        if (video.ended && timeline.end > video.currentTime + 0.5) player.seek(video.currentTime)
+        // （続きを読み込んでから移って再生する。終わったまま再生すると、動画の始めへ戻ってしまう）
+        if (video.ended && timeline.end > video.currentTime + 0.5) {
+            player.continueAfterEnd(video.currentTime)
+            return
+        }
         video.play().catch(() => {})
     }
     // live は動画の終わりにしない（録画中の番組を追いかけるので）。録り終えた録画（録画中の区間がない）を最後まで見て、
@@ -437,7 +443,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             const atLive = behindMs !== null && behindMs < LIVE_THRESHOLD_SECONDS * 1000
             ago.textContent = behindMs === null ? '' : `（${atLive ? 'ライブ' : formatAgo(behindMs)}）`
             liveButton.classList.toggle('at-live', atLive)
-            liveButton.disabled = empty || atLive
+            setAriaDisabled(liveButton, empty || atLive)
             liveButton.setAttribute('aria-label', atLive ? 'ライブ（最新の録画）を再生中' : 'ライブに戻る')
         }
 
@@ -559,7 +565,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
     }
     const toggleMute = () => { video.muted = !video.muted }
     const goLive = () => {
-        if (mode !== 'live') return
+        if (mode !== 'live' || liveButton.getAttribute('aria-disabled') === 'true') return
         // 見ている種類を今は録っていなければ、今録っている種類のライブへ
         const kind = latestKind(availableKinds(), selectedKind)
         if (kind !== selectedKind) moveTo(kind, null, false)
@@ -651,7 +657,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             m: toggleMute,
             ...(mode === 'live' ? { l: goLive, End: goLive } : {}),
         }
-        const action = actions[event.key]
+        const action = actions[event.key.length === 1 ? event.key.toLowerCase() : event.key]
         if (!action || timeline.isEmpty) return
         event.preventDefault()
         action()
@@ -710,7 +716,27 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
         events.forEach(applyFeed)
     }
 
-    const sync = async () => {
+    // 読み直しが重ならないようにする（読み直している間に頼まれたら、終わってからもう一度読み直す）
+    let syncing: Promise<void> | null = null
+    let syncAgain = false
+    const sync = (): Promise<void> => {
+        if (syncing) {
+            syncAgain = true
+            return syncing
+        }
+        syncing = (async () => {
+            try {
+                do {
+                    syncAgain = false
+                    await syncOnce()
+                } while (syncAgain && !destroyed)
+            } finally {
+                syncing = null
+            }
+        })()
+        return syncing
+    }
+    const syncOnce = async () => {
         if (destroyed) return
         try {
             const segments = await readTimeline()
@@ -721,6 +747,11 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             const watching = started && !timeline.isEmpty
                 ? { wallClock: timeline.wallClockAt(position), segmentId: timeline.fragments[timeline.indexAt(position)]?.segmentId }
                 : null
+            // この先（読み込んでいるかもしれない所）にある区間（消されたら、読み込み済みの分を再生しないように作り直す）
+            const ahead = watching ? timeline.placedSegments.filter((segment) => {
+                const last = segment.fragments[segment.fragments.length - 1]
+                return last && last.end > position && segment.fragments[0].start < position + PRELOAD_SECONDS
+            }).map(segment => segment.segmentId) : []
             const byKind = new Map<RecordingKind, TimelineSegment[]>(KIND_ORDER.map(kind => [kind, []]))
             for (const segment of segments) byKind.get(segment.kind)?.push(segment)
             for (const [kind, list] of byKind) {
@@ -728,7 +759,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
             }
             removeBroken()
             applyQueued()
-            if (watching?.segmentId && !timeline.segment(watching.segmentId)) reopenAfterRemoved(watching.wallClock)
+            if (watching && ahead.concat(watching.segmentId ?? []).some(segmentId => !timeline.segment(segmentId))) reopenAfterRemoved(watching.wallClock)
             if (availableKinds().length === 0) {
                 showMessage(messages.empty)
                 // 見ていた録画が全部消された（次に録画が届いたら、そこから見始める）

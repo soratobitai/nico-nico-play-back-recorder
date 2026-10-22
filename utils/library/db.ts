@@ -361,14 +361,25 @@ const getUsage = () => withTransaction([SEGMENTS], 'readonly', usageIn)
 
 // 録画中の区間は5分ごとに区切られ、数秒ごとに書き込まれるので、これだけ書き込みのない区間は録画を終えている
 const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
+// 録画一覧から、断片のない区間を消すまでの時間（ニコ生側に一時保存した続きを、次にニコ生のページを開いた時に移せるように）
+const EMPTY_SEGMENT_IDLE_MS = 3 * 24 * 60 * 60 * 1000
 
 // 録画していたタブが閉じられるなどして、終えられないまま残った区間を確定する
 // 最後の書き込み（録った時刻と、保存先に書き込んだ時刻の新しい方）から idleMs 以上たったものが対象。
-// 断片が1つもなければ消す。消した区間の ID を返す
-const closeStaleSegments = (idleMs: number, now = Date.now()) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+// 断片が1つもなければ消す（emptyIdleMs 以上たったもの。録画一覧からは長めにする: 拡張機能が更新された時に、
+// 区間を作った直後で断片がまだなく、続きがニコ生側に一時保存されている区間を、移す前に消さないように）。
+// 消した区間の ID を返す。確定するものがなければ書き込まない（録画中の書き込みを待たせないように）
+const closeStaleSegments = async (idleMs: number, now = Date.now(), emptyIdleMs = idleMs) => {
+    const isStale = (segment: SegmentRecord) => segment.endedAt === null
+        && now - Math.max(lastWriteOf(segment), segment.updatedAt ?? 0) >= (segment.fragmentCount > 0 ? idleMs : emptyIdleMs)
+    const any = await withTransaction([SEGMENTS], 'readonly', async tx => (await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).getAll())).some(isStale))
+    if (!any) return []
+    return closeStaleSegmentsIn(isStale)
+}
+const closeStaleSegmentsIn = (isStale: (segment: SegmentRecord) => boolean) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
     const deletedSegmentIds: string[] = []
     for (const segment of await promisify<SegmentRecord[]>(tx.objectStore(SEGMENTS).getAll())) {
-        if (segment.endedAt !== null || now - Math.max(lastWriteOf(segment), segment.updatedAt ?? 0) < idleMs) continue
+        if (!isStale(segment)) continue
         if (await closeSegmentIn(tx, segment)) deletedSegmentIds.push(segment.segmentId)
     }
     return deletedSegmentIds
@@ -482,6 +493,7 @@ export {
     closeStaleSegments,
     closeSegments,
     STALE_SEGMENT_IDLE_MS,
+    EMPTY_SEGMENT_IDLE_MS,
     freeSpace,
     enforceLimit,
     SegmentNotFoundError,

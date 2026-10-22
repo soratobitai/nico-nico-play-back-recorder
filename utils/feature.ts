@@ -106,7 +106,7 @@ const getScreenShotAndDownload = async () => {
 
             const { userName, title } = getProgramData()
             const timeString = formatDateForFileName(Date.now())
-            downloadBlob(blob, `${userName}_${title}_${timeString}.png`)
+            downloadBlob(blob, `${[userName, title, timeString].filter(Boolean).join('_')}.png`)
         }, "image/png")
     } catch (err) {
         console.error("スクリーンショット処理中にエラー:", err)

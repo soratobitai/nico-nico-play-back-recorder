@@ -208,11 +208,19 @@ class Timeline {
         return true
     }
 
+    // 時間軸の順に並べる。少し重なった区間で、他の区間の断片にすっぽり入る断片は並べない
+    // （後から読み込むと、先に読み込んだ断片の後ろが消えて抜ける。断片の終わりが順に並ぶので、indexAt の二分探索も正しくなる）
     private rebuild() {
-        this.flat = this.segments
+        const sorted = this.segments
             .filter(s => s.offset !== null)
             .flatMap(s => s.fragments)
             .sort((a, b) => a.start - b.start)
+        let maxEnd = -Infinity
+        this.flat = sorted.filter((fragment) => {
+            if (fragment.end <= maxEnd) return false
+            maxEnd = fragment.end
+            return true
+        })
     }
 }
 

@@ -22,7 +22,13 @@ type RecorderBarOptions = {
 }
 
 const BAR_ID = 'playbackRecorderBar'
-const ERROR_MESSAGE = '空き容量が足りず録画を止めました。古い録画を削除するか、設定で上限を見直してください。'
+// 保存エラーの理由ごとの文（storage: 空き容量が足りない / updated: 拡張機能が更新され、一時保存の上限を超えた）
+type ErrorReason = 'storage' | 'updated'
+const ERROR_MESSAGES: Record<ErrorReason, string> = {
+    storage: '空き容量が足りず録画を止めました。古い録画を削除するか、設定で上限を見直してください。',
+    updated: '拡張機能が更新されたため、録画を止めました。ページを開き直してください。',
+}
+const ERROR_MESSAGE = ERROR_MESSAGES.storage
 
 const icon = (path: string, filled = false) =>
     `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" ${filled ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'}>${path}</svg>`
@@ -50,6 +56,7 @@ const CHIP_TITLES: Record<VideoKind, string> = {
 
 const BAR_HTML = `
 <div id="${BAR_ID}" class="npr-bar" data-state="preparing">
+  <span class="npr-hint" role="status"></span>
   <div class="npr-status">
     <span class="npr-status-dot" aria-hidden="true"></span>
     <span id="recordStatus" class="npr-status-label" role="status">準備中</span>
@@ -63,7 +70,6 @@ const BAR_HTML = `
     <button type="button" class="npr-chip npr-chip-comments" data-kind="comments" aria-pressed="false" data-recording="false" title="${CHIP_TITLES.comments}">
       ${ICONS.comments}<span class="npr-chip-label">コメントあり</span>
     </button>
-    <span class="npr-hint" role="status"></span>
   </div>
 
   <!-- 画面録画（設定ではなく、ページを開くたびに押して始める。録る種類のチップとは別の、開始ボタンの形） -->
@@ -181,12 +187,13 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
 // （ブラウザの最小フォントサイズの設定などで、文字が想定より大きく表示される環境）
 
 // 中身が、バーの左右の余白を除いた所からはみ出しているか（余白にはみ出しただけでは scrollWidth に出ないので、位置で比べる）
-// 隠れている部分（大きさが 0）は数えない。バーが隠れていれば、はみ出していないことにする
+// 隠れている部分（大きさが 0）と、バーの上に重ねて出すお知らせは数えない。バーが隠れていれば、はみ出していないことにする
 const isOverflowing = (target: HTMLElement) => {
     const box = target.getBoundingClientRect()
     if (box.width === 0) return false
     const right = box.right - parseFloat(getComputedStyle(target).paddingRight)
     return [...target.children].some((child) => {
+        if (child.classList.contains('npr-hint')) return false
         const rect = child.getBoundingClientRect()
         return rect.width > 0 && rect.right > right + 0.5
     })
@@ -215,6 +222,17 @@ const STATE_TITLES: Record<BarState, string> = {
     recording: '録画中',
     stopped: '停止中',
     error: `保存エラー: ${ERROR_MESSAGE}`,
+}
+
+// 保存エラーの理由を出す（次に保存エラーにする前に呼ぶ）
+const setRecorderError = (reason: ErrorReason) => {
+    const message = ERROR_MESSAGES[reason]
+    STATE_TITLES.error = `保存エラー: ${message}`
+    const error = bar?.querySelector<HTMLElement>('#recorderError')
+    if (!error) return
+    error.title = message
+    error.querySelector('span')!.textContent = message
+    if (state === 'error') bar!.querySelector<HTMLElement>('.npr-status')!.title = STATE_TITLES.error
 }
 
 const setRecorderState = (next: BarState) => {
@@ -260,7 +278,7 @@ const setKindChips = (kinds: Record<VideoKind, boolean>) => {
     }
 }
 
-// 録る種類のチップに、その種類を今録っているかを出す（録っていれば右上の赤い丸が脈打つ。
+// 録る種類のチップに、その種類を今録っているかを出す（録っていればアイコンの左の赤い丸が脈打つ。
 // 選んでいて録っていない時（停止中など）は空の丸）
 const setKindRecording = (kinds: Record<VideoKind, boolean>) => {
     for (const chip of bar?.querySelectorAll<HTMLButtonElement>('.npr-chip[data-kind]') ?? []) {
@@ -354,6 +372,7 @@ const updateToggleButton = (isRecording: boolean) => {
 export {
     insertRecorderBar,
     setRecorderState,
+    setRecorderError,
     setKindChips,
     setKindRecording,
     showBarHint,

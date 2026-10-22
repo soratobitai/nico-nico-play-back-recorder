@@ -1,4 +1,6 @@
-const checkLiveStatus = async () => {
+// 今のページの番組の状態（ON_AIR など）。取得に失敗したら 'ERROR'、番組がなければ 'NOT_FOUND'
+// programId: 録っている番組。ページ（チャンネルの URL など）が別の番組を出していたら、録っている番組は終わっているので 'ENDED'
+const checkLiveStatus = async (programId?: string) => {
     const url = location.href
 
     try {
@@ -20,6 +22,8 @@ const checkLiveStatus = async () => {
         const jsonScript = doc.querySelector('#embedded-data')
         const data = JSON.parse(jsonScript?.getAttribute('data-props') ?? '{}')
         const status = data?.program?.status
+        const shown = data?.program?.nicoliveProgramId
+        if (programId && typeof shown === 'string' && shown !== programId) return 'ENDED'
 
         // メンテナンス画面などで番組情報が取れない場合も取得失敗として扱う
         return status ?? 'ERROR'

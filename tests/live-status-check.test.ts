@@ -40,6 +40,20 @@ describe('resetTimeoutCheck（チャンクが届かなくなった時の監視�
         expect(recorder.stop).toHaveBeenCalledTimes(1)
     })
 
+    it('ライブが続いている時（読み込み直さない時）も、間を空けて確かめ続ける（止まったまま終わった時に気づけるように）', async () => {
+        vi.mocked(checkLiveStatus).mockResolvedValueOnce('ON_AIR').mockResolvedValue('ENDED')
+        const recorder = fakeRecorder()
+
+        resetTimeoutCheck(recorder, SAVE_CHUNK_INTERVAL_MS, false, 0, undefined, 'lv1')
+        await vi.advanceTimersByTimeAsync(9 * 1000)
+        expect(recorder.stop).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(18 * 1000)
+
+        expect(checkLiveStatus).toHaveBeenCalledTimes(2)
+        expect(checkLiveStatus).toHaveBeenLastCalledWith('lv1')
+        expect(recorder.stop).toHaveBeenCalledTimes(1)
+    })
+
     it('ライブ状態を取得できない時は録画を止めず、間隔を伸ばしながら再確認する', async () => {
         vi.mocked(checkLiveStatus).mockResolvedValue('ERROR')
         const recorder = fakeRecorder()

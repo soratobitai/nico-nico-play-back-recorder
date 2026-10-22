@@ -2,6 +2,7 @@
 // 時間軸（Timeline）の再生位置のまわりの断片だけを読み込み、離れた部分は捨てる（長い録画でもメモリを使いすぎない）。
 // 区間が変わる所では、その区間の初期化セグメントを読み込んでから、時間軸の位置（timestampOffset）に合わせて断片を足す。
 import { planBuffer, fragmentKey, type Timeline, type PlacedFragment, type PlacedSegment } from './timeline'
+import { parseInit } from '../fmp4'
 
 // 再生位置の 30 秒先まで読み込み、30 秒より前と 90 秒より先は捨てる
 const BUFFER_WINDOW = { ahead: 30, keepBehind: 30, keepAhead: 90 }
@@ -101,8 +102,21 @@ class AppendError extends Error {
     }
 }
 
-const mimeTypeOf = (segment: PlacedSegment) =>
-    /codecs/i.test(segment.mimeType) && MediaSource.isTypeSupported(segment.mimeType) ? segment.mimeType : FALLBACK_MIME_TYPE
+// 区間の初期化セグメントに合わせた形式（音声のない録画（画面録画でタブの音声を共有しなかった など）では、
+// 音声の形式を外す。録画した時の形式のままだと、音声がないので読み込めない）
+const mimeTypeOf = (segment: PlacedSegment, init: ArrayBuffer) => {
+    const base = /codecs/i.test(segment.mimeType) && MediaSource.isTypeSupported(segment.mimeType) ? segment.mimeType : FALLBACK_MIME_TYPE
+    let hasAudio = true
+    try {
+        hasAudio = [...parseInit(new Uint8Array(init)).values()].some(track => !track.isVideo)
+    } catch {
+        // 読めなければ、録画した時の形式のまま
+    }
+    if (hasAudio) return base
+    const withoutAudio = base.replace(/codecs="([^"]*)"/i, (_, codecs: string) =>
+        `codecs="${codecs.split(',').map(c => c.trim()).filter(c => !/^(mp4a|opus|vorbis)/i.test(c)).join(', ')}"`)
+    return MediaSource.isTypeSupported(withoutAudio) ? withoutAudio : base
+}
 
 const isQuotaExceeded = (error: unknown) => error instanceof DOMException && error.name === 'QuotaExceededError'
 // 保存先とやり取りできない（拡張機能が更新された・応答がない）。録画が壊れているのではない
@@ -124,6 +138,10 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
     const liveCache = new Map<string, Blob>()
     // 動画の情報が読み込まれる前に指定された再生位置（読み込まれたら移る）
     let pendingSeek: number | null = null
+    // 動画の終わり（endOfStream）にした後に、続きの位置へ移る時: 続きを読み込んで終わりが解かれてから移る
+    // （終わったままでは長さを延ばせず、移る位置が終わりに縮められる。終わったまま再生すると、動画の始めへ戻ってしまう）
+    let pendingSeekAfterReopen = false
+    let playAfterPendingSeek = false
     let dirty = false // 読み込む断片を決め直す（再生位置が進んだ・時間軸が延びた）
     let interrupted = false // 再生位置が飛んだ（読み込み中の断片を待たずに、すぐ決め直す）
     let running = false
@@ -180,7 +198,7 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
             init = await segment.init.arrayBuffer()
             initCache.set(segment.segmentId, init)
         }
-        const mimeType = mimeTypeOf(segment)
+        const mimeType = mimeTypeOf(segment, init)
         if (!sourceBuffer) {
             sourceBuffer = mediaSource.addSourceBuffer(mimeType)
             sourceBuffer.mode = 'segments'
@@ -205,9 +223,11 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
                 await operate(buffer => buffer.appendBuffer(bytes))
             } catch (error) {
                 if (!isQuotaExceeded(error)) throw error
-                // 読み込める量を超えたら、再生位置より前を捨ててからもう一度
-                await removeBuffered(0, Math.max(0, position() - 5))
-                forget(f => f.end <= position() - 5)
+                // 読み込める量を超えたら、再生位置より前を捨ててからもう一度（断片の境目で捨てる。断片の途中で捨てると、
+                // 読み込んだことになっている断片の一部が抜けて、そこへ戻った時に読み込み直されない）
+                const cutAt = timeline.fragments[timeline.indexAt(Math.max(0, position() - 5))]?.start ?? 0
+                await removeBuffered(0, cutAt)
+                forget(f => f.start < cutAt)
                 await operate(buffer => buffer.appendBuffer(bytes))
             }
         } catch (error) {
@@ -267,12 +287,18 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
 
     const applyPendingSeek = () => {
         if (pendingSeek === null || video.readyState < HTMLMediaElement.HAVE_METADATA) return
+        if (pendingSeekAfterReopen && mediaSource.readyState !== 'open') return
         // 動画の長さがその位置まで延びてから移る（延ばせない間は、次の機会にもう一度）
         if (!(mediaSource.duration >= pendingSeek)) extendDuration()
         if (!(mediaSource.duration >= pendingSeek)) return
         const target = snapToRecorded(timeline, pendingSeek)
         pendingSeek = null
+        pendingSeekAfterReopen = false
         video.currentTime = target
+        if (playAfterPendingSeek) {
+            playAfterPendingSeek = false
+            video.play().catch(() => {})
+        }
     }
 
     const work = async () => {
@@ -438,12 +464,24 @@ const createReviewPlayer = ({ video, timeline, readFragments, endAtLast = true, 
         // backward: 戻る操作（録っていない間に当たったら、間の前へ戻る）
         seek(t: number, { backward = false } = {}) {
             const target = snapToRecorded(timeline, Math.min(Math.max(t, timeline.start), timeline.end), backward)
-            if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+            if (mediaSource.readyState === 'ended' && target > mediaSource.duration - 0.05) {
+                // 動画の終わりにした後に延びた所へ: 続きを読み込んでから移る
+                pendingSeek = target
+                pendingSeekAfterReopen = true
+            } else if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
                 extendDuration()
                 video.currentTime = target
             } else {
                 pendingSeek = target
             }
+            restart()
+        },
+
+        // 最後まで再生して終わった後に続きが届いた時（録画中の番組）: 続きを読み込んでから、t へ移って再生する
+        continueAfterEnd(t: number) {
+            pendingSeek = Math.min(Math.max(t, timeline.start), timeline.end)
+            pendingSeekAfterReopen = mediaSource.readyState === 'ended'
+            playAfterPendingSeek = true
             restart()
         },
 

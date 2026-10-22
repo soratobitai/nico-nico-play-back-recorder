@@ -80,8 +80,10 @@ const getRecordingMimeType = (): string | undefined =>
 
 const isQuotaExceeded = (error: unknown) => error instanceof DOMException && error.name === 'QuotaExceededError'
 
-// 容量不足で保存できなかった場合は、古い録画を bytesNeeded バイト以上削除してから1回だけ再試行する
-// （設定の上限より実際に使える容量が少ない場合もここで古いものから消える）
+// 容量不足で保存できなかった場合は、古い録画を bytesNeeded バイト以上（少なくとも MIN_FREE_ON_QUOTA_BYTES）削除してから
+// 1回だけ再試行する（設定の上限より実際に使える容量が少ない場合もここで古いものから消える。
+// 書き込む量だけ空けても、すぐにまた足りなくなるので、少し多めに空ける）
+const MIN_FREE_ON_QUOTA_BYTES = 64 * 1024 * 1024
 const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<T>): Promise<T> => {
     try {
         return await save()
@@ -89,7 +91,7 @@ const retryOnQuotaExceeded = async <T>(bytesNeeded: number, save: () => Promise<
         if (!isQuotaExceeded(error)) throw error
 
         // 削除できる録画がない（拡張機能側に保存できず、一時保存の上限を超えた場合も）
-        const { freed } = await library.freeSpace(bytesNeeded).catch(() => ({ freed: 0 }))
+        const { freed } = await library.freeSpace(Math.max(bytesNeeded, MIN_FREE_ON_QUOTA_BYTES)).catch(() => ({ freed: 0 }))
         if (freed === 0) throw error
         console.log(`容量不足のため古い録画を削除しました: ${freed} バイト`)
 
@@ -188,6 +190,7 @@ const resetTimeoutCheck = (
     failureCount: number = 0, // ライブ状態の確認に続けて失敗した回数（失敗が続くほど間隔を伸ばす）
     // ライブが終わっていた時（複数の種類を録画している場合は、すべて止める）
     onLiveEnded: () => void = () => mediaRecorder.stop(),
+    programId?: string, // 録っている番組（ページが別の番組を出していたら、終わっている）
 ) => {
     clearTimeout(recordingTimeout)
     const delay = Math.min(SAVE_CHUNK_INTERVAL_MS * 3 * 2 ** failureCount, MAX_LIVE_STATUS_RETRY_INTERVAL_MS)
@@ -197,14 +200,15 @@ const resetTimeoutCheck = (
         if (isInactive()) return
 
         // ライブが続いているか確認
-        const liveStatus = await checkLiveStatus()
+        const liveStatus = await checkLiveStatus(programId)
         if (isInactive()) return
 
         if (liveStatus === 'ERROR') {
             // 取得失敗（ネットワーク断など）は放送終了と区別できないので、録画は止めずに再確認する
             console.log('ライブ状態を取得できなかったため再確認します')
-            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, failureCount + 1, onLiveEnded)
+            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, failureCount + 1, onLiveEnded, programId)
         } else if (liveStatus === 'ON_AIR') {
+            let reloaded = false
             if (mediaRecorder.state === 'recording') {
                 // ライブが続いていて、かつ録画中の場合のみリロードボタンを押す
                 if (autoReloadOnFailure) {
@@ -215,11 +219,14 @@ const resetTimeoutCheck = (
                         clearTimeout(recordingTimeout)
                         recordingTimeout = null
                         reloadButton.click()
+                        reloaded = true
                     }
                 } else {
                     console.log('ライブが続いていて録画中ですが、オートリロードが無効になっているためリロードしません')
                 }
             }
+            // 読み込み直さなかった時は、少し間を空けて確かめ直す（止まったままライブが終わった時にも気づけるように）
+            if (!reloaded) resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, failureCount + 1, onLiveEnded, programId)
         } else {
             // 録画を停止
             onLiveEnded()

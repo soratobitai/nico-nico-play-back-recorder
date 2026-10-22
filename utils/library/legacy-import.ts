@@ -4,11 +4,13 @@
 // 開いてすぐ拡張機能側の保存先へ移して、進み具合を知らせる。
 //   録画一覧 → 取り込み用のタブ: LEGACY_IMPORT_START_MESSAGE（前に開いたタブで、もう一度始める）・LEGACY_IMPORT_CANCEL_MESSAGE（やめる）
 //   取り込み用のタブ → 録画一覧・background: LEGACY_IMPORT_PROGRESS_MESSAGE（進み具合。終わったら finished）
+//   取り込み用のタブ → background: LEGACY_IMPORT_CHECK_MESSAGE（録画一覧が開いたタブか。URL だけでは始めない）
 import type { LegacyImportProgress, LegacyImportResult } from './migrate'
 
 const LEGACY_IMPORT_START_MESSAGE = 'playback-legacy:start'
 const LEGACY_IMPORT_CANCEL_MESSAGE = 'playback-legacy:cancel'
 const LEGACY_IMPORT_PROGRESS_MESSAGE = 'playback-legacy:progress'
+const LEGACY_IMPORT_CHECK_MESSAGE = 'playback-legacy:check'
 
 // 取り込むために裏で開くニコ生のページ（トップページに、取り込み用の印を付ける）
 const LEGACY_IMPORT_PARAM = 'npr-import'
@@ -32,7 +34,7 @@ type LegacyImportMessage = {
 }
 
 export {
-    LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE,
+    LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE,
     LEGACY_IMPORT_URL, LEGACY_IMPORT_TAB_KEY, isLegacyImportPage,
 }
 export type { LegacyImportMessage }

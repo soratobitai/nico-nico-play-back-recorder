@@ -54,6 +54,15 @@ describe('番組ごとにまとめる', () => {
         expect(programKeyOf({ programId: 'lv1', title: 'T', userName: 'U' })).toBe('lv1')
     })
 
+    it('以前のバージョンから移した録画は、同じ配信者・タイトルでも、間が空いていれば別の番組にする（別の日の配信）', () => {
+        const day = 24 * 60 * 60 * 1000
+        const legacy = (segmentId: string, startedAt: number) => summary({ segmentId, programId: 'legacy', title: '雑談', userName: 'U', startedAt, endedAt: startedAt + 60_000 })
+        const programs = summarizePrograms([legacy('a1', 0), legacy('a2', 61_000), legacy('b1', day)])
+
+        expect(programs.map(p => p.segments.map(s => s.segmentId))).toEqual([['b1'], ['a1', 'a2']])
+        expect(new Set(programs.map(p => p.key)).size).toBe(2)
+    })
+
     it('タイトル・配信者の言葉（すべてを含む）と種類で絞り込む', () => {
         const programs = summarizePrograms([
             summary({ segmentId: 'a', programId: 'lv1', title: '深夜の雑談', userName: 'Alice' }),

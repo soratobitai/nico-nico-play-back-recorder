@@ -1,8 +1,8 @@
-import { enforceLimit, flushPending, closeStaleSegments, setPendingLimit, isPendingSegment, getTimelineForSegments, getFragmentBlobs } from "../../utils/library/api"
+import { enforceLimit, flushPending, closeStaleSegments, setPendingLimit, initPendingSigning, isPendingSegment, getTimelineForSegments, getFragmentBlobs } from "../../utils/library/api"
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds, getPageSegments } from "../../utils/recording"
 import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
 import { getProgramData, captureThumbnail, downloadBlob } from "../../utils/feature"
-import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setKindChips, setKindRecording, showBarHint } from "../../utils/ui"
+import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setKindChips, setKindRecording, showBarHint, setRecorderError } from "../../utils/ui"
 import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, type ResolutionMode } from '../../utils/storage'
 import { createVideoCapture, createVideoSource, createCommentSource, type RecordingSource } from '../../utils/recording-source'
 import { createKindRecorder, type KindRecorder } from '../../utils/kind-recorder'
@@ -103,6 +103,9 @@ export default async () => {
         FIXED_RESOLUTION_HEIGHT.getValue(),
     ])
 
+    // 一時保存に付ける印の鍵を読んでおく（拡張機能が更新されると読めなくなるので、ページを開いた時に）
+    await initPendingSigning().catch(error => console.log('一時保存の鍵を読めませんでした:', error))
+
     // このタブで録画バーのチップで選んだ種類があれば、それを使う（設定の種類は、新しく開いたタブで使う）
     const tabKinds = loadTabKinds()
     if (tabKinds) {
@@ -155,7 +158,7 @@ export default async () => {
         const watch = (mediaRecorder: MediaRecorder) => {
             const watched = WATCH_ORDER.map(k => recorders.get(k)).find(Boolean)
             if (watched !== recorder) return
-            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, 0, () => stopSession('stopped'))
+            resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, 0, () => stopSession('stopped'), programId)
         }
         const recorder: KindRecorder = createKindRecorder({
             kind,
@@ -170,7 +173,11 @@ export default async () => {
             },
             onData: watch,
             // 古い録画を消しても容量が足りない場合は、録画を続けても保存されないので止める
-            onSaveFailed: () => stopSession('error'),
+            // （拡張機能が更新された後に一時保存の上限を超えた時は、ページを開き直すように知らせる）
+            onSaveFailed: () => {
+                setRecorderError(isExtensionContextValid() ? 'storage' : 'updated')
+                stopSession('error')
+            },
             onEnded: () => {
                 if (recorders.get(kind) !== recorder) return
                 recorders.delete(kind)
@@ -253,8 +260,13 @@ export default async () => {
         }
     }
 
+    // 録画を始めようとしている回。動画の準備を待っている間に止められた・待つのをやめた・別の方法で始まった時は変えて、
+    // 待っていた開始をしない（止めた後に、動画が再生できるようになった知らせで録画が始まらないように）
+    let startAttempt = 0
+
     const beginSession = () => {
         if (sessionActive) return
+        startAttempt++
         sessionActive = true
         sessionId++
         sessionStartedAt = Date.now()
@@ -268,6 +280,7 @@ export default async () => {
 
     // すべての種類の録画を止める
     const stopSession = (state: 'stopped' | 'error' = 'stopped') => {
+        startAttempt++
         sessionActive = false
         clearInterval(splitTimer)
         clearInterval(limitTimer)
@@ -465,21 +478,24 @@ export default async () => {
         if (!video) return
 
         if (sessionActive) return
+        const attempt = ++startAttempt
+        const isCurrent = () => attempt === startAttempt
 
         // 録画開始前の状態を準備中に設定
         stateManager.setState('preparing')
 
         // リロードボタンを押す共通関数
+        // 押したら true
         const clickReloadButton = (reason: string) => {
             if (!autoReloadOnFailure) {
                 console.log(`${reason}が発生しましたが、自動リロードが無効になっているためリロードしません`)
-                return
+                return false
             }
             const reloadButton = document.querySelector('button[class*="___reload-button___"]') as HTMLButtonElement
-            if (reloadButton) {
-                console.log(`${reason}のためリロードボタンを押します`)
-                reloadButton.click()
-            }
+            if (!reloadButton) return false
+            console.log(`${reason}のためリロードボタンを押します`)
+            reloadButton.click()
+            return true
         }
 
         // ヘルパー関数をinitStream内に定義
@@ -492,8 +508,8 @@ export default async () => {
         }
 
         const startRecordingFromStream = () => {
-            // 既に録画中なら二重に開始しない（待っている間に画面録画のボタンで始まった場合など）
-            if (sessionActive) return
+            // 既に録画中なら二重に開始しない（待っている間に画面録画のボタンで始まった場合など）。止められていたら始めない
+            if (sessionActive || !isCurrent()) return
 
             beginSession()
             startEnabledKinds()
@@ -506,17 +522,21 @@ export default async () => {
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
             const timeoutId = setTimeout(() => {
-                // 待っている間に別の方法（画面録画のボタンなど）で録画が始まっていれば何もしない
-                if (sessionActive) return
+                // 待っている間に別の方法（画面録画のボタンなど）で録画が始まった・止められた時は何もしない
+                if (sessionActive || !isCurrent()) return
                 // タイムアウトした場合は状態を停止中に設定
                 stateManager.setState('stopped')
-                clickReloadButton("動画の準備完了待機がタイムアウト")
+                // 動画を読み込み直した時だけ、再生できるようになるのを待ち続ける（そうでなければ待つのをやめる。
+                // 停止中と出ているのに、後で動画が再生できるようになった時に録画が始まらないように）
+                if (!clickReloadButton("動画の準備完了待機がタイムアウト")) startAttempt++
             }, 3000)
 
             video.addEventListener("canplay", () => {
+                if (!isCurrent()) return
                 console.log("動画が再生可能になりました。")
                 clearTimeout(timeoutId) // タイムアウトをクリア
                 setTimeout(() => {
+                    if (!isCurrent()) return
                     if (!video.paused && video.currentTime > 0) {
                         callback()
                     } else if (!sessionActive) {
@@ -546,6 +566,7 @@ export default async () => {
             } else if (isVideoPrepared(video)) {
                 console.log("動画が準備完了しましたが、再生状態を確認中...")
                 setTimeout(() => {
+                    if (!isCurrent()) return
                     if (isVideoReady(video)) {
                         console.log("動画の再生状態が確認できました")
                         startRecordingFromStream()
@@ -568,7 +589,11 @@ export default async () => {
         initStream()
     }
     const stop = () => {
-        if (!sessionActive) return
+        // 動画の準備を待っている間に止められたら、待っていた開始をしない
+        if (!sessionActive) {
+            startAttempt++
+            return
+        }
         stopSession('stopped')
     }
     // 動画の解像度が変わったら、元の解像度のまま録る種類は録画を分けて録り直す
@@ -731,7 +756,7 @@ export default async () => {
                 } else {
                     // 動画の準備は録画開始ボタンを押した時に待つので、ここでは待たずに開始できる状態にする
                     // （動画が一時停止中だと準備完了を検知できず、準備中のまま固まっていた）
-                    stateManager.setState('stopped')
+                    if (!sessionActive) stateManager.setState('stopped')
                 }
                 await new Promise(resolve => setTimeout(resolve, 1000))
 

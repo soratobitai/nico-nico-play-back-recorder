@@ -249,6 +249,15 @@ describe('終えられないまま残った区間', () => {
         expect((await listAllSegments()).map(s => s.segmentId)).toEqual(['C'])
     })
 
+    it('断片が1つもない区間を消すまでの時間は、別に長くできる（録画一覧から: 続きがニコ生側に一時保存されているかもしれないので）', async () => {
+        await createSegment(segment('E', 20_000))
+        const now = Date.now()
+
+        expect(await closeStaleSegments(1000, now + 2000, 3_600_000)).toEqual([])
+        expect((await listAllSegments()).map(s => [s.segmentId, s.endedAt])).toEqual([['E', null], ['C', 10_000]])
+        expect(await closeStaleSegments(1000, now + 3_600_000, 3_600_000)).toEqual(['E'])
+    })
+
     it('録った時刻が古くても、書き込んだばかりの区間（一時保存から移している・以前の録画を移している）は確定も削除もしない', async () => {
         await createSegment(segment('E', 20_000)) // 断片はこれから届く
 

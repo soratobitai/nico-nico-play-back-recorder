@@ -2,7 +2,8 @@
 // 実際の保存先は拡張機能側（bridge 経由）。録画中の書き込みは、拡張機能側に保存できない間は
 // ニコ生側に一時保存して録画を続け、次にページを開いた時に移す（flushPending）。
 import { getBridge, BridgeUnavailableError, isExtensionContextValid } from './client'
-import { savePendingRequest, flushPendingRequests, clearPendingRequests } from './pending'
+import { setPendingSigningKey, savePendingRequest, flushPendingRequests, clearPendingRequests } from './pending'
+import { PENDING_SIGNING_KEY } from '../storage'
 import { importLegacyRecordings } from './migrate'
 import { WRITE_REQUEST_TYPES, type BridgeRequest, type BridgeRequestOf, type BridgeRequestType, type BridgeResults } from './protocol'
 import type { NewSegment, NewFragment } from './db'
@@ -21,6 +22,22 @@ let pendingSaves = 0
 const setPendingLimit = (bytes: number) => {
     pendingLimit = bytes
 }
+
+// 一時保存に付ける印の鍵を読む（なければ作る）。拡張機能が更新された後も一時保存できるように、ページを開いた時に呼ぶ
+const initPendingSigning = async () => {
+    let encoded = await PENDING_SIGNING_KEY.getValue()
+    if (!encoded) {
+        const raw = crypto.getRandomValues(new Uint8Array(32))
+        await PENDING_SIGNING_KEY.setValue(btoa(String.fromCharCode(...raw)))
+        // 他のタブが同時に作っていたら、残った方を使う
+        encoded = await PENDING_SIGNING_KEY.getValue()
+    }
+    if (encoded) await setPendingSigningKey(Uint8Array.from(atob(encoded), c => c.charCodeAt(0)))
+}
+
+const isQuotaExceeded = (error: unknown) => error instanceof DOMException && error.name === 'QuotaExceededError'
+// 容量不足の時に、古い録画を消して空ける量の下限（書き込む量だけ空けても、すぐにまた足りなくなるため）
+const MIN_FREE_ON_QUOTA_BYTES = 64 * 1024 * 1024
 
 // このページで一時保存していて、まだ拡張機能側へ移していない区間か
 // （ページを閉じる時に、background に確定を頼まない。拡張機能側では断片のない区間として消されてしまい、
@@ -113,10 +130,23 @@ const flushPending = (): Promise<{ sent: number, complete: boolean }> => flushin
         // 拡張機能が更新された後は移せない（この後も一時保存を続ける）
         if (!isExtensionContextValid()) return { sent: 0, complete: false }
         const savesBefore = pendingSaves
-        const replay = () => flushPendingRequests(
-            async (request) => (await getBridge()).call(request),
-            error => error instanceof BridgeUnavailableError,
-        )
+        // 容量不足なら、古い録画を消してから1回だけ送り直す（それでも足りなければ、残りは次の機会に回す）
+        const send = async (request: BridgeRequest) => {
+            const bridge = await getBridge()
+            try {
+                return await bridge.call(request)
+            } catch (error) {
+                if (!isQuotaExceeded(error)) throw error
+                const { freed } = await bridge.call({ type: 'freeSpace', bytes: Math.max(bytesOf(request), MIN_FREE_ON_QUOTA_BYTES) })
+                if (freed === 0) throw error
+                return await bridge.call(request)
+            }
+        }
+        // 捨てるのは、送っても意味がない時だけ（区間が消されていた・同じ区間をもう作ってあった）
+        const replay = () => flushPendingRequests({
+            send,
+            isDiscardable: error => error instanceof Error && (error.name === 'SegmentNotFoundError' || error.name === 'ConstraintError'),
+        })
         // 一時保存した分はニコ生のタブで共有しているので、複数のタブで同時に移さない
         // （同じ書き込みを2つのタブが送ると順番が崩れ、例えば消した区間を作り直してしまう）。
         // 他のタブが移している間は、そのタブに任せる（移し終えるまで、このタブの書き込みも一時保存に続ける）
@@ -144,5 +174,5 @@ export {
     createSegment, setSegmentInit, appendFragments, finishSegment,
     getTimeline, getTimelineForSegments, getFragmentBlobs,
     getUsage, enforceLimit, freeSpace, closeStaleSegments, deleteSegments, clearAll, estimateStorage, flushPending, importLegacy,
-    setPendingLimit,
+    setPendingLimit, initPendingSigning,
 }

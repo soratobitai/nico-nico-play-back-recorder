@@ -97,6 +97,11 @@ const formatDate = (ms: number) => {
     const d = new Date(ms)
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}（${WEEKDAYS[d.getDay()]}）`
 }
+// 番組カードの日付（例: 10/21（火）。今年でなければ年も）
+const formatShortDate = (ms: number) => {
+    const d = new Date(ms)
+    return `${d.getFullYear() === new Date().getFullYear() ? '' : `${d.getFullYear()}/`}${d.getMonth() + 1}/${d.getDate()}（${WEEKDAYS[d.getDay()]}）`
+}
 const dayStart = (ms: number) => new Date(new Date(ms).toDateString()).getTime()
 // 終わりの時刻（始めた日と違う日なら「翌」か日付を付ける）
 const formatEnd = (start: number, end: number, seconds = false) => {
@@ -120,7 +125,7 @@ const programName = (program: ProgramSummary) => program.title || '（タイト�
 // その時刻の、録画を始めてからの時間・番組の経過時間・時刻（例: 12:34（番組 1:02:03）午後5:20時点）
 // 番組が始まった時刻が分からない以前の録画は、番組の経過時間を出さない
 const describeTime = (program: ProgramSummary, wallClock: number) =>
-    `${formatRecorded(wallClock - program.startedAt)}${program.beginAt ? `（番組 ${formatElapsed(wallClock - program.beginAt)}）` : ''}${formatBroadcastTime(wallClock)}時点`
+    `${formatRecorded(wallClock - program.startedAt)}${program.beginAt ? `（番組 ${formatElapsed(wallClock - program.beginAt)}）` : ' '}${formatBroadcastTime(wallClock)}時点`
 // 録り終えた区間（録画中の区間は書き込み中なので、消さない）
 const finishedSegments = (program: ProgramSummary) => program.segments.filter(segment => !isRecordingSegment(segment))
 
@@ -151,9 +156,10 @@ const ICONS = {
     trash: () => svg('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path>'),
     play: () => svg('<path d="M8 5.5v13l10.5-6.5z"></path>', 18, true),
 }
+// 録画した時に作った画像（data:image/）だけを使う（他の URL だと、録画一覧を開くたびに外へ読みに行ってしまう）
 const thumbnail = (src: string | null) => {
     const img = element('img')
-    img.src = src || DEFAULT_THUMBNAIL
+    img.src = src?.startsWith('data:image/') ? src : DEFAULT_THUMBNAIL
     img.alt = ''
     img.loading = 'lazy'
     img.decoding = 'async'
@@ -199,7 +205,7 @@ const loadSignatures = async () => {
 const load = async (focusFallback?: () => HTMLElement | null | undefined) => {
     try {
         // 録画していたタブが閉じられるなどして、録画中のまま残った区間を確定する
-        await db.closeStaleSegments(db.STALE_SEGMENT_IDLE_MS).catch((error) => console.warn('残っていた録画を確定できませんでした:', error))
+        await db.closeStaleSegments(db.STALE_SEGMENT_IDLE_MS, Date.now(), db.EMPTY_SEGMENT_IDLE_MS).catch((error) => console.warn('残っていた録画を確定できませんでした:', error))
         programs = summarizePrograms(await db.listAllSegments())
         await loadSignatures().catch((error) => console.warn('録画の設定を読めませんでした:', error))
     } catch (error) {
@@ -253,7 +259,7 @@ const renderList = () => {
     renderSelectBar()
 
     if (programs.length === 0) {
-        programList.replaceChildren(element('p', 'no-programs', 'まだ録画がありません。ニコ生の番組を開くと、自動で録画が始まります。'))
+        programList.replaceChildren(element('p', 'no-programs', 'まだ録画がありません。ニコ生の番組を録画すると、ここに番組ごとに並びます。'))
         return
     }
     const filtered = sortPrograms(filterPrograms(programs, query, kindFilter), order)
@@ -293,7 +299,8 @@ const programCard = (program: ProgramSummary) => {
     thumb.append(element('span', 'length', formatDuration(recordedSeconds(program.segments))))
 
     const body = element('span', 'card-body')
-    const time = `${formatTime(program.startedAt)}〜${program.recording ? '' : formatEnd(program.startedAt, program.endedAt)}`
+    // 日付も付ける（大きい順や狭い画面では日ごとの見出しがなく、日をまたいだ番組は見出しの日と始めた日が違うので）
+    const time = `${formatShortDate(program.startedAt)}${formatTime(program.startedAt)}〜${program.recording ? '' : formatEnd(program.startedAt, program.endedAt)}`
     const foot = element('span', 'card-foot')
     foot.append(kindDots(program.kinds), element('span', undefined, formatBytes(program.bytes)))
     body.append(
@@ -366,7 +373,7 @@ $<HTMLButtonElement>('selectDelete').addEventListener('click', async () => {
     if (!confirm(`${chosen.length}番組の録画（${formatBytes(bytes)}）を削除しますか？${note}`)) return
     selecting = null
     await deleteAndReload(segments.map(segment => segment.segmentId))
-    selectModeButton.focus()
+    ;(selectModeButton.hidden ? searchInput : selectModeButton).focus()
 })
 
 // ---- 選んだ番組 ----
@@ -385,7 +392,7 @@ const renderProgram = () => {
         programSection.hidden = true
         emptyState.hidden = false
         emptyState.textContent = programs.length === 0
-            ? 'まだ録画がありません。\nニコ生の番組を開くと、自動で録画が始まります。'
+            ? 'まだ録画がありません。\nニコ生の番組を録画すると、ここに番組ごとに並びます。'
             : selectedKey ? 'この番組の録画はありません。\n左の一覧から番組を選んでください。' : '左の一覧から番組を選んでください。'
         document.title = PAGE_TITLE
         return
@@ -531,10 +538,13 @@ const menus = [
     { button: downloadMenuButton, menu: downloadMenu },
     { button: moreButton, menu: moreMenu },
 ]
+// メニューの中にフォーカスがあれば、開いたボタンへ戻す（メニューを隠すと、フォーカスがページの先頭へ外れるので）
 const closeMenus = () => {
     for (const { button, menu } of menus) {
+        const hadFocus = menu.contains(document.activeElement)
         menu.hidden = true
         button.setAttribute('aria-expanded', 'false')
+        if (hadFocus) button.focus()
     }
 }
 for (const { button, menu } of menus) {
@@ -944,7 +954,7 @@ setupLegacyImport({
     notice: $<HTMLDivElement>('legacyNotice'),
     status: $<HTMLSpanElement>('legacyStatus'),
     dialog: $<HTMLDialogElement>('legacyDialog'),
-    usageBytes: () => programs.reduce((sum, program) => sum + program.bytes, 0),
+    usageBytes: async () => (await db.getUsage()).bytes,
     formatBytes,
     reload: () => load(),
 })

@@ -1,9 +1,14 @@
 // 拡張機能側に保存できない間（拡張機能が更新された直後など）の録画中の書き込みを、
 // ニコ生側（ページの IndexedDB）に一時保存しておき、次にページを開いた時に拡張機能側へ移す
-import type { BridgeRequest } from './protocol'
+// 一時保存はニコ生のページの IndexedDB にあり、ページのスクリプトも読み書きできる。そこで、拡張機能だけが知っている鍵で
+// 依頼に印（HMAC）を付けて保存し、印の正しい依頼だけを移す（ページのスクリプトが「すべて消す」などの依頼を
+// 紛れ込ませても、拡張機能側へは送らない）。移すのは録画中の書き込みの種類だけ
+import { WRITE_REQUEST_TYPES, type BridgeRequest } from './protocol'
 
 const DB_NAME = 'PlaybackPending'
 const STORE = 'requests'
+
+type PendingRecord = { request: BridgeRequest, signature: ArrayBuffer }
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -40,32 +45,81 @@ const hasPendingDB = async () => {
     return (await indexedDB.databases()).some(db => db.name === DB_NAME)
 }
 
-const savePendingRequest = (request: BridgeRequest) => run('readwrite', store => store.add(request))
+// ---- 印（HMAC） ----
+
+let signingKey: CryptoKey | null = null
+
+// 印に使う鍵を設定する（拡張機能の保存領域に置いた鍵。拡張機能が更新された後も一時保存できるように、ページを開いた時に読んでおく）
+const setPendingSigningKey = async (raw: Uint8Array) => {
+    signingKey = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
+}
+
+const toHex = (buffer: ArrayBuffer) => Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('')
+
+// 印を付ける中身（Blob は中身のハッシュにする。オブジェクトはキーの順にそろえる）
+const canonical = async (value: unknown): Promise<unknown> => {
+    if (value instanceof Blob) return { blob: toHex(await crypto.subtle.digest('SHA-256', await value.arrayBuffer())), size: value.size, type: value.type }
+    if (Array.isArray(value)) return Promise.all(value.map(canonical))
+    if (value && typeof value === 'object') {
+        const out: Record<string, unknown> = {}
+        for (const key of Object.keys(value).sort()) out[key] = await canonical((value as Record<string, unknown>)[key])
+        return out
+    }
+    return value
+}
+const signedBytes = async (request: BridgeRequest) => new TextEncoder().encode(JSON.stringify(await canonical(request)))
+
+// 拡張機能が書いた依頼なら、その依頼（録画中の書き込みの種類で、印が正しい）。そうでなければ null
+const genuineRequest = async (record: unknown): Promise<BridgeRequest | null> => {
+    if (!signingKey || !record || typeof record !== 'object') return null
+    const { request, signature } = record as Partial<PendingRecord>
+    if (!request || typeof request !== 'object' || !WRITE_REQUEST_TYPES.has(request.type) || !(signature instanceof ArrayBuffer)) return null
+    try {
+        return await crypto.subtle.verify('HMAC', signingKey, signature, await signedBytes(request)) ? request : null
+    } catch {
+        return null
+    }
+}
+
+// 一時保存する（鍵がなければ、移せない依頼になるので保存しない）
+const savePendingRequest = async (request: BridgeRequest) => {
+    if (!signingKey) throw new Error('一時保存の鍵がありません')
+    const signature = await crypto.subtle.sign('HMAC', signingKey, await signedBytes(request))
+    const record: PendingRecord = { request, signature }
+    await run('readwrite', store => store.add(record))
+}
+
+type FlushOptions = {
+    send: (request: BridgeRequest) => Promise<unknown>
+    // 送っても意味がないので捨ててよいエラー（区間が消されていた・同じ区間をもう作ってあった など）
+    isDiscardable: (error: unknown) => boolean
+}
 
 // 一時保存した書き込みを、届いた順に send で送る。送れたものから消す
-// 送り先とやり取りできない（isUnavailable が true の）エラーになったら、残りは次の機会に回す。
-// それ以外のエラー（区間が消されていた など）は、送っても意味がないので捨てる
+// 捨ててよいエラーなら捨てて続ける。それ以外（拡張機能側とやり取りできない・容量不足 など）は、残りを次の機会に回す
+// 印の正しくない依頼（ページのスクリプトが入れたもの）は、送らずに捨てる。鍵がなければ移さない
 // 送った数と、一時保存した書き込みが残っていないか（送っている間に増えた分も送る）を返す
-const flushPendingRequests = async (
-    send: (request: BridgeRequest) => Promise<unknown>,
-    isUnavailable: (error: unknown) => boolean,
-): Promise<{ sent: number, complete: boolean }> => {
+const flushPendingRequests = async ({ send, isDiscardable }: FlushOptions): Promise<{ sent: number, complete: boolean }> => {
     if (!(await hasPendingDB())) return { sent: 0, complete: true }
+    if (!signingKey) return { sent: 0, complete: false }
 
     let sent = 0
     for (;;) {
         const keys = await run('readonly', store => store.getAllKeys())
         if (keys.length === 0) return { sent, complete: true }
         for (const key of keys) {
-            const request = await run<BridgeRequest | undefined>('readonly', store => store.get(key))
+            const record = await run<unknown>('readonly', store => store.get(key))
+            const request = await genuineRequest(record)
             if (request) {
                 try {
                     await send(request)
                     sent++
                 } catch (error) {
-                    if (isUnavailable(error)) return { sent, complete: false }
+                    if (!isDiscardable(error)) return { sent, complete: false }
                     console.log('一時保存した書き込みを移せなかったため捨てます:', request.type, error)
                 }
+            } else if (record !== undefined) {
+                console.log('拡張機能が書いたものではない一時保存の依頼を捨てます')
             }
             await run('readwrite', store => store.delete(key))
         }
@@ -84,7 +138,7 @@ const clearPendingRequests = async () => {
         request.onsuccess = () => {
             const cursor = request.result
             if (!cursor) return
-            if ((cursor.value as BridgeRequest).type === 'appendFragments') cursor.delete()
+            if ((cursor.value as Partial<PendingRecord> | undefined)?.request?.type === 'appendFragments') cursor.delete()
             cursor.continue()
         }
         tx.oncomplete = () => resolve()
@@ -92,4 +146,4 @@ const clearPendingRequests = async () => {
     })
 }
 
-export { savePendingRequest, flushPendingRequests, clearPendingRequests }
+export { setPendingSigningKey, savePendingRequest, flushPendingRequests, clearPendingRequests }

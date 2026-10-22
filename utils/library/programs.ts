@@ -19,6 +19,8 @@ type ProgramSummary = {
 const KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
 
 // 以前のバージョンから移した録画は番組が分からないので、配信者とタイトルで見分ける
+// （同じ配信者・タイトルでも、これより間が空いた録画は別の配信として、別の番組にする。毎回同じタイトルの配信が1つにならないように）
+const LEGACY_SESSION_GAP_MS = 30 * 60 * 1000
 const programKeyOf = (segment: Pick<SegmentSummary, 'programId' | 'title' | 'userName'>) =>
     segment.programId === 'legacy' ? `legacy:${segment.userName}:${segment.title}` : segment.programId
 
@@ -33,8 +35,19 @@ const isRecordingSegment = (segment: SegmentSummary, now = Date.now()) =>
 // 区間を番組ごとにまとめる。最近録った番組から順に並べる
 const summarizePrograms = (segments: SegmentSummary[], now = Date.now()): ProgramSummary[] => {
     const programs = new Map<string, ProgramSummary>()
+    // 以前のバージョンの録画: 配信者・タイトルごとの、今の配信（番組の key と、最後に録り終えた時刻）
+    const legacySessions = new Map<string, { key: string, endedAt: number }>()
     for (const segment of [...segments].sort((a, b) => a.startedAt - b.startedAt)) {
-        const key = programKeyOf(segment)
+        let key = programKeyOf(segment)
+        if (segment.programId === 'legacy') {
+            let session = legacySessions.get(key)
+            if (!session || segment.startedAt - session.endedAt > LEGACY_SESSION_GAP_MS) {
+                session = { key: `${key}:${segment.startedAt}`, endedAt: segmentEnd(segment) }
+                legacySessions.set(key, session)
+            }
+            session.endedAt = Math.max(session.endedAt, segmentEnd(segment))
+            key = session.key
+        }
         let program = programs.get(key)
         if (!program) {
             program = {
@@ -60,12 +73,13 @@ const summarizePrograms = (segments: SegmentSummary[], now = Date.now()): Progra
     return [...programs.values()].sort((a, b) => b.endedAt - a.endedAt)
 }
 
-// 番組を、検索の言葉（タイトル・配信者）と種類で絞り込む
+// 番組を、検索の言葉（タイトル・配信者）と種類で絞り込む（全角・半角、大文字・小文字は区別しない）
+const normalizeText = (text: string) => text.normalize('NFKC').toLowerCase()
 const filterPrograms = (programs: ProgramSummary[], query: string, kind: RecordingKind | null) => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+    const words = normalizeText(query).split(/\s+/).filter(Boolean)
     return programs.filter((program) => {
         if (kind && !program.kinds.includes(kind)) return false
-        const text = `${program.title} ${program.userName}`.toLowerCase()
+        const text = normalizeText(`${program.title} ${program.userName}`)
         return words.every(word => text.includes(word))
     })
 }
