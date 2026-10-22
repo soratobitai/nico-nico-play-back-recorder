@@ -1,10 +1,12 @@
 // 以前のバージョンの録画（ニコ生のサイトデータに残っているもの）を、録画一覧から手動で取り込む
 // 以前の録画はニコ生のサイトデータにあるので、録画一覧のページ（拡張機能のページ）からは読めない。
-// 録画一覧が取り込み用のニコ生のページ（LEGACY_IMPORT_URL）を裏で開き、そのページの content script が
-// 開いてすぐ拡張機能側の保存先へ移して、進み具合を知らせる。
-//   録画一覧 → 取り込み用のタブ: LEGACY_IMPORT_START_MESSAGE（前に開いたタブで、もう一度始める）・LEGACY_IMPORT_CANCEL_MESSAGE（やめる）
-//   取り込み用のタブ → 録画一覧・background: LEGACY_IMPORT_PROGRESS_MESSAGE（進み具合。終わったら finished）
+// 録画一覧に、取り込み用のニコ生のページ（LEGACY_IMPORT_URL。とても軽い robots.txt）を見えない枠で埋め込み、
+// そのページの content script が拡張機能側の保存先へ移して、進み具合を知らせる（新しいタブを開かない）。
+// 埋め込んだページからニコ生のサイトデータが読めない時（Chrome の決まりが変わった など）は、同じページを裏のタブで開いて取り込む。
+//   録画一覧 → 取り込み用のページ: LEGACY_IMPORT_START_MESSAGE（前に開いたタブで、もう一度始める）・LEGACY_IMPORT_CANCEL_MESSAGE（やめる）
+//   取り込み用のページ → 録画一覧・background: LEGACY_IMPORT_PROGRESS_MESSAGE（進み具合。終わったら finished）
 //   取り込み用のタブ → background: LEGACY_IMPORT_CHECK_MESSAGE（録画一覧が開いたタブか。URL だけでは始めない）
+// 録画一覧を開いた時は、数える用のページ（LEGACY_COUNT_URL）を埋め込んで、以前の録画が残っているかを数え直す
 import type { LegacyImportProgress, LegacyImportResult } from './migrate'
 
 const LEGACY_IMPORT_START_MESSAGE = 'playback-legacy:start'
@@ -12,18 +14,23 @@ const LEGACY_IMPORT_CANCEL_MESSAGE = 'playback-legacy:cancel'
 const LEGACY_IMPORT_PROGRESS_MESSAGE = 'playback-legacy:progress'
 const LEGACY_IMPORT_CHECK_MESSAGE = 'playback-legacy:check'
 
-// 取り込むために裏で開くニコ生のページ（トップページに、取り込み用の印を付ける）
+// 取り込み用・数える用のニコ生のページ（robots.txt に印を付ける。とても軽く、埋め込みも禁止されていない）
 const LEGACY_IMPORT_PARAM = 'npr-import'
-const LEGACY_IMPORT_URL = `https://live.nicovideo.jp/?${LEGACY_IMPORT_PARAM}=1`
-// 取り込み用に開いたページか（他のページへ移ったタブでは取り込まない・閉じない）
-const isLegacyImportPage = (url: string | undefined) => {
+const LEGACY_COUNT_PARAM = 'npr-count'
+const LEGACY_PAGE = 'https://live.nicovideo.jp/robots.txt'
+const LEGACY_IMPORT_URL = `${LEGACY_PAGE}?${LEGACY_IMPORT_PARAM}=1`
+const LEGACY_COUNT_URL = `${LEGACY_PAGE}?${LEGACY_COUNT_PARAM}=1`
+const hasParam = (url: string | undefined, param: string) => {
     try {
-        return !!url && new URL(url).searchParams.has(LEGACY_IMPORT_PARAM)
+        return !!url && new URL(url).searchParams.has(param)
     } catch {
         return false
     }
 }
-// 取り込むために開いたタブ（chrome.storage.session。録画一覧を閉じても、取り込み終えたら background が閉じる）
+// 取り込み用のページか（他のページへ移ったタブでは取り込まない・閉じない）
+const isLegacyImportPage = (url: string | undefined) => hasParam(url, LEGACY_IMPORT_PARAM)
+const isLegacyCountPage = (url: string | undefined) => hasParam(url, LEGACY_COUNT_PARAM)
+// 取り込むために開いたタブ（埋め込めなかった時だけ。chrome.storage.session。録画一覧を閉じても、取り込み終えたら background が閉じる）
 const LEGACY_IMPORT_TAB_KEY = 'legacyImportTabId'
 
 type LegacyImportMessage = {
@@ -35,6 +42,6 @@ type LegacyImportMessage = {
 
 export {
     LEGACY_IMPORT_START_MESSAGE, LEGACY_IMPORT_CANCEL_MESSAGE, LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE,
-    LEGACY_IMPORT_URL, LEGACY_IMPORT_TAB_KEY, isLegacyImportPage,
+    LEGACY_IMPORT_URL, LEGACY_COUNT_URL, LEGACY_IMPORT_TAB_KEY, isLegacyImportPage, isLegacyCountPage,
 }
 export type { LegacyImportMessage }
