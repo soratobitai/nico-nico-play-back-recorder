@@ -12,7 +12,7 @@ import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '.
 import { KIND_ICON_PATHS, SCREEN_DOT } from '../kind-icons'
 import { createRowFitter } from './fit'
 import { downloadBlob, formatDateForFileName } from '../feature'
-import { buildClipFile } from './clip'
+import { CLIP_SECONDS, buildClipFile } from './clip'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
 const INITIAL_BEHIND_SECONDS = 30
@@ -21,8 +21,6 @@ const LIVE_EDGE_SECONDS = 8
 // ライブからこれ以内なら「ライブ」とみなす（録画は数秒ごとの断片で届くので、少し遅れる）
 const LIVE_THRESHOLD_SECONDS = 15
 const SKIP_SECONDS = 10
-// 「この場面の前後を動画で保存」で切り出す長さ（場面の前と後ろ、それぞれ）
-const CLIP_SECONDS = 30
 // 保存先から番組の録画を読み直す間隔（録画中に増えた分や、容量の上限を超えて消された部分を反映する）
 const SYNC_INTERVAL_MS = 30 * 1000
 // 再生できない所を飛ばすのは、1分にこの回数まで（それより多ければ、飛ばし続けずにお知らせする）
@@ -104,6 +102,11 @@ const isExtensionGone = () => {
         return true
     }
 }
+
+// 場面を保存するファイルの名前（配信者_タイトル_時刻。録画一覧の「保存」と同じく、コメントなし以外は種類を付ける）
+// プレイバック・録画一覧・録画バーの「前後1分」で使う
+const sceneFileName = (prefix: string | undefined, kind: RecordingKind, wallClock: number, extension: string) =>
+    `${[prefix, formatDateForFileName(wallClock)].filter(Boolean).join('_')}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.${extension}`
 
 // 押せないように見せる（disabled と違って、フォーカスは外れない。押された時の処理で、押せない時は何もしない）
 const setAriaDisabled = (button: HTMLButtonElement, value: boolean) => {
@@ -475,9 +478,8 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
 
     const skip = (seconds: number) => player.seek(player.position + seconds, { backward: seconds < 0 })
 
-    // 保存するファイルの名前（配信者_タイトル_時刻。録画一覧の「保存」と同じく、コメントなし以外は種類を付ける）
     const saveFileName = (kind: RecordingKind, wallClock: number, extension: string) =>
-        `${[screenshotName?.(), formatDateForFileName(wallClock)].filter(Boolean).join('_')}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.${extension}`
+        sceneFileName(screenshotName?.(), kind, wallClock, extension)
 
     // ---- スクリーンショット（今表示している場面を、録画の解像度の PNG で保存する）----
     let flashTimer: ReturnType<typeof setTimeout> | undefined
@@ -822,5 +824,5 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
 
 type ReviewView = ReturnType<typeof mountReviewView>
 
-export { mountReviewView, KIND_LABELS }
+export { mountReviewView, sceneFileName, KIND_LABELS }
 export type { ReviewView, ReviewViewState, ReviewViewOptions }

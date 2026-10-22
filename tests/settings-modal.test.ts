@@ -380,6 +380,8 @@ describe('設定画面', () => {
             expect(document.getElementById('recordScreenCheckbox')).toBeNull()
             expect(document.querySelectorAll('[aria-labelledby="nprKindsTitle"] input[type="checkbox"]')).toHaveLength(2)
             expect(document.querySelector('.npr-kind-screen')?.textContent).toContain('録画バーの「画面録画」を押して始めます')
+            // 画面のままを録るので、カーソルや重なったものも入ることを知らせる
+            expect(document.querySelector('.npr-kind-screen')?.textContent).toContain('マウスのカーソルや、プレイヤーに重なって表示されたもの')
         })
 
         it('画面録画を使えない環境では、使えないことだけ出す', () => {

@@ -283,6 +283,27 @@
 #capButton svg { width: 19px; height: 19px; }
 .npr-icon-button:hover,
 .npr-icon-button[aria-expanded="true"] { background: var(--npr-surface-hover); color: var(--npr-text); }
+/* 前後1分（録画中だけ使える。押した後は、後ろの分が録画されるまでの残りの秒数を右下に出す） */
+#clipButton { position: relative; }
+#clipButton[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+#clipButton[aria-disabled="true"]:hover { background: transparent; color: #9ea3b0; }
+#clipButton[data-waiting] { opacity: 1; color: var(--npr-text); }
+.npr-clip-count {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: rgb(var(--npr-accent-rgb));
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  box-sizing: border-box;
+}
+.npr-clip-count:empty { display: none; }
 
 .npr-record {
   height: 28px;
@@ -318,44 +339,49 @@
 /* 幅が狭い時は、文字を小さくし、アイコンだけにする（文字は読み上げには残す）。
    「録画一覧」「プレイバック」「画面録画」の文字はできるだけ残し、録画開始・停止の文字、録画時間、
    録画の状態の文字から先に詰める。
-   はみ出さないように、各段階で中身が必要とする幅を測って、次の段階へ切り替える幅を決めている */
+   はみ出さないように、各段階で中身が必要とする幅を測って、次の段階へ切り替える幅を決めている
+   （「前後1分」のボタンを足した時に、ボタン1つ分（28px と間の 4px）ずつ広げた） */
 /* 1. 画面録画・プレイバックの文字を小さくする */
-@container (max-width: 710px) {
+@container (max-width: 742px) {
   .npr-screen-button { padding: 0 10px 0 8px; gap: 5px; font-size: 9.5px; }
   #playbackButton { padding: 0 8px; gap: 5px; font-size: 9.5px; }
 }
 /* 2. 録画開始・停止をアイコンだけにする */
-@container (max-width: 695px) {
+@container (max-width: 727px) {
   .npr-bar .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-record { width: 28px; padding: 0; justify-content: center; }
 }
 /* 3. 録画時間を隠す */
-@container (max-width: 655px) {
+@container (max-width: 687px) {
   .npr-time { display: none; }
 }
 /* 4. 録画の状態の文字を隠す（色の丸だけにする） */
-@container (max-width: 590px) {
+@container (max-width: 622px) {
   .npr-bar .npr-status-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .npr-kinds,
   .npr-screen { padding-left: 8px; }
 }
 /* 5. 録画一覧をアイコンだけにする */
-@container (max-width: 535px) {
+@container (max-width: 567px) {
   #recordingsButton { width: 28px; padding: 0; justify-content: center; }
   #recordingsButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 /* 6. プレイバックをアイコンだけにする */
-@container (max-width: 480px) {
+@container (max-width: 512px) {
   #playbackButton { width: 28px; padding: 0; justify-content: center; }
   #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 /* 7. 画面録画をアイコンだけにする */
-@container (max-width: 415px) {
+@container (max-width: 447px) {
   .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
   .npr-screen-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
-/* 8. 録る種類のチップの余白を詰める */
-@container (max-width: 350px) {
+/* 8. 前後1分のボタンを隠す（ボタンを足す前と同じ幅まで入るように。前後1分は、プレイバック・録画一覧からも保存できる） */
+@container (max-width: 364px) {
+  #clipButton { display: none; }
+}
+/* 9. 録る種類のチップの余白を詰める */
+@container (max-width: 382px) {
   .npr-chip { padding: 0 6px; gap: 4px; }
   .npr-kinds { gap: 3px; }
 }

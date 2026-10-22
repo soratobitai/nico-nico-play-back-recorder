@@ -8,7 +8,7 @@ import { downloadBlob } from '@/utils/feature'
 import { buildClipFile, type ClipFile } from '@/utils/review/clip'
 
 vi.mock('@/utils/feature', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/feature')>()), downloadBlob: vi.fn() }))
-vi.mock('@/utils/review/clip', () => ({ buildClipFile: vi.fn() }))
+vi.mock('@/utils/review/clip', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/review/clip')>()), buildClipFile: vi.fn() }))
 
 type FakePlayer = { timeline: Timeline, position: number, seek: ReturnType<typeof vi.fn> }
 const players: FakePlayer[] = []

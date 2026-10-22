@@ -1,10 +1,11 @@
 // ニコ生のページに置く録画バー（プレイヤーの下の1行）
 // 左: 録画の状態と録画時間 / 中: 録る種類（コメントなし・コメントあり。設定のショートカット）と、画面録画を始めるボタン /
-// 右: プレイバック・録画一覧・スクリーンショット・設定・録画開始/停止
+// 右: プレイバック・録画一覧・スクリーンショット・前後1分・設定・録画開始/停止
 // 録画の再生・保存・削除は、録画一覧のページ（拡張機能のページ）で行う。
 import { getScreenShotAndDownload } from "./feature"
 import { UI_COLLAPSED } from "./storage"
 import { KIND_ICON_PATHS, SCREEN_DOT } from "./kind-icons"
+import { CLIP_SECONDS } from "./review/clip"
 
 type BarState = 'preparing' | 'recording' | 'stopped' | 'error'
 type VideoKind = 'video' | 'comments'
@@ -17,6 +18,7 @@ type RecorderBarOptions = {
     toggleScreenCapture: (() => void) | null // 画面録画を始める・やめる。使えない環境では null（ボタンを出さない）
     togglePlayback: (() => void) | null // プレイバック（別ウィンドウ）を使えない環境では null（ボタンを出さない）
     openRecordings: () => void // 録画一覧のページを開く
+    saveClip: (() => void) | null // 押した時の前後を動画で保存する。使えない環境（mp4 で録画できない）では null（ボタンを出さない）
 }
 
 const BAR_ID = 'playbackRecorderBar'
@@ -33,6 +35,7 @@ const ICONS = {
     play: icon('<path d="M8 5.5v13l10.5-6.5z"></path>', true),
     list: icon('<rect x="3" y="4" width="18" height="6" rx="1.5"></rect><rect x="3" y="14" width="18" height="6" rx="1.5"></rect>'),
     camera: icon('<path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle>'),
+    film: icon('<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 4v16M17 4v16M3 8h4M3 12h4M3 16h4M17 8h4M17 12h4M17 16h4"></path>'),
     gear: icon('<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>'),
     record: '<span class="npr-record-dot" aria-hidden="true"></span>',
     stop: icon('<rect x="6" y="6" width="12" height="12" rx="2"></rect>', true),
@@ -80,6 +83,7 @@ const BAR_HTML = `
       ${ICONS.list}<span class="npr-label">録画一覧</span>
     </button>
     <button type="button" id="capButton" class="npr-icon-button" aria-label="スクリーンショット" title="スクリーンショットを保存">${ICONS.camera}</button>
+    <button type="button" id="clipButton" class="npr-icon-button" aria-label="前後${CLIP_SECONDS * 2 / 60}分を動画で保存" hidden>${ICONS.film}<span class="npr-clip-count" aria-hidden="true"></span></button>
     <button type="button" id="settingsButton" class="npr-icon-button" aria-label="設定" title="設定">${ICONS.gear}</button>
     <button type="button" id="recordButton" class="npr-record" disabled>
       <span class="npr-record-icon">${ICONS.record}</span><span class="npr-record-label">録画開始</span>
@@ -92,6 +96,8 @@ let bar: HTMLElement | null = null
 let recordButton: HTMLButtonElement | null = null
 let screenCaptureButton: HTMLButtonElement | null = null
 let playbackButton: HTMLButtonElement | null = null
+let clipButton: HTMLButtonElement | null = null
+let clipRemaining: number | null = null // 前後1分の動画を作るのを待っている時の、残りの秒数
 let state: BarState = 'preparing'
 let hintTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -105,7 +111,7 @@ const stopSpaceOnButton = (event: KeyboardEvent) => {
 }
 
 // 録画バーをプレイヤーの下に作る
-const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreenCapture, togglePlayback, openRecordings }: RecorderBarOptions) => {
+const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreenCapture, togglePlayback, openRecordings, saveClip }: RecorderBarOptions) => {
     const controlArea = document.querySelector('[class*="_control-area_"]')
     if (!controlArea) return
     controlArea.insertAdjacentHTML("afterend", BAR_HTML)
@@ -119,6 +125,7 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     recordButton = $<HTMLButtonElement>('#recordButton')
     screenCaptureButton = $<HTMLButtonElement>('#screenCaptureButton')
     playbackButton = $<HTMLButtonElement>('#playbackButton')
+    clipButton = $<HTMLButtonElement>('#clipButton')
 
     // 録画開始・停止（1つのボタンで切り替える。ダブルクリックの2回目で、止めた録画をまた始めないように、続けて押した分は無視する）
     recordButton.addEventListener('click', (event) => {
@@ -151,6 +158,10 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
 
     $<HTMLButtonElement>('#recordingsButton').addEventListener('click', openRecordings)
     $<HTMLButtonElement>('#capButton').addEventListener('click', getScreenShotAndDownload)
+    if (saveClip) {
+        clipButton.hidden = false
+        clipButton.addEventListener('click', saveClip)
+    }
     $<HTMLButtonElement>('#settingsButton').addEventListener('click', showSettings)
 
     // 幅や中身（録画時間・ボタンの文字・状態など）が変わったら、入り切るか確かめ直す
@@ -159,7 +170,7 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     for (const element of [bar, ...bar.children]) resizeObserver.observe(element)
     new MutationObserver(scheduleFit).observe(bar, {
         subtree: true, childList: true, characterData: true,
-        attributes: true, attributeFilter: ['data-state', 'hidden', 'aria-pressed'],
+        attributes: true, attributeFilter: ['data-state', 'hidden', 'aria-pressed', 'data-waiting'],
     })
     scheduleFit()
 
@@ -219,6 +230,28 @@ const setRecorderState = (next: BarState) => {
     recordButton.querySelector('.npr-record-icon')!.innerHTML = recording ? ICONS.stop : ICONS.record
     recordButton.querySelector('.npr-record-label')!.textContent = recording ? '停止' : '録画開始'
     recordButton.title = recording ? '録画を止めます' : next === 'preparing' ? '動画の読み込みを待っています' : '録画を始めます'
+    updateClipButton()
+}
+
+// 前後1分のボタンの表示（録画中だけ使える。押した後は、後ろの分が録画されるまでの残りの秒数を出す）
+const updateClipButton = () => {
+    if (!clipButton) return
+    const waiting = clipRemaining !== null
+    clipButton.toggleAttribute('data-waiting', waiting)
+    clipButton.querySelector('.npr-clip-count')!.textContent = waiting ? String(clipRemaining) : ''
+    if (waiting || state !== 'recording') clipButton.setAttribute('aria-disabled', 'true')
+    else clipButton.removeAttribute('aria-disabled')
+    clipButton.title = waiting
+        ? (clipRemaining! > 0 ? `前後${CLIP_SECONDS * 2 / 60}分の動画を作っています（後ろの分が録画されるまで、あと${clipRemaining}秒）` : `前後${CLIP_SECONDS * 2 / 60}分の動画を作っています`)
+        : state === 'recording'
+            ? `押した時の前後${CLIP_SECONDS}秒ずつ（計${CLIP_SECONDS * 2 / 60}分）を動画で保存します（後ろの${CLIP_SECONDS}秒が録画されてから保存します）`
+            : `録画中に押すと、押した時の前後${CLIP_SECONDS}秒ずつ（計${CLIP_SECONDS * 2 / 60}分）を動画で保存します`
+}
+
+// 前後1分の動画を作るのを待っている時の、残りの秒数（null: 待っていない）
+const setClipWaiting = (remainingSeconds: number | null) => {
+    clipRemaining = remainingSeconds
+    updateClipButton()
 }
 
 // 録る種類（設定）の表示
@@ -327,6 +360,7 @@ export {
     showBarHint,
     setScreenCaptureButton,
     setPlaybackButton,
+    setClipWaiting,
     getTimeString,
     insertToggleButton,
     updateToggleButton,

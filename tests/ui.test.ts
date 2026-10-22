@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertRecorderBar, setRecorderState, setKindChips, setKindRecording, showBarHint, setScreenCaptureButton, setPlaybackButton, getTimeString } from '@/utils/ui'
+import { insertRecorderBar, setRecorderState, setKindChips, setKindRecording, showBarHint, setScreenCaptureButton, setPlaybackButton, setClipWaiting, getTimeString } from '@/utils/ui'
 import { isPlaybackSupported } from '@/utils/review/window'
 import { getProgramData } from '@/utils/feature'
 
@@ -14,6 +14,7 @@ const options = (overrides: Partial<Parameters<typeof insertRecorderBar>[0]> = {
     toggleScreenCapture: null,
     togglePlayback: null,
     openRecordings: vi.fn(),
+    saveClip: null,
     ...overrides,
 })
 
@@ -259,5 +260,46 @@ describe('getProgramData', () => {
 
         document.head.innerHTML = ''
         expect(getProgramData().userName).toBe('')
+    })
+})
+
+describe('録画バーの「前後1分」', () => {
+    it('使えない環境（mp4 で録画できない）ではボタンを出さない', () => {
+        insertRecorderBar(options())
+        expect($<HTMLButtonElement>('#clipButton').hidden).toBe(true)
+    })
+
+    it('録画中だけ押せるように見せ、押すと保存を始める', () => {
+        const saveClip = vi.fn()
+        insertRecorderBar(options({ saveClip }))
+        const button = $<HTMLButtonElement>('#clipButton')
+        expect(button.hidden).toBe(false)
+
+        setRecorderState('stopped')
+        expect(button.getAttribute('aria-disabled')).toBe('true')
+        expect(button.title).toContain('録画中に押すと')
+
+        setRecorderState('recording')
+        expect(button.hasAttribute('aria-disabled')).toBe(false)
+        expect(button.title).toContain('押した時の前後30秒ずつ（計1分）')
+        button.click()
+        expect(saveClip).toHaveBeenCalledTimes(1)
+    })
+
+    it('後ろの分が録画されるのを待っている間は、残りの秒数を出し、押せないように見せる', () => {
+        insertRecorderBar(options({ saveClip: vi.fn() }))
+        setRecorderState('recording')
+        const button = $<HTMLButtonElement>('#clipButton')
+
+        setClipWaiting(30)
+        expect(button.hasAttribute('data-waiting')).toBe(true)
+        expect(button.querySelector('.npr-clip-count')!.textContent).toBe('30')
+        expect(button.getAttribute('aria-disabled')).toBe('true')
+        expect(button.title).toContain('あと30秒')
+
+        setClipWaiting(null)
+        expect(button.hasAttribute('data-waiting')).toBe(false)
+        expect(button.querySelector('.npr-clip-count')!.textContent).toBe('')
+        expect(button.hasAttribute('aria-disabled')).toBe(false)
     })
 })

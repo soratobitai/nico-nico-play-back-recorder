@@ -5,7 +5,11 @@
 // （つなぐと再生できない・離れた時刻の場面が続いて見えるため）。1回で1本だけ作る
 // （続けて何本もダウンロードすると、2本目から Chrome に止められるため）
 import { buildFmp4File, initSignature, moofSizeOf } from '../fmp4'
-import { MAX_CONTINUOUS_GAP_SECONDS, type PlacedFragment, type PlacedSegment, type Timeline } from './timeline'
+import { MAX_CONTINUOUS_GAP_SECONDS, Timeline, type PlacedFragment, type PlacedSegment } from './timeline'
+import type { RecordingKind, TimelineSegment } from '../library/db'
+
+// 場面の前後に切り出す長さ（前と後ろ、それぞれ。プレイバック・録画一覧・録画バーの「前後1分」）
+const CLIP_SECONDS = 30
 
 type ClipFile = {
     blob: Blob
@@ -107,5 +111,18 @@ const buildClipFile = async (timeline: Timeline, at: number, seconds: number, re
     }
 }
 
-export { buildClipFile, splitRuns }
+// 録った時刻 wallClock（ミリ秒）の前後 seconds 秒を、kind の録画から切り出す（録画バーの「前後1分」で使う）
+const buildClipFileAt = async (segments: TimelineSegment[], kind: RecordingKind, wallClock: number, seconds: number, readFragments: ReadFragments) => {
+    const timeline = new Timeline()
+    timeline.sync(segments.filter(segment => segment.kind === kind))
+    const at = timeline.timeAtWallClock(wallClock)
+    return at === null ? null : buildClipFile(timeline, at, seconds, readFragments)
+}
+
+// kind の録画を、いつまで保存したか（録った時刻。ミリ秒）。なければ 0
+const recordedUntil = (segments: TimelineSegment[], kind: RecordingKind) => segments
+    .filter(segment => segment.kind === kind)
+    .reduce((latest, segment) => segment.fragments.reduce((end, f) => Math.max(end, segment.startedAt + (f.startTime + f.duration) * 1000), latest), 0)
+
+export { CLIP_SECONDS, buildClipFile, buildClipFileAt, recordedUntil, splitRuns }
 export type { ClipFile }

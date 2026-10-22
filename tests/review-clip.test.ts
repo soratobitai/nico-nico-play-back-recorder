@@ -4,7 +4,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { splitFmp4Blob, type FragmentBlob } from '@/utils/fmp4'
 import { Timeline } from '@/utils/review/timeline'
-import { buildClipFile } from '@/utils/review/clip'
+import { buildClipFile, buildClipFileAt, recordedUntil } from '@/utils/review/clip'
+import type { RecordingKind, TimelineSegment } from '@/utils/library/db'
 
 // MediaRecorder（Chrome）で録った約8秒の MP4
 const fixture = new Blob([new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures/recorder-sample.mp4')))], { type: 'video/mp4' })
@@ -122,5 +123,33 @@ describe('この場面の前後を動画で保存', () => {
 
     it('録画がなければ、何も作らない', async () => {
         expect(await buildClipFile(new Timeline(), 0, 30, async () => [])).toBeNull()
+    })
+})
+
+describe('録画バーの「前後1分」（録った時刻で場面を指す）', () => {
+    const stored = (segmentId: string, kind: RecordingKind, startedAt: number): TimelineSegment => ({
+        segmentId, kind, mimeType: 'video/mp4', startedAt, endedAt: null, init,
+        fragments: fragments.map((f, index) => ({ index, startTime: f.startTime, duration: f.duration, keyframe: f.keyframe })),
+    })
+    const read = (blobsOf: Record<string, Blob[]>) => async (segmentId: string, indexes: number[]) => indexes.map(i => blobsOf[segmentId][i])
+
+    it('指定した種類の録画から、録った時刻の前後を切り出す', async () => {
+        const comments = new Blob(['not mp4'])
+        const segments = [stored('V', 'video', 1_000_000), stored('C', 'comments', 1_000_000)]
+        const wall = 1_000_000 + (fragments[1].startTime + fragments[1].duration / 2) * 1000
+
+        const file = (await buildClipFileAt(segments, 'video', wall, 0.1, read({ V: fragments.map(f => f.blob), C: fragments.map(() => comments) })))!
+
+        expect(mdatSizes(await fragmentsOf(file.blob))).toEqual(mdatSizes([fragments[1]]))
+        expect(file.startedAt).toBe(1_000_000 + fragments[1].startTime * 1000)
+        // その種類の録画がなければ、何も作らない
+        expect(await buildClipFileAt(segments, 'screen', wall, 30, read({}))).toBeNull()
+    })
+
+    it('種類ごとに、いつまで保存したかを、録った時刻で返す', () => {
+        const last = fragments[fragments.length - 1]
+        const segments = [stored('V1', 'video', 1_000_000), stored('V2', 'video', 2_000_000), stored('C', 'comments', 5_000_000)]
+        expect(recordedUntil(segments, 'video')).toBe(2_000_000 + (last.startTime + last.duration) * 1000)
+        expect(recordedUntil(segments, 'screen')).toBe(0)
     })
 })

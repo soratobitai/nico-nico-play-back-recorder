@@ -272,7 +272,7 @@ class SettingsModal {
                 <span class="npr-option-text">
                   <span class="npr-option-title"><span class="npr-kind-dot" aria-hidden="true"></span>画面録画</span>
                   <span class="npr-option-desc">${this.screenCaptureSupported
-                    ? 'ゲームやギフトなどの演出も含めて、プレイヤーの画面をそのまま録画します。タブを表示していない時も録画できます。録画バーの「画面録画」を押して始めます（ページを開くたびに画面共有の許可が必要です）'
+                    ? 'ゲームやギフトなどの演出も含めて、プレイヤーの画面をそのまま録画します。マウスのカーソルや、プレイヤーに重なって表示されたもの（この設定画面など）も一緒に録画されます。タブを表示していない時も録画できます。録画バーの「画面録画」を押して始めます（ページを開くたびに画面共有の許可が必要です）'
                     : 'この環境では使えません'}</span>
                 </span>
               </div>
