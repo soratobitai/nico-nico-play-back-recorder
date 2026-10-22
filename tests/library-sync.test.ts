@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { setPendingSigningKey, savePendingRequest, flushPendingRequests, clearPendingRequests } from '@/utils/library/pending'
-import { migrateLegacyRecordings, importLegacyRecordings, summarizeLegacyRecordings, type LegacyImportProgress } from '@/utils/library/migrate'
+import { migrateLegacyRecordings, importLegacyRecordings, summarizeLegacyRecordings, countLegacyRecordingsUnlessImporting, type LegacyImportProgress } from '@/utils/library/migrate'
 import { handleBridgeRequest } from '@/utils/library/handler'
 import { clearAll, listAllSegments, buildDownloadFiles } from '@/utils/library/db'
+import type { FakeLockManager } from './helpers/locks'
 import { saveChunk, getAllChunks, hasLegacyDatabase, deleteLegacyDatabase } from '@/hooks/indexedDB/recordingDB'
 import { splitFmp4Blob } from '@/utils/fmp4'
 import type { BridgeRequest } from '@/utils/library/protocol'
@@ -168,9 +169,9 @@ describe('以前のバージョンの録画を移す', () => {
 
     it('途中で中断して移し直しても、同じ録画を2本にしない（途中まで移した区間を置き換える）', async () => {
         await saveChunk('Chunks', 'S1', 0, fixtureBlob, null, 5000, 'user', 'title')
-        // 1回目は断片を送った後、確定する前に中断した（以前の保存先には残っている）
+        // 1回目は断片を送った後、確定する前に拡張機能側とやり取りできなくなった（以前の保存先には残っている）
         const interrupted: typeof call = async (request) => {
-            if (request.type === 'finishSegment') throw new Error('タブが閉じられた')
+            if (request.type === 'finishSegment') throw Object.assign(new Error('タブが閉じられた'), { name: 'BridgeUnavailableError' })
             return call(request)
         }
         await expect(migrateLegacyRecordings(interrupted)).rejects.toThrow()
@@ -223,17 +224,124 @@ describe('以前のバージョンの録画を移す', () => {
             isCancelled: () => progress.some(p => p.done === 1),
         })
 
-        expect(result).toEqual({ migrated: 1, cancelled: true, busy: false, remaining: { count: 2, bytes: fixtureBlob.size * 2 } })
+        expect(result).toEqual({ migrated: 1, failed: 0, cancelled: true, full: false, busy: false, remaining: { count: 2, bytes: fixtureBlob.size * 2 } })
         expect(progress[0]).toMatchObject({ done: 0, total: 3, bytesDone: 0, bytesTotal: fixtureBlob.size * 3 })
         expect(progress.at(-1)).toMatchObject({ done: 1, bytesDone: fixtureBlob.size })
         // 途中の進み具合（断片をまとめて送るたび）も知らせる
         expect(progress.some(p => p.done === 0 && p.bytesDone > 0)).toBe(true)
         // 残りは以前の保存先に残り、続きから取り込める
         expect(await summarizeLegacyRecordings()).toEqual({ count: 2, bytes: fixtureBlob.size * 2 })
-        expect(await importLegacyRecordings(call)).toEqual({ migrated: 2, cancelled: false, busy: false, remaining: null })
+        expect(await importLegacyRecordings(call)).toEqual({ migrated: 2, failed: 0, cancelled: false, full: false, busy: false, remaining: null })
         expect(await hasLegacyDatabase()).toBe(false)
         expect(await listAllSegments()).toHaveLength(3)
         expect(await summarizeLegacyRecordings()).toBeNull()
+    })
+
+    it('1本移せなくても、その録画は以前の保存先に残して、残りを移す（途中まで移した分は消す）', async () => {
+        for (let i = 0; i < 2; i++) await saveChunk('Chunks', 'S1', i, fixtureBlob, null, 5000 + i, 'user', `title${i}`)
+        const broken: typeof call = async (request) => {
+            const sent = request as BridgeRequest
+            if (sent.type === 'appendFragments' && sent.segmentId === 'legacy-S1-0') throw new Error('読めない録画')
+            return call(request)
+        }
+
+        const result = await importLegacyRecordings(broken)
+
+        expect(result).toEqual({ migrated: 1, failed: 1, cancelled: false, full: false, busy: false, remaining: { count: 1, bytes: fixtureBlob.size } })
+        expect((await listAllSegments()).map(s => s.title)).toEqual(['title1'])
+        expect((await getAllChunks('Chunks')).map(c => c.chunkIndex)).toEqual([0])
+        // もう一度取り込むと、残した録画を移す
+        expect((await importLegacyRecordings(call)).migrated).toBe(1)
+        expect(await hasLegacyDatabase()).toBe(false)
+    })
+
+    it('移した録画が送ったとおりに保存されていなければ（容量の上限で途中が削除された など）、以前の保存先から消さない', async () => {
+        await saveChunk('Chunks', 'S1', 0, fixtureBlob, null, 5000, 'user', 'title')
+        // 確定する直前に、他のタブの録画が容量の上限を超えて、古い断片（移している録画）を削除した
+        const evicting: typeof call = async (request) => {
+            if (request.type === 'finishSegment') await call({ type: 'freeSpace', bytes: 1 })
+            return call(request)
+        }
+
+        const result = await importLegacyRecordings(evicting)
+
+        expect(result).toMatchObject({ migrated: 0, failed: 1 })
+        expect(await listAllSegments()).toEqual([])
+        expect(await getAllChunks('Chunks')).toHaveLength(1)
+        expect(await hasLegacyDatabase()).toBe(true)
+    })
+
+    it('容量の上限を超えて移すことになる時は、残りを移さずに以前の保存先に残す', async () => {
+        for (let i = 0; i < 3; i++) await saveChunk('Chunks', 'S1', i, fixtureBlob, null, 5000 + i, 'user', 'title')
+        let room = 1
+        const remaining: unknown[] = []
+
+        const result = await importLegacyRecordings(call, { canFit: async () => room-- > 0, onRemaining: r => remaining.push(r) })
+
+        expect(result).toEqual({ migrated: 1, failed: 0, cancelled: false, full: true, busy: false, remaining: { count: 2, bytes: fixtureBlob.size * 2 } })
+        // 1本移すたびに、残りを知らせる
+        expect(remaining).toEqual([{ count: 2, bytes: fixtureBlob.size * 2 }])
+        expect(await getAllChunks('Chunks')).toHaveLength(2)
+        expect(await hasLegacyDatabase()).toBe(true)
+    })
+
+    it('断片に分かれていない MP4（初期化セグメントだけ など）は、そのまま移す。種類の分からない webm は webm として移す', async () => {
+        const { init } = await splitFmp4Blob(fixtureBlob)
+        const initOnly = new Blob([init], { type: 'video/mp4' })
+        const webm = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3])])
+        await saveChunk('Chunks', 'S1', 0, initOnly, null, 5000, 'user', 'mp4')
+        await saveChunk('Chunks', 'S1', 1, webm, null, 5001, 'user', 'webm')
+
+        expect(await migrateLegacyRecordings(call)).toBe(2)
+
+        const segments = await listAllSegments()
+        const mp4 = segments.find(s => s.title === 'mp4')!
+        expect(mp4).toMatchObject({ format: 'opaque', bytes: initOnly.size })
+        const [file] = await buildDownloadFiles([mp4.segmentId])
+        expect(new Uint8Array(await file.blob.arrayBuffer())).toEqual(new Uint8Array(await initOnly.arrayBuffer()))
+        expect(segments.find(s => s.title === 'webm')).toMatchObject({ format: 'opaque', mimeType: 'video/webm' })
+    })
+
+    it('別の録画の一時データが同じ録画の番号で残っていたら、録画ごとに分けて移す', async () => {
+        const parts = [fixture.subarray(0, 50000), fixture.subarray(50000)]
+        const temps = [...parts, ...parts]
+        for (const [i, part] of temps.entries()) {
+            await saveChunk('Temps', 'S1', i, new Blob([part], { type: 'video/mp4' }), null, minutesAgo(10) + i * 3000, 'user', 'title')
+        }
+
+        expect(await summarizeLegacyRecordings()).toEqual({ count: 2, bytes: fixture.length * 2 })
+        expect(await migrateLegacyRecordings(call)).toBe(2)
+
+        const expected = (await splitFmp4Blob(fixtureBlob)).fragments.length
+        const segments = await listAllSegments()
+        expect(segments.map(s => [s.format, s.fragmentCount])).toEqual([['fmp4', expected], ['fmp4', expected]])
+    })
+
+    it('以前のバージョンが録画している印のある一時データには触らない。中身のない記録は数えず、以前の保存先と一緒に消す', async () => {
+        const locks = navigator.locks as unknown as FakeLockManager
+        let release = () => {}
+        const holding = locks.request('recording-segment-S1', () => new Promise<void>(resolve => { release = resolve }))
+        await saveChunk('Temps', 'S1', 0, fixtureBlob, null, minutesAgo(10), 'user', 'title')
+        await saveChunk('Chunks', 'S2', 0, null as unknown as Blob, null, 5000, 'user', 'empty')
+
+        expect(await summarizeLegacyRecordings()).toBeNull()
+        release()
+        await holding
+        expect(await summarizeLegacyRecordings()).toEqual({ count: 1, bytes: fixtureBlob.size })
+        expect(await migrateLegacyRecordings(call)).toBe(1)
+        expect(await hasLegacyDatabase()).toBe(false)
+    })
+
+    it('どこかで取り込んでいる間は数えない（取り込み終えた後に、古い数で上書きしないように）', async () => {
+        await saveChunk('Chunks', 'S1', 0, fixtureBlob, null, 5000, 'user', 'title')
+        const locks = navigator.locks as unknown as FakeLockManager
+        let release = () => {}
+        const holding = locks.request('playback-legacy-migration', () => new Promise<void>(resolve => { release = resolve }))
+
+        expect(await countLegacyRecordingsUnlessImporting()).toBeUndefined()
+        release()
+        await holding
+        expect(await countLegacyRecordingsUnlessImporting()).toEqual({ count: 1, bytes: fixtureBlob.size })
     })
 
     it('以前の保存先がなければ何もせず、作りもしない', async () => {

@@ -209,6 +209,8 @@ const createFmp4Splitter = () => {
 }
 
 // 保存済みの録画ファイルを、初期化セグメントと断片に分ける（ファイル全体はメモリに読み込まない）
+// 1つの録画（初期化セグメントが1つで、断片がその後に続く）だけを分ける。
+// 初期化セグメントが2つある（2本の録画をつないだ）・断片が初期化セグメントより前にある時は、正しく分けられないのでエラーにする
 const splitFmp4Blob = async (blob: Blob): Promise<{ init: Blob, fragments: FragmentBlob[] }> => {
     let initEnd = 0
     let tracks: Tracks | null = null
@@ -222,9 +224,11 @@ const splitFmp4Blob = async (blob: Blob): Promise<{ init: Blob, fragments: Fragm
         if (size < headerSize || p + size > blob.size) throw new Error(`MP4 のボックスが壊れています: ${type}`)
 
         if (type === 'moov') {
+            if (tracks) throw new Error('MP4 の初期化セグメントが2つあります')
             initEnd = p + size
             tracks = parseInit(new Uint8Array(await blob.slice(0, initEnd).arrayBuffer()))
         } else if (type === 'moof') {
+            if (!tracks) throw new Error('MP4 の断片が初期化セグメントより前にあります')
             moof = { start: p, bytes: new Uint8Array(await blob.slice(p, p + size).arrayBuffer()) }
         } else if (type === 'mdat' && moof && tracks) {
             fragments.push({

@@ -96,13 +96,15 @@ const promisify = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject
 })
 
 // トランザクションの中で run を実行し、確定してから結果を返す（失敗したらまとめて取り消される）
+// options.durability: 'strict' にすると、ディスクに書き終えてから確定する（それまでの書き込みも含めて）
 const withTransaction = async <T>(
     storeNames: string[],
     mode: IDBTransactionMode,
     run: (tx: IDBTransaction) => Promise<T>,
+    options?: IDBTransactionOptions,
 ): Promise<T> => {
     const db = await openLibraryDB()
-    const tx = db.transaction(storeNames, mode)
+    const tx = db.transaction(storeNames, mode, options)
     const done = new Promise<void>((resolve, reject) => {
         tx.oncomplete = () => resolve()
         tx.onabort = () => reject(tx.error ?? new Error('Transaction aborted'))
@@ -177,6 +179,7 @@ const appendFragments = (segmentId: string, fragments: NewFragment[]) => withTra
 const lastWriteOf = (segment: SegmentRecord) => segment.startedAt + segment.duration * 1000
 
 // 録画を終えた区間を確定する。断片が1つもない区間は消して null を返す
+// ディスクに書き終えてから返す（以前のバージョンの録画を移す時は、返ってきてから元の録画を消すので、PC が落ちても失わないように）
 const finishSegment = (segmentId: string, endedAt: number, mimeType?: string) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx): Promise<SegmentSummary | null> => {
     const segments = tx.objectStore(SEGMENTS)
     const segment = await promisify<SegmentRecord | undefined>(segments.get(segmentId))
@@ -189,7 +192,7 @@ const finishSegment = (segmentId: string, endedAt: number, mimeType?: string) =>
     if (mimeType) segment.mimeType = mimeType
     await promisify(segments.put(segment))
     return toSummary(segment)
-})
+}, { durability: 'strict' })
 
 // ---- 一覧・保存・削除 ----
 

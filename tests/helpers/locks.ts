@@ -1,5 +1,5 @@
 // Node には Web Locks API がないため、テスト用の最小実装を用意する
-// exclusive モードと ifAvailable のみ対応（取得できなければ仕様どおり callback(null) を呼ぶ）
+// exclusive モードと ifAvailable、持っているロックを調べる query のみ対応（取得できなければ仕様どおり callback(null) を呼ぶ）
 export class FakeLockManager {
     private held = new Map<string, Promise<void>>()
 
@@ -22,6 +22,10 @@ export class FakeLockManager {
 
     isHeld(name: string) {
         return this.held.has(name)
+    }
+
+    async query() {
+        return { held: [...this.held.keys()].map(name => ({ name, mode: 'exclusive' as const })), pending: [] }
     }
 }
 

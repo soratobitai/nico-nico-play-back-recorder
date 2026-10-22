@@ -163,6 +163,12 @@ describe('splitFmp4Blob（保存済みのファイルを分ける）', () => {
     it('MP4 でないデータは例外にする', async () => {
         await expect(splitFmp4Blob(new Blob(['not a video']))).rejects.toThrow()
     })
+
+    it('2本の録画をつないだファイル・断片が初期化セグメントより前にあるファイルは、正しく分けられないので例外にする', async () => {
+        await expect(splitFmp4Blob(new Blob([fixture, fixture]))).rejects.toThrow()
+        const { init, fragments } = await splitFmp4Blob(fixtureBlob)
+        await expect(splitFmp4Blob(new Blob([fragments[0].blob, init, ...fragments.slice(1).map(f => f.blob)]))).rejects.toThrow()
+    })
 })
 
 describe('buildFmp4File（1本のファイルにまとめる）', () => {
