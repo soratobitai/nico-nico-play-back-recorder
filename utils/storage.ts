@@ -70,6 +70,23 @@ export const PENDING_SIGNING_KEY = storage.defineItem<string | null>(
     }
 )
 
+// プレイバックのウィンドウの大きさ（最後に変えた大きさを、開く時に頼む大きさで。変えたことがなければ null）
+// 他のタブで開く時に、この大きさで開く（位置は Chrome が決める。utils/review/window.ts）
+export type PlaybackWindowSize = { width: number, height: number }
+export const PLAYBACK_WINDOW_SIZE = storage.defineItem<PlaybackWindowSize | null>(
+    'local:PLAYBACK_WINDOW_SIZE',
+    {
+        fallback: null,
+    }
+)
+// プレイバックのウィンドウの、開く時に頼んだ大きさと外側の大きさの差（タイトルバーと枠の分。測ったことがなければ null）
+export const PLAYBACK_WINDOW_FRAME = storage.defineItem<PlaybackWindowSize | null>(
+    'local:PLAYBACK_WINDOW_FRAME',
+    {
+        fallback: null,
+    }
+)
+
 // 以前のバージョン（1.2.2 まで）の録画が、ニコ生のサイトデータに残っているか（数と大きさ。なければ null）
 // ニコ生のページを開いた時に調べて書き込み、録画一覧で取り込み（手動）を勧める
 export type LegacyRecordings = { count: number, bytes: number }
