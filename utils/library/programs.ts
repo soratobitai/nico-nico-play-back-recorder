@@ -26,15 +26,17 @@ const programKeyOf = (segment: Pick<SegmentSummary, 'programId' | 'title' | 'use
 
 const segmentEnd = (segment: SegmentSummary) => segment.endedAt ?? segment.startedAt + segment.duration * 1000
 
-// 録画中の区間か。確定していない区間で、最近書き込まれていて、書き込まれたのが最近録った分の時だけ録画中とする
-// - これだけ書き込みがなければ、録画していたページが閉じられたものとする
-//   （録画中は数秒ごとに書き込まれる。ページを閉じる時に確定できなかった場合に、「録画中」のまま残らないように）
-// - 書き込まれたのが、これより前に録った分なら、録画中ではない（拡張機能を更新・切り替えた間にニコ生側に一時保存した録画を、
-//   次にニコ生のページを開いた時に移すと、その時に書き込まれるので、録っていない番組が「録画中」と出ないように）
+// 録画中の区間か。確定していない区間で、録画しているページが最近データを受け取った（recordedAt）時だけ録画中とする
+// - これだけ受け取っていなければ、録画していたページが閉じられたものとする
+//   （録画中は数秒ごとに受け取る。ページを閉じる時に確定できなかった場合に、「録画中」のまま残らないように）
+// - 拡張機能を更新・切り替えた間にニコ生側に一時保存した録画を、後で移した時は、受け取った時刻が古いので録画中にしない
+// - PC の時計が大きく戻った・進んだ時は、次に受け取るまで（数秒）録画中にしない（ずっと録画中のまま残らないように）
 const RECORDING_IDLE_MS = 60 * 1000
+// 受け取った時刻がない以前の区間は、最後に書き込んだ時刻と、録った分の終わりで決める
 const RECORDING_LAG_MS = 2 * 60 * 1000
 const isRecordingSegment = (segment: SegmentSummary, now = Date.now()) => {
     if (segment.endedAt !== null) return false
+    if (segment.recordedAt !== undefined) return Math.abs(now - segment.recordedAt) < RECORDING_IDLE_MS
     const recordedUntil = segmentEnd(segment)
     return now - (segment.updatedAt ?? recordedUntil) < RECORDING_IDLE_MS && now - recordedUntil < RECORDING_LAG_MS
 }

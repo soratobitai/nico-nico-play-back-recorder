@@ -103,6 +103,33 @@ describe('一時保存した書き込み', () => {
         expect(sent).toEqual([finish('A')])
     })
 
+    it('印の付いた本物の依頼の Blob を、同じ形のオブジェクトに差し替えても、送らない', async () => {
+        const blob = new Blob(['data'])
+        await savePendingRequest({ type: 'appendFragments', segmentId: 'A', fragments: [{ index: 0, blob, moofSize: 0, startTime: 0, duration: 1, wallClock: 0 }] })
+        // ページのスクリプトが、Blob を「中身のハッシュ・大きさ・種類」を持つオブジェクトに差し替える
+        const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), b => b.toString(16).padStart(2, '0')).join('')
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = indexedDB.open('PlaybackPending')
+            request.onsuccess = () => resolve(request.result)
+            request.onerror = () => reject(request.error)
+        })
+        await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction('requests', 'readwrite')
+            const cursor = tx.objectStore('requests').openCursor()
+            cursor.onsuccess = () => {
+                const value = cursor.result!.value
+                value.request.fragments[0].blob = { blob: hash, size: blob.size, type: blob.type }
+                cursor.result!.update(value)
+            }
+            tx.oncomplete = () => resolve()
+            tx.onerror = () => reject(tx.error)
+        })
+        db.close()
+        const sent: BridgeRequest[] = []
+
+        expect(await flush(async request => { sent.push(request) })).toEqual({ sent: 0, complete: true })
+    })
+
     it('鍵が違えば（別の鍵で付けた印）、送らない', async () => {
         await savePendingRequest(finish('A'))
         await setPendingSigningKey(new Uint8Array(32).fill(9))
@@ -241,7 +268,7 @@ describe('以前のバージョンの録画を移す', () => {
         for (let i = 0; i < 2; i++) await saveChunk('Chunks', 'S1', i, fixtureBlob, null, 5000 + i, 'user', `title${i}`)
         const broken: typeof call = async (request) => {
             const sent = request as BridgeRequest
-            if (sent.type === 'appendFragments' && sent.segmentId === 'legacy-S1-0') throw new Error('読めない録画')
+            if (sent.type === 'appendFragments' && sent.segmentId === 'legacy-chunk-S1-0') throw new Error('読めない録画')
             return call(request)
         }
 
@@ -303,7 +330,7 @@ describe('以前のバージョンの録画を移す', () => {
         expect(await getAllChunks('Chunks')).toHaveLength(2)
     })
 
-    it('読めない一時データがあっても、数える・取り込むのを止めない（その録画だけ残す）', async () => {
+    it('読めない一時データがあっても、数える・取り込むのを止めない（その録画処理の一時データは、別の録画とつながないよう、移さずに残す）', async () => {
         const bad = new Blob([new Uint8Array(12345)], { type: 'video/mp4' })
         await saveChunk('Temps', 'S1', 0, fixtureBlob, null, minutesAgo(10), 'user', 'temps')
         await saveChunk('Temps', 'S1', 1, bad, null, minutesAgo(10) + 3000, 'user', 'temps')
@@ -318,8 +345,9 @@ describe('以前のバージョンの録画を移す', () => {
         try {
             expect(await summarizeLegacyRecordings()).toEqual({ count: 2, bytes: fixtureBlob.size * 2 + bad.size })
             const result = await importLegacyRecordings(call)
-            expect(result.migrated).toBeGreaterThanOrEqual(1)
-            expect((await listAllSegments()).map(s => s.title)).toContain('chunk')
+            expect(result).toMatchObject({ migrated: 1, failed: 1 })
+            expect((await listAllSegments()).map(s => s.title)).toEqual(['chunk'])
+            expect(await getAllChunks('Temps')).toHaveLength(2)
         } finally {
             Blob.prototype.slice = originalSlice
         }
@@ -355,6 +383,17 @@ describe('以前のバージョンの録画を移す', () => {
         const expected = (await splitFmp4Blob(fixtureBlob)).fragments.length
         const segments = await listAllSegments()
         expect(segments.map(s => [s.format, s.fragmentCount])).toEqual([['fmp4', expected], ['fmp4', expected]])
+    })
+
+    it('PC の空き容量が足りなければ、残りを移さずに以前の保存先に残す（容量が足りるかは、1本ごとに確かめる）', async () => {
+        for (let i = 0; i < 3; i++) await saveChunk('Chunks', 'S1', i, fixtureBlob, null, 5000 + i, 'user', `title${i}`)
+        let room = 1
+
+        const result = await importLegacyRecordings(call, { hasDiskSpace: async () => room-- > 0 })
+
+        expect(result).toEqual({ migrated: 1, failed: 0, cancelled: false, full: false, diskFull: true, busy: false, remaining: { count: 2, bytes: fixtureBlob.size * 2 } })
+        expect(await getAllChunks('Chunks')).toHaveLength(2)
+        expect(await hasLegacyDatabase()).toBe(true)
     })
 
     it('以前のバージョンが録画している印のある一時データには触らない。中身のない記録は数えず、以前の保存先と一緒に消す', async () => {

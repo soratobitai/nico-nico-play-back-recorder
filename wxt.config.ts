@@ -40,6 +40,8 @@ export default defineConfig({
   ],
   manifest: {
     "name": "ニコ生プレイバックレコーダー",
+    // 録画バーの表示に使う CSS（:has・@container）が使える版から。それより古い Chrome では、以前のバージョンのまま
+    "minimum_chrome_version": "105",
     // ツールバーの拡張機能のアイコンを押すと、録画一覧を開く
     "action": {
       "default_title": "録画一覧を開く"
@@ -57,7 +59,7 @@ export default defineConfig({
         ],
         // 使うのはニコ生の視聴ページに埋め込む bridge だけなので、他のサイトからは読めないようにする
         "matches": [
-          "*://live.nicovideo.jp/*"
+          "https://live.nicovideo.jp/*"
         ]
       }
     ]

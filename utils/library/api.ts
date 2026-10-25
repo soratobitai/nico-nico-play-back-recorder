@@ -16,22 +16,29 @@ const pendingSegments = new Set<string>()
 // 拡張機能が更新されると、このページでは拡張機能側に保存できないまま録画が続くので、上限で止める
 let pendingBytes = 0
 let pendingLimit = Infinity
+// 一時保存する量の上限（容量の上限が大きくても。拡張機能が無効にされたままだと、ニコ生側に残り続けるので）
+const MAX_PENDING_BYTES = 2 * 1024 * 1024 * 1024
 // 一時保存を始めた回数（移している間に新しく一時保存したものがあれば、移し終えても pendingSegments を空にしない）
 let pendingSaves = 0
 
 const setPendingLimit = (bytes: number) => {
-    pendingLimit = bytes
+    pendingLimit = Math.min(bytes, MAX_PENDING_BYTES)
 }
 
 // 一時保存に付ける印の鍵を読む（なければ作る）。拡張機能が更新された後も一時保存できるように、ページを開いた時に呼ぶ
+// 初めて開いた時に、ニコ生の複数のタブが同時に作って別々の鍵を使わないよう、ロックを取って作る
+// （別の鍵で印を付けた一時保存は、他のタブで移す時に捨てられてしまう）
+const readOrCreateSigningKey = async () => {
+    const saved = await PENDING_SIGNING_KEY.getValue()
+    if (saved) return saved
+    const raw = crypto.getRandomValues(new Uint8Array(32))
+    await PENDING_SIGNING_KEY.setValue(btoa(String.fromCharCode(...raw)))
+    return PENDING_SIGNING_KEY.getValue()
+}
 const initPendingSigning = async () => {
-    let encoded = await PENDING_SIGNING_KEY.getValue()
-    if (!encoded) {
-        const raw = crypto.getRandomValues(new Uint8Array(32))
-        await PENDING_SIGNING_KEY.setValue(btoa(String.fromCharCode(...raw)))
-        // 他のタブが同時に作っていたら、残った方を使う
-        encoded = await PENDING_SIGNING_KEY.getValue()
-    }
+    const encoded = navigator.locks
+        ? await navigator.locks.request('playback-pending-signing-key', readOrCreateSigningKey)
+        : await readOrCreateSigningKey()
     if (encoded) await setPendingSigningKey(Uint8Array.from(atob(encoded), c => c.charCodeAt(0)))
 }
 
@@ -101,7 +108,8 @@ const callLibrary = async <T extends BridgeRequestType>(request: BridgeRequestOf
 
 const createSegment = (segment: NewSegment) => callLibrary({ type: 'createSegment', segment })
 const setSegmentInit = (segmentId: string, init: Blob) => callLibrary({ type: 'setSegmentInit', segmentId, init })
-const appendFragments = (segmentId: string, fragments: NewFragment[]) => callLibrary({ type: 'appendFragments', segmentId, fragments })
+// 受け取った時刻を付ける（一時保存して後で移しても、受け取った時刻のまま。録画一覧で録画中かを決める）
+const appendFragments = (segmentId: string, fragments: NewFragment[]) => callLibrary({ type: 'appendFragments', segmentId, fragments, recordedAt: Date.now() })
 const finishSegment = (segmentId: string, endedAt: number, mimeType?: string) => callLibrary({ type: 'finishSegment', segmentId, endedAt, mimeType })
 const getTimeline = (programId: string) => callLibrary({ type: 'getTimeline', programId })
 const getTimelineForSegments = (segmentIds: string[]) => callLibrary({ type: 'getTimelineForSegments', segmentIds })

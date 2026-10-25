@@ -6,6 +6,7 @@ import { getScreenShotAndDownload } from "./feature"
 import { UI_COLLAPSED } from "./storage"
 import { KIND_ICON_PATHS, SCREEN_DOT } from "./kind-icons"
 import { RECENT_CLIP_SECONDS } from "./review/clip"
+import { isUserEvent } from "./user-event"
 
 type BarState = 'preparing' | 'recording' | 'stopped' | 'error'
 type VideoKind = 'video' | 'comments'
@@ -112,6 +113,11 @@ let isCollapsed = false
 let toggleButton: HTMLButtonElement | null = null
 
 // ボタンの上で押したスペースを、ニコ生のショートカット（window で受けて再生・一時停止する）に届けない
+// ユーザーが操作した時だけ呼ぶ（ページのスクリプトが、ボタンを押したことにして操作できないように。utils/user-event.ts）
+const byUser = <E extends Event>(handler: (event: E) => void) => (event: E) => {
+    if (isUserEvent(event)) handler(event)
+}
+
 const stopSpaceOnButton = (event: KeyboardEvent) => {
     if (event.key === ' ' && event.target instanceof HTMLButtonElement) event.stopPropagation()
 }
@@ -134,41 +140,41 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     clipButton = $<HTMLButtonElement>('#clipButton')
 
     // 録画開始・停止（1つのボタンで切り替える。ダブルクリックの2回目で、止めた録画をまた始めないように、続けて押した分は無視する）
-    recordButton.addEventListener('click', (event) => {
+    recordButton.addEventListener('click', byUser((event: MouseEvent) => {
         if (event.detail > 1) return
         if (state === 'recording') stop()
         else start()
-    })
+    }))
 
     // バーのボタンの上でのスペースは、ボタンを押すのに使う（ニコ生のショートカットの再生・一時停止に届かないように）
     bar.addEventListener('keydown', stopSpaceOnButton)
 
     for (const chip of bar.querySelectorAll<HTMLButtonElement>('.npr-chip[data-kind]')) {
-        chip.addEventListener('click', () => toggleKind(chip.dataset.kind as VideoKind))
+        chip.addEventListener('click', byUser(() => toggleKind(chip.dataset.kind as VideoKind)))
     }
 
     if (toggleScreenCapture) {
         screenCaptureButton.hidden = false
-        screenCaptureButton.addEventListener('click', (event) => {
+        screenCaptureButton.addEventListener('click', byUser((event: MouseEvent) => {
             if (event.detail > 1) return // ダブルクリックの2回目で、止めた画面録画をまた始めない
             toggleScreenCapture()
-        })
+        }))
         setScreenCaptureButton(false)
     }
 
     if (togglePlayback) {
         playbackButton.hidden = false
-        playbackButton.addEventListener('click', togglePlayback)
+        playbackButton.addEventListener('click', byUser(togglePlayback))
         setPlaybackButton(false)
     }
 
-    $<HTMLButtonElement>('#recordingsButton').addEventListener('click', openRecordings)
-    $<HTMLButtonElement>('#capButton').addEventListener('click', getScreenShotAndDownload)
+    $<HTMLButtonElement>('#recordingsButton').addEventListener('click', byUser(openRecordings))
+    $<HTMLButtonElement>('#capButton').addEventListener('click', byUser(getScreenShotAndDownload))
     if (saveClip) {
         clipButton.hidden = false
-        clipButton.addEventListener('click', saveClip)
+        clipButton.addEventListener('click', byUser(saveClip))
     }
-    $<HTMLButtonElement>('#settingsButton').addEventListener('click', showSettings)
+    $<HTMLButtonElement>('#settingsButton').addEventListener('click', byUser(showSettings))
 
     // 幅や中身（録画時間・ボタンの文字・状態など）が変わったら、入り切るか確かめ直す
     // （詰めた表示では文字が隠れていて、中身が変わっても大きさが変わらないので、文字の変化も見る）
@@ -355,11 +361,11 @@ const insertToggleButton = async () => {
     }
     apply()
 
-    toggleButton.addEventListener('click', async () => {
+    toggleButton.addEventListener('click', byUser(() => {
         isCollapsed = !isCollapsed
         apply()
-        await UI_COLLAPSED.setValue(isCollapsed)
-    })
+        UI_COLLAPSED.setValue(isCollapsed).catch(() => {}) // 拡張機能が更新された後は覚えられない
+    }))
 
     addonController.appendChild(toggleButton)
 }

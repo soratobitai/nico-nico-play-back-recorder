@@ -61,6 +61,11 @@ export const FIXED_RESOLUTION_HEIGHT = storage.defineItem<number>(
         fallback: 720,
     }
 )
+// 選べる高さ。保存された値がこれ以外（書き換えられた など）なら、初めの値を使う
+export const FIXED_RESOLUTION_HEIGHTS = [360, 450, 540, 720, 1080]
+export const validResolutionMode = (value: unknown): ResolutionMode => value === 'fixed' ? 'fixed' : 'split'
+export const validFixedResolutionHeight = (value: unknown) =>
+    typeof value === 'number' && FIXED_RESOLUTION_HEIGHTS.includes(value) ? value : 720
 
 // 一時保存（ニコ生のページの IndexedDB）に書く依頼に付ける印の鍵（base64。ニコ生のページのスクリプトは読めない。utils/library/pending.ts）
 export const PENDING_SIGNING_KEY = storage.defineItem<string | null>(

@@ -6,7 +6,7 @@ const handleBridgeRequest = (request: BridgeRequest): Promise<unknown> => {
     switch (request.type) {
         case 'createSegment': return db.createSegment(request.segment)
         case 'setSegmentInit': return db.setSegmentInit(request.segmentId, request.init)
-        case 'appendFragments': return db.appendFragments(request.segmentId, request.fragments)
+        case 'appendFragments': return db.appendFragments(request.segmentId, request.fragments, request.recordedAt)
         case 'finishSegment': return db.finishSegment(request.segmentId, request.endedAt, request.mimeType)
         case 'getTimeline': return db.getTimeline(request.programId)
         case 'getTimelineForSegments': return db.getTimelineForSegments(request.segmentIds)

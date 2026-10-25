@@ -77,6 +77,9 @@ const createKindRecorder = ({
                 .catch((error) => {
                     console.error('録画の保存に失敗しました:', error)
                     failed(error)
+                    // 区間が消されていた（録画一覧で削除された など）: すぐ次の区間に区切って録り続ける
+                    // （次に区切るまで、録画が保存されないままにならないように）
+                    if (error instanceof Error && error.name === 'SegmentNotFoundError' && recorder === current) split()
                 })
         }
 
@@ -108,6 +111,19 @@ const createKindRecorder = ({
             // 作った区間は、断片がないので確定時に消える
             saving.then(() => writer.finish(Date.now())).catch(() => {})
             throw error
+        }
+    }
+
+    // 同じ映像のまま、次の区間に区切る（前の区間は確定して保存される）
+    const split = () => {
+        if (!current) return
+        stopCurrent()
+        try {
+            startSegment()
+        } catch (error) {
+            console.error('次の区間を録り始められませんでした:', error)
+            releaseSource()
+            onEnded?.()
         }
     }
 
@@ -155,17 +171,7 @@ const createKindRecorder = ({
         },
 
         // 同じ映像のまま、次の区間に区切る（前の区間は確定して保存される）
-        split() {
-            if (!current) return
-            stopCurrent()
-            try {
-                startSegment()
-            } catch (error) {
-                console.error('次の区間を録り始められませんでした:', error)
-                releaseSource()
-                onEnded?.()
-            }
-        },
+        split,
 
         // 止める（今の区間は確定して保存される）
         stop() {

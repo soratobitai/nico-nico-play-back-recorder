@@ -60,6 +60,26 @@ describe('番組ごとにまとめる', () => {
         expect(isRecordingSegment(live, hour + 1000)).toBe(true)
     })
 
+    it('録画中かは、録画しているページがデータを受け取った時刻で決める（録った分の長さや、移した時の書き込みにはよらない）', async () => {
+        const hour = 60 * 60 * 1000
+        // PC がスリープから戻った後も録り続けている（録った分の長さは、時計より短い）
+        const afterSleep = summary({ segmentId: 'a', startedAt: 0, endedAt: null, duration: 90, updatedAt: hour, recordedAt: hour })
+        expect(isRecordingSegment(afterSleep, hour + 3000)).toBe(true)
+        // 一時保存していた分を1時間後に移した（受け取った時刻は、移した時ではなく録った時）
+        const moved = summary({ segmentId: 'b', startedAt: 0, endedAt: null, duration: 10, updatedAt: hour, recordedAt: 10_000 })
+        expect(isRecordingSegment(moved, hour + 1000)).toBe(false)
+        // PC の時計が1時間戻った（次に受け取るまで、録画中にしない）
+        expect(isRecordingSegment({ ...afterSleep }, 1000)).toBe(false)
+
+        // 保存先には、受け取った時刻を書き込みごとに残す（区間を作った時は、録り始めた時刻）
+        await clearAll()
+        const started = Date.now() - hour
+        await createSegment({ segmentId: 'R', programId: 'lv9', kind: 'video', format: 'fmp4', mimeType: 'video/mp4', title: 't', userName: 'u', startedAt: started, thumbnail: null })
+        expect((await listAllSegments())[0].recordedAt).toBe(started)
+        await appendFragments('R', [{ index: 0, blob: new Blob(['x']), moofSize: 0, startTime: 0, duration: 1, wallClock: started }], started + 5000)
+        expect((await listAllSegments())[0].recordedAt).toBe(started + 5000)
+    })
+
     it('以前のバージョンから移した録画は、配信者とタイトルで見分ける', () => {
         expect(programKeyOf({ programId: 'legacy', title: 'T', userName: 'U' })).toBe('legacy:U:T')
         expect(programKeyOf({ programId: 'lv1', title: 'T', userName: 'U' })).toBe('lv1')

@@ -107,6 +107,17 @@ const getAllChunks = async (storeName: string): Promise<ChunkRecord[]> => {
     })
 }
 
+// 鍵を指定して読む（なければ null）
+const getChunksByKeys = async (storeName: string, keys: IDBValidKey[]): Promise<(ChunkRecord | null)[]> => {
+    const db = await openDB()
+    const store = db.transaction(storeName, "readonly").objectStore(storeName)
+    return Promise.all(keys.map(key => new Promise<ChunkRecord | null>((resolve, reject) => {
+        const request = store.get(key)
+        request.onsuccess = () => resolve(request.result ?? null)
+        request.onerror = () => reject(request.error)
+    })))
+}
+
 const deleteChunkByKeys = async (storeName: string, keys: IDBValidKey[]): Promise<void> => {
     const db = await openDB()
     const tx = db.transaction(storeName, "readwrite")
@@ -149,6 +160,7 @@ export {
     hasLegacyDatabase,
     saveChunk,
     getAllChunks,
+    getChunksByKeys,
     deleteChunkByKeys,
     deleteLegacyDatabase,
     closeLegacyDatabase,

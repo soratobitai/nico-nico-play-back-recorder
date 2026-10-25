@@ -164,7 +164,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     }
     // 容量の上限を上げたことの説明
     const raisedNote = () => raised
-        ? element('p', 'legacy-detail', `取り込んだ録画が消されないよう、容量の上限を ${formatLimit(raised.from)} から ${formatLimit(raised.to)} に上げました（設定で変えられます）。`)
+        ? element('p', 'legacy-detail', `取り込んですぐに削除されないよう、容量の上限を ${formatLimit(raised.from)} から ${formatLimit(raised.to)} に上げました（設定で変えられます）。`)
         : null
     // 取り込み方の説明（埋め込んだページで取り込む時は、録画一覧を閉じると止まる）
     const modeNote = () => mode === 'frame'
@@ -180,7 +180,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
                 : result.failed > 0 || result.full || result.diskFull ? '以前の録画を取り込めませんでした。'
                 : '取り込む録画は見つかりませんでした。',
         ]
-        if (result.failed > 0) texts.push(`${result.failed}本は読み込めなかったので、以前の保存先に残しました（もう一度取り込むと、取り込み直します）。`)
+        if (result.failed > 0) texts.push(`${result.failed}本は取り込めなかったので、以前の保存先に残しました（もう一度取り込むと、取り込み直します）。`)
         if (result.diskFull) texts.push('PC の空き容量が足りなくなったので、残りは以前の保存先に残しました。空き容量を増やしてから、もう一度取り込んでください。')
         else if (result.full) texts.push('容量の上限に入らない録画は、以前の保存先に残しました。いらない録画を削除してから、もう一度取り込んでください。')
         return texts.join('')
@@ -257,35 +257,48 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
     }
 
     // ---- 始める前の確認（容量の上限と比べる。超える・空きがなくなる時は、上げてから取り込む） ----
+    // 始められる時は true（上限の最大まで使っていて、何も取り込めない時は false）
     const renderCapacity = async (check: number) => {
-        if (!legacy) return
+        if (!legacy) return false
         const usage = await usageBytes()
         const limit = await MAX_STORAGE_SIZE.getValue()
         const after = usage + legacy.bytes
         const target = neededLimit(after)
         const quota = (await navigator.storage?.estimate?.().catch(() => null))?.quota ?? null
-        if (check !== capacityCheck) return
+        if (check !== capacityCheck) return false
+        let startable = true
         const capacity = $<HTMLDivElement>('.legacy-capacity')
         const startButton = $<HTMLButtonElement>('#legacyStart')
         const parts: HTMLElement[] = [
             element('p', undefined, `今の使用量 ${formatBytes(usage)} / 上限 ${formatLimit(limit)}。取り込むと、約 ${formatBytes(after)} になります。`),
         ]
         const headroom = gb(LEGACY_IMPORT_HEADROOM)
-        if (after + LEGACY_IMPORT_HEADROOM > MAX_STORAGE_SIZE_LIMIT) {
-            // 上限の最大でも入らない: 入る分だけ取り込み、残りは以前の保存先に残す（取り込んでから削除されないように）
+        // 入りきらない分（上限の最大まで上げても。この後の録画のための空きを残す）
+        const overflow = after + LEGACY_IMPORT_HEADROOM - MAX_STORAGE_SIZE_LIMIT
+        if (usage + LEGACY_IMPORT_HEADROOM >= MAX_STORAGE_SIZE_LIMIT) {
+            // 上限の最大近くまで使っていて、何も取り込めない
+            const warning = element('div', 'legacy-warning')
+            warning.append(element('p', undefined, `容量の上限（最大 ${gb(MAX_STORAGE_SIZE_LIMIT)}）近くまで録画があるため、取り込めません。いらない録画を削除してから取り込んでください（約 ${formatBytes(Math.min(overflow, legacy.bytes + LEGACY_IMPORT_HEADROOM))} 空けると、すべて取り込めます）。`))
+            parts.push(warning)
+            startButton.textContent = '取り込めません'
+            startable = false
+        } else if (overflow > 0) {
+            // 上限の最大でも入りきらない: 入る分だけ取り込み、残りは以前の保存先に残す（取り込んでから削除されないように）
             const raise = target > limit
             const warning = element('div', 'legacy-warning')
-            warning.append(element('p', undefined, `容量の上限は ${gb(MAX_STORAGE_SIZE_LIMIT)} までです。${raise ? `上限を ${gb(MAX_STORAGE_SIZE_LIMIT)} に上げて、` : ''}この後の録画のための空き（${headroom}）を残して入る分だけ取り込み、入らない分（約 ${formatBytes(after + LEGACY_IMPORT_HEADROOM - MAX_STORAGE_SIZE_LIMIT)}）は以前の保存先に残します。先にいらない録画を削除すると、すべて取り込めます。`))
+            warning.append(element('p', undefined, `容量の上限は ${gb(MAX_STORAGE_SIZE_LIMIT)} までです。${raise ? `上限を ${gb(MAX_STORAGE_SIZE_LIMIT)} に上げて、` : ''}この後の録画のための空き（${headroom}）を残して入る分だけ取り込み、入らない分（約 ${formatBytes(Math.min(overflow, legacy.bytes))}）は以前の保存先に残します。先にいらない録画を削除すると、すべて取り込めます。`))
             parts.push(warning)
             startButton.textContent = raise ? `上限を ${gb(MAX_STORAGE_SIZE_LIMIT)} に上げて取り込む` : '入る分だけ取り込む'
         } else if (target > limit) {
             const reason = after > limit ? '今の上限を超える' : `取り込むと、この後の録画のための空き（${headroom}）がなくなる`
-            parts.push(element('p', 'legacy-ok', `${reason}ので、取り込んだ録画が古い順に削除されないよう、容量の上限を ${gb(target)} に上げてから取り込みます（上限は、後で設定から変えられます）。`))
+            parts.push(element('p', 'legacy-ok', `${reason}ので、取り込んですぐに削除されないよう、容量の上限を ${gb(target)} に上げてから取り込みます（上限は、後で設定から変えられます）。`))
             startButton.textContent = `上限を ${gb(target)} に上げて取り込む`
         } else {
-            parts.push(element('p', 'legacy-ok', '上限の中に収まります（この後の録画で上限を超えると、古い録画から削除されます）。'))
+            parts.push(element('p', 'legacy-ok', '上限の中に収まります。'))
             startButton.textContent = '取り込みを始める'
         }
+        // 取り込んだ録画は録画した日時が古いので、上限を超えた時に最初に削除される
+        if (startable) parts.push(element('p', undefined, '取り込んだ録画は、録画した日時が古いため、この後の録画で容量の上限を超えると最初に削除されます。残したい録画は、取り込んだ後に保存してください。'))
         // PC の空き容量が足りなければ、入らない分は取り込まずに残す
         if (quota !== null && after > quota) {
             const warning = element('div', 'legacy-warning')
@@ -293,6 +306,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
             parts.push(warning)
         }
         capacity.replaceChildren(...parts)
+        return startable
     }
 
     // 取り込むと上限を超える（空きがなくなる）時は、上限を上げる（上げた時は、上げる前と後を返す）
@@ -318,9 +332,10 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
             .catch((error) => {
                 console.error('使用量を調べられませんでした:', error)
                 if (check === capacityCheck) $<HTMLDivElement>('.legacy-capacity').replaceChildren(element('p', undefined, '今の使用量を調べられませんでした。'))
+                return true
             })
-            .finally(() => {
-                if (check === capacityCheck) startButton.disabled = false
+            .then((startable) => {
+                if (check === capacityCheck) startButton.disabled = !startable
             })
         dialog.showModal()
     }
@@ -374,6 +389,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
             if (tab.id === undefined) throw new Error('タブを開けませんでした')
             openedTabId = tab.id
             await chrome.storage.session.set({ [LEGACY_IMPORT_TAB_KEY]: tab.id })
+            void chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {})
         } catch (error) {
             console.error('取り込むためのページを開けませんでした:', error)
             dropRun()
@@ -409,8 +425,8 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         cancelRequested = false
         raised = null
         setState({ phase: 'starting' })
-        // 待っている間に、始められなかったことになった（時間切れ など）ら、やめる
-        const abandoned = () => phase() !== 'starting'
+        // 待っている間に、始められなかったことになった（時間切れ など）ら、やめる（進み具合が先に届いて取り込み中になった時は続ける）
+        const abandoned = () => phase() !== 'starting' && phase() !== 'running'
         try {
             raised = await raiseLimitIfNeeded()
             if (abandoned()) return
@@ -418,14 +434,13 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
             if (previous !== null) {
                 const next = crypto.randomUUID()
                 run = next
+                mode = 'tab'
+                openedTabId = previous
                 const reply = await chrome.tabs.sendMessage(previous, { type: LEGACY_IMPORT_START_MESSAGE, run: next }).catch(() => null)
-                if (abandoned()) return
-                if (reply?.ok === true) {
-                    mode = 'tab'
-                    openedTabId = previous
-                    return
-                }
+                if (abandoned() || reply?.ok === true) return
                 run = null
+                mode = null
+                openedTabId = null
                 await chrome.storage.session.remove(LEGACY_IMPORT_TAB_KEY)
             }
             if (abandoned()) return
@@ -455,9 +470,13 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         if (message.finished) {
             const result = message.finished
             // 埋め込んだページで何も取り込めなかったのに、以前の録画があるはず（または読めなかった）なら、タブで開いて取り込み直す
+            // （やめるように頼んだ後は、開き直さずに、やめたことにする）
             if (mode === 'frame' && sawNothing(result) && (result.error || (legacy?.count ?? 0) > 0)) {
-                void startInTab()
-                return
+                if (!cancelRequested) {
+                    void startInTab()
+                    return
+                }
+                result.cancelled = true
             }
             dropRun()
             // 他のタブで取り込んでいる時は、そちらが上げた上限で取り込んでいるかもしれないので戻さない

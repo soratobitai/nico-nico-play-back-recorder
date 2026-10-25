@@ -137,6 +137,25 @@ describe('createKindRecorder', () => {
         expect(recorder.isRecording).toBe(true)
     })
 
+    it('録画中の区間が消されていたら（録画一覧で削除された など）、すぐ次の区間に区切って録り続ける', async () => {
+        const { recorder, sources } = create()
+        recorder.start()
+        await flush()
+        vi.mocked(library.appendFragments).mockRejectedValueOnce(Object.assign(new Error('録画の区間が見つかりません'), { name: 'SegmentNotFoundError' }))
+        FakeRecorder.instances[0].emit('a')
+        await flush()
+        await flush()
+
+        expect(FakeRecorder.instances).toHaveLength(2)
+        expect(createdSegments()).toHaveLength(2)
+        expect(sources).toHaveLength(1)
+        expect(recorder.isRecording).toBe(true)
+        // 次の区間には、そのまま保存する
+        FakeRecorder.instances[1].emit('b')
+        await flush()
+        expect(vi.mocked(library.appendFragments).mock.calls.at(-1)?.[0]).toBe(createdSegments()[1].segmentId)
+    })
+
     it('前の区間の最後のデータは、確定する前に保存する', async () => {
         const { recorder } = create()
         recorder.start()

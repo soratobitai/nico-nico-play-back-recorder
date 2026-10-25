@@ -21,6 +21,10 @@ const openPendingDB = (): Promise<IDBDatabase> => dbPromise ??= new Promise((res
             db.close()
             dbPromise = null
         }
+        // サイトデータが消されるなどして閉じられたら、次に開き直す（開いたままの接続を使い続けて、保存に失敗し続けないように）
+        db.onclose = () => {
+            dbPromise = null
+        }
         resolve(db)
     }
     request.onerror = () => {
@@ -57,15 +61,33 @@ const setPendingSigningKey = async (raw: Uint8Array) => {
 const toHex = (buffer: ArrayBuffer) => Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('')
 
 // 印を付ける中身（Blob は中身のハッシュにする。オブジェクトはキーの順にそろえる）
+// 種類ごとに印を付けて、Blob と同じ形のオブジェクトなど、別の種類の値と同じ中身にならないようにする。数でない数（NaN など）は印を付けない
+// （この形を変えると、更新する前に一時保存した分を、更新した後に移せなくなる）
 const canonical = async (value: unknown): Promise<unknown> => {
-    if (value instanceof Blob) return { blob: toHex(await crypto.subtle.digest('SHA-256', await value.arrayBuffer())), size: value.size, type: value.type }
-    if (Array.isArray(value)) return Promise.all(value.map(canonical))
+    if (value instanceof Blob) return ['blob', toHex(await crypto.subtle.digest('SHA-256', await value.arrayBuffer())), value.size, value.type]
+    if (Array.isArray(value)) return ['array', await Promise.all(value.map(canonical))]
     if (value && typeof value === 'object') {
-        const out: Record<string, unknown> = {}
-        for (const key of Object.keys(value).sort()) out[key] = await canonical((value as Record<string, unknown>)[key])
-        return out
+        const entries: unknown[] = []
+        for (const key of Object.keys(value).sort()) entries.push([key, await canonical((value as Record<string, unknown>)[key])])
+        return ['object', entries]
     }
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error('数でない値には印を付けません')
     return value
+}
+
+// 録画の書き込みとして正しい形か（データは Blob で、数は数。印が正しくても、形のおかしい依頼は送らない）
+const isFiniteNumber = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
+const isWellFormed = (request: BridgeRequest) => {
+    switch (request.type) {
+        case 'setSegmentInit': return typeof request.segmentId === 'string' && request.init instanceof Blob
+        case 'appendFragments':
+            return typeof request.segmentId === 'string' && Array.isArray(request.fragments) && request.fragments.every(f =>
+                !!f && f.blob instanceof Blob && [f.index, f.moofSize, f.startTime, f.duration, f.wallClock].every(isFiniteNumber))
+        case 'createSegment': return !!request.segment && typeof request.segment.segmentId === 'string' && isFiniteNumber(request.segment.startedAt)
+        case 'finishSegment': return typeof request.segmentId === 'string' && isFiniteNumber(request.endedAt)
+        case 'deleteSegments': return Array.isArray(request.segmentIds) && request.segmentIds.every(id => typeof id === 'string')
+        default: return false
+    }
 }
 const signedBytes = async (request: BridgeRequest) => new TextEncoder().encode(JSON.stringify(await canonical(request)))
 
@@ -75,6 +97,7 @@ const genuineRequest = async (record: unknown): Promise<BridgeRequest | null> =>
     const { request, signature } = record as Partial<PendingRecord>
     if (!request || typeof request !== 'object' || !WRITE_REQUEST_TYPES.has(request.type) || !(signature instanceof ArrayBuffer)) return null
     try {
+        if (!isWellFormed(request)) return null
         return await crypto.subtle.verify('HMAC', signingKey, signature, await signedBytes(request)) ? request : null
     } catch {
         return null

@@ -1,14 +1,14 @@
 // 以前のバージョンの録画（ニコ生のサイトデータに保存していたもの）を、拡張機能側の保存先へ移す
 // 自動では移さない（移した録画が容量の上限で消えないよう、録画一覧で上限を確かめてから、手動で取り込む）
 // 1本ずつ移し、送ったとおりに保存されたのを確かめてから、以前の保存先から消す（確かめられなければ残す）
-import { hasLegacyDatabase, getAllChunks, deleteChunkByKeys, deleteLegacyDatabase, closeLegacyDatabase, type ChunkRecord } from '../../hooks/indexedDB/recordingDB'
+import { hasLegacyDatabase, getAllChunks, getChunksByKeys, deleteChunkByKeys, deleteLegacyDatabase, closeLegacyDatabase, type ChunkRecord } from '../../hooks/indexedDB/recordingDB'
 import { splitFmp4Blob, isMp4MimeType } from '../fmp4'
 import type { BridgeRequestOf, BridgeRequestType, BridgeResults } from './protocol'
 
 type Call = <T extends BridgeRequestType>(request: BridgeRequestOf<T>) => Promise<BridgeResults[T]>
 
+// 移す録画の情報（データは、移す直前に以前の保存先から読む）
 type LegacyRecording = {
-    blob: Blob
     title: string
     userName: string
     thumbnail: string | null
@@ -44,13 +44,12 @@ const isWebm = async (blob: Blob) => {
     const head = await readHead(blob, 0, 4)
     return head.length === 4 && head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3
 }
-// 録画ファイルの先頭か（録画処理を始め直すと、ファイルの先頭から書き出す）
-// 読めない一時データは先頭ではないものとする（数える・取り込む全体を止めずに、その録画だけ移せずに残す）
+// 録画ファイルの先頭か（録画処理を始め直すと、ファイルの先頭から書き出す）。読めなければ null
 const startsNewFile = async (blob: Blob) => {
     try {
         return String.fromCharCode(...await readHead(blob, 4, 8)) === 'ftyp' || await isWebm(blob)
     } catch {
-        return false
+        return null
     }
 }
 
@@ -58,8 +57,7 @@ const startsNewFile = async (blob: Blob) => {
 // MP4 として読めなければ、そのまま（分けて送り、保存する時に順につなぐ）移す
 // segmentId は以前の録画から決める（途中で中断して移し直す時に、途中まで移した区間を置き換えて、2本にしない）
 // onSent: 送った大きさ（進み具合を出すため）
-const importRecording = async (call: Call, segmentId: string, recording: LegacyRecording, onSent: (bytes: number) => void = () => {}) => {
-    const { blob } = recording
+const importRecording = async (call: Call, segmentId: string, recording: LegacyRecording, blob: Blob, onSent: (bytes: number) => void = () => {}) => {
     const mimeType = blob.type || (await isWebm(blob) ? 'video/webm' : 'video/mp4')
     const parsed = isMp4MimeType(mimeType) ? await splitFmp4Blob(blob).catch(() => null) : null
     // 断片が1つもない MP4（断片に分かれていない MP4 など）は、そのまま移す
@@ -112,13 +110,20 @@ const importRecording = async (call: Call, segmentId: string, recording: LegacyR
     if (!saved || saved.fragmentCount !== expected.count || saved.bytes !== expected.bytes) throw new IncompleteImportError(segmentId)
 }
 
-// 移す録画（1本ずつ）。移し終えたら、以前の保存先から消す（remove）
-type LegacyItem = { segmentId: string, recording: LegacyRecording, bytes: number, remove: () => Promise<void> }
+// 移す録画（1本ずつ）。データは、移す直前に読む（load。以前の録画を全部読んだままにすると、移し終えて消した録画も
+// ディスクから消えず、PC の空き容量が足りなくなるので）。移し終えたら、以前の保存先から消す（remove）
+// unreadable: 読めない一時データがある（どこで録画が分かれるか分からないので、移さずに残す）
+type LegacyItem = {
+    segmentId: string, recording: LegacyRecording, bytes: number,
+    load: () => Promise<Blob>, remove: () => Promise<void>, unreadable?: boolean,
+}
 
 // 一時データを、録画処理を始め直したところ（ファイルの先頭から始まる一時データ）で分ける
 // （以前のバージョンの中には、タブごとに同じ録画の番号を使い続けたものがあり、別の録画の一時データが混ざることがある）
+// 読めない一時データがあれば null（別の録画を1本につないでしまわないように）
 const splitTempsRuns = async (group: ChunkRecord[]) => {
     const starts = await Promise.all(group.map(temp => startsNewFile(temp.blob)))
+    if (starts.includes(null)) return null
     const runs: ChunkRecord[][] = []
     for (const [i, temp] of group.entries()) {
         if (runs.length === 0 || starts[i]) runs.push([temp])
@@ -128,6 +133,22 @@ const splitTempsRuns = async (group: ChunkRecord[]) => {
 }
 
 const hasData = (record: ChunkRecord) => record.blob instanceof Blob && record.blob.size > 0
+  && typeof record.sessionId === 'string' && Number.isSafeInteger(record.chunkIndex)
+// 以前の保存先はページのスクリプトも書き換えられるので、情報は形と大きさを確かめてから使う
+const MAX_TEXT_LENGTH = 1000
+const MAX_THUMBNAIL_LENGTH = 1024 * 1024
+const textOf = (value: unknown) => typeof value === 'string' ? value.slice(0, MAX_TEXT_LENGTH) : ''
+const thumbnailOf = (value: unknown) =>
+    typeof value === 'string' && value.startsWith('data:image/') && value.length <= MAX_THUMBNAIL_LENGTH ? value : null
+const timeOf = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined
+const keyOf = (record: ChunkRecord): IDBValidKey => [record.sessionId, record.chunkIndex]
+
+// 鍵を指定して以前の保存先から読み、つなぐ（読めなければエラー。その録画は移さずに残す）
+const loadChunks = async (storeName: string, keys: IDBValidKey[], type: string) => {
+    const records = await getChunksByKeys(storeName, keys)
+    if (records.some(record => !record || !(record.blob instanceof Blob))) throw new Error('以前の録画が見つかりません')
+    return new Blob(records.map(record => record!.blob), { type })
+}
 
 // 以前の保存先にある録画を、移す単位に並べる（中身のない記録は入れない。以前の保存先を消す時に一緒に消える）
 // 古いバージョンがまだ録画中かもしれない一時データは入れない（activeTempsLeft。以前の保存先も残す）
@@ -139,43 +160,54 @@ const planLegacyItems = async () => {
     // 結合されないまま残った一時データは、録画処理ごとにつないで1本として移す
     const groups = new Map<string, ChunkRecord[]>()
     for (const temp of await getAllChunks('Temps')) {
-        if (hasData(temp)) groups.set(temp.sessionId, [...(groups.get(temp.sessionId) ?? []), temp])
+        if (!hasData(temp)) continue
+        const group = groups.get(temp.sessionId)
+        if (group) group.push(temp)
+        else groups.set(temp.sessionId, [temp])
     }
     let activeTempsLeft = false
     for (const group of groups.values()) {
         group.sort((a, b) => a.chunkIndex - b.chunkIndex)
         const last = group[group.length - 1]
         // 最近書き足された（時刻が先のものは、PC の時計がずれていたものとして古いとみなす）・録画している印がある
-        const recent = last.createdAt <= now && now - last.createdAt < ACTIVE_TEMPS_THRESHOLD_MS
+        const lastAt = timeOf(last.createdAt) ?? 0
+        const recent = lastAt <= now && now - lastAt < ACTIVE_TEMPS_THRESHOLD_MS
         if (recent || held.has(legacyRecordingLock(last.sessionId))) {
             activeTempsLeft = true
             continue
         }
-        for (const run of await splitTempsRuns(group)) {
-            const blob = new Blob(run.map(t => t.blob), { type: run[0].blob.type })
+        const runs = await splitTempsRuns(group)
+        for (const run of runs ?? [group]) {
+            const keys = run.map(keyOf)
+            const type = run[0].blob.type
             items.push({
                 // 古いバージョンの録画処理が長く止まってから続きを録った場合、続きは別の録画として移す（最初の番号で見分ける）
                 segmentId: `legacy-temps-${run[0].sessionId}-${run[0].chunkIndex}`,
                 recording: {
-                    blob, title: run[0].title ?? '', userName: run[0].userName ?? '', thumbnail: null,
-                    startedAt: run[0].createdAt, endedAt: run[run.length - 1].createdAt,
+                    title: textOf(run[0].title), userName: textOf(run[0].userName), thumbnail: null,
+                    startedAt: timeOf(run[0].createdAt), endedAt: timeOf(run[run.length - 1].createdAt),
                 },
-                bytes: blob.size,
-                remove: () => deleteChunkByKeys('Temps', run.map(t => [t.sessionId, t.chunkIndex])),
+                bytes: run.reduce((sum, t) => sum + t.blob.size, 0),
+                load: () => loadChunks('Temps', keys, type),
+                remove: () => deleteChunkByKeys('Temps', keys),
+                unreadable: !runs,
             })
         }
     }
 
     for (const chunk of await getAllChunks('Chunks')) {
         if (!hasData(chunk)) continue
+        const key = keyOf(chunk)
+        const type = chunk.blob.type
         items.push({
-            segmentId: `legacy-${chunk.sessionId}-${chunk.chunkIndex}`,
+            segmentId: `legacy-chunk-${chunk.sessionId}-${chunk.chunkIndex}`,
             recording: {
-                blob: chunk.blob, title: chunk.title ?? '', userName: chunk.userName ?? '',
-                thumbnail: chunk.imgUrl, endedAt: chunk.createdAt,
+                title: textOf(chunk.title), userName: textOf(chunk.userName),
+                thumbnail: thumbnailOf(chunk.imgUrl), endedAt: timeOf(chunk.createdAt),
             },
             bytes: chunk.blob.size,
-            remove: () => deleteChunkByKeys('Chunks', [[chunk.sessionId, chunk.chunkIndex]]),
+            load: () => loadChunks('Chunks', [key], type),
+            remove: () => deleteChunkByKeys('Chunks', [key]),
         })
     }
     return { items, activeTempsLeft }
@@ -222,6 +254,8 @@ type LegacyImportOptions = {
     isCancelled?: () => boolean
     // この大きさの録画を、容量の上限を超えずに移せるか（移せなければ、その録画は移さずに以前の保存先に残す）
     canFit?: (bytes: number) => Promise<boolean>
+    // この大きさの録画を移す、PC の空き容量があるか（なければ、残りは移さずに以前の保存先に残す）
+    hasDiskSpace?: (bytes: number) => Promise<boolean>
     // 1本移すたびと、取り込み終えた時に、以前の保存先に残っている録画（移せなかったものも含む）
     onRemaining?: (remaining: LegacySummary | null) => void
 }
@@ -232,7 +266,7 @@ type LegacyImportResult = {
     migrated: number, failed: number, cancelled: boolean, full: boolean, diskFull: boolean, busy: boolean, remaining: LegacySummary | null
 }
 
-const migrate = async (call: Call, { onProgress, isCancelled, canFit, onRemaining }: LegacyImportOptions): Promise<LegacyImportResult> => {
+const migrate = async (call: Call, { onProgress, isCancelled, canFit, hasDiskSpace, onRemaining }: LegacyImportOptions): Promise<LegacyImportResult> => {
     const { items, activeTempsLeft } = await planLegacyItems()
     const progress: LegacyImportProgress = {
         done: 0, migrated: 0, failed: 0, total: items.length,
@@ -254,14 +288,20 @@ const migrate = async (call: Call, { onProgress, isCancelled, canFit, onRemainin
         const before = progress.bytesDone
         let imported = false
         try {
+            if (item.unreadable) throw new Error('読めない一時データがあります')
             // 前に途中まで移した分があれば先に消してから、入るかを確かめる（途中まで移した分を、使用量に数えないように）
             await call({ type: 'deleteSegments', segmentIds: [item.segmentId] })
+            if (hasDiskSpace && !(await hasDiskSpace(item.bytes))) {
+                diskFull = true
+                left.add(item)
+                break
+            }
             if (canFit && !(await canFit(item.bytes))) {
                 // 入らない録画は以前の保存先に残す（後の小さい録画は入るかもしれないので、続ける）
                 full = true
                 left.add(item)
             } else {
-                await importRecording(call, item.segmentId, item.recording, (bytes) => {
+                await importRecording(call, item.segmentId, item.recording, await item.load(), (bytes) => {
                     progress.bytesDone = Math.min(before + item.bytes, progress.bytesDone + bytes)
                     onProgress?.({ ...progress })
                 })

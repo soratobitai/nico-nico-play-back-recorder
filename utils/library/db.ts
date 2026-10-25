@@ -37,6 +37,9 @@ type SegmentRecord = {
     // 保存先に最後に書き込んだ時刻（ミリ秒）。一時保存から移した録画や以前のバージョンの録画は、
     // 録った時刻が古くても書き込み中なので、終えられないまま残った区間と見分けるのに使う（以前の区間にはない）
     updatedAt?: number
+    // 録画しているページが、最後に録画のデータを受け取った時刻（ミリ秒。そのページの時計。録画中かどうかを決める）
+    // 一時保存から後で移した時も、受け取った時の時刻のまま（移した時の書き込みで「録画中」にしないように。以前の区間にはない）
+    recordedAt?: number
 }
 
 type FragmentRecord = {
@@ -50,7 +53,7 @@ type FragmentRecord = {
     keyframe?: boolean // 映像がキーフレームから始まる（この断片から再生を始められる）。ない場合は始められるものとする
 }
 
-type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration' | 'updatedAt'>
+type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration' | 'updatedAt' | 'recordedAt'>
 type NewFragment = Omit<FragmentRecord, 'segmentId'>
 // UI などに渡す区間の情報（大きなデータは含めない）
 type SegmentSummary = Omit<SegmentRecord, 'init'>
@@ -140,7 +143,9 @@ const getSegmentRecord = async (store: IDBObjectStore, segmentId: string) => {
 // ---- 録画中に使う操作 ----
 
 const createSegment = (segment: NewSegment) => withTransaction([SEGMENTS], 'readwrite', async (tx) => {
-    const record: SegmentRecord = { ...segment, endedAt: null, init: null, bytes: 0, fragmentCount: 0, duration: 0, updatedAt: Date.now() }
+    const record: SegmentRecord = {
+        ...segment, endedAt: null, init: null, bytes: 0, fragmentCount: 0, duration: 0, updatedAt: Date.now(), recordedAt: segment.startedAt,
+    }
     await promisify(tx.objectStore(SEGMENTS).add(record))
 })
 
@@ -153,7 +158,8 @@ const setSegmentInit = (segmentId: string, init: Blob) => withTransaction([SEGME
     await promisify(store.put(segment))
 })
 
-const appendFragments = (segmentId: string, fragments: NewFragment[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+// recordedAt: 録画しているページが、この断片を受け取った時刻（ないもの（以前の録画の取り込みなど）は、書き込んだ時刻）
+const appendFragments = (segmentId: string, fragments: NewFragment[], recordedAt?: number) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
     const segments = tx.objectStore(SEGMENTS)
     const segment = await getSegmentRecord(segments, segmentId)
     const store = tx.objectStore(FRAGMENTS)
@@ -172,6 +178,7 @@ const appendFragments = (segmentId: string, fragments: NewFragment[]) => withTra
     // 終えたことにした区間に続きが届いた場合（closeStaleSegments の後に一時保存から移された など）は、終わりを延ばす
     if (segment.endedAt !== null) segment.endedAt = Math.max(segment.endedAt, lastWriteOf(segment))
     segment.updatedAt = Date.now()
+    segment.recordedAt = recordedAt ?? segment.updatedAt
     await promisify(segments.put(segment))
 })
 

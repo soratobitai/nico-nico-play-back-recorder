@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { insertRecorderBar, setRecorderState, setKindChips, setKindRecording, showBarHint, setScreenCaptureButton, setPlaybackButton, setClipWaiting, getTimeString } from '@/utils/ui'
 import { isPlaybackSupported } from '@/utils/review/window'
 import { getProgramData } from '@/utils/feature'
+import { setAcceptSyntheticEvents } from '@/utils/user-event'
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!
 
@@ -38,6 +39,23 @@ describe('録画バー', () => {
         insertRecorderBar(options())
 
         expect(document.querySelector('.recordedMovieBox, .recordedMovie, #video-modal')).toBeNull()
+    })
+
+    it('ページのスクリプトがボタンを押したことにしても（ユーザーの操作でなければ）、何もしない', () => {
+        setAcceptSyntheticEvents(false)
+        const start = vi.fn()
+        const showSettings = vi.fn()
+        const openRecordings = vi.fn()
+        insertRecorderBar(options({ start, showSettings, openRecordings }))
+        setRecorderState('stopped')
+
+        $<HTMLButtonElement>('#recordButton').click()
+        $<HTMLButtonElement>('#settingsButton').click()
+        $<HTMLButtonElement>('#recordingsButton').click()
+
+        expect(start).not.toHaveBeenCalled()
+        expect(showSettings).not.toHaveBeenCalled()
+        expect(openRecordings).not.toHaveBeenCalled()
     })
 
     it('録画開始と停止は1つのボタンで切り替わる', () => {

@@ -9,10 +9,12 @@ import {
   RECORD_WITH_COMMENTS,
   RESOLUTION_MODE,
   FIXED_RESOLUTION_HEIGHT,
+  validFixedResolutionHeight,
   type ResolutionMode,
 } from '../../utils/storage'
 import { getUsage, clearAll, estimateStorage } from '../../utils/library/api'
 import { hasLegacyDatabase, deleteLegacyDatabase } from '../../hooks/indexedDB/recordingDB'
+import { isUserEvent } from '../../utils/user-event'
 
 const GB = 1024 * 1024 * 1024
 // 容量の上限の範囲
@@ -178,8 +180,18 @@ class SettingsModal {
     }
   }
 
+  // 保存できなかった時（拡張機能が更新された後など）は、知らせる
   private async updateSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
     this.settings[key] = value
+    try {
+      await this.saveSetting(key, value)
+    } catch (error) {
+      console.error('設定を保存できませんでした:', error)
+      this.showMessage('設定を保存できませんでした（ページを開き直してください）', 'error')
+    }
+  }
+
+  private async saveSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
     switch (key) {
       case 'MAX_STORAGE_SIZE':
         await MAX_STORAGE_SIZE.setValue(value as number)
@@ -344,6 +356,13 @@ class SettingsModal {
       e.preventDefault()
       this.close()
     })
+    // ページのスクリプトがスイッチ・ボタンなどを押したことにしても、何もしない
+    // （スクリプトで押したスイッチの change は、本物の操作と同じに見えるので、押した時点で止める）
+    modal.addEventListener('click', (e) => {
+      if (isUserEvent(e)) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+    }, { capture: true })
     // 歯車をダブルクリックした時の2回目は、開いたダイアログに当たるので無視する
     // （暗くした所に当たってすぐ閉じたり、その場所の設定を変えたりしないように）
     const openedAt = performance.now()
@@ -374,6 +393,7 @@ class SettingsModal {
     for (const [key, id] of Object.entries(CHECKBOXES) as [keyof Settings, string][]) {
       if (key === 'RECORD_VIDEO' || key === 'RECORD_WITH_COMMENTS') continue
       modal.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('change', (e) => {
+        if (!isUserEvent(e)) return
         this.updateSetting(key, (e.target as HTMLInputElement).checked)
       })
     }
@@ -382,7 +402,8 @@ class SettingsModal {
     const videoCheckbox = modal.querySelector<HTMLInputElement>('#recordVideoCheckbox')!
     const commentsCheckbox = modal.querySelector<HTMLInputElement>('#recordCommentsCheckbox')!
     for (const [checkbox, key] of [[videoCheckbox, 'RECORD_VIDEO'], [commentsCheckbox, 'RECORD_WITH_COMMENTS']] as const) {
-      checkbox.addEventListener('change', () => {
+      checkbox.addEventListener('change', (e) => {
+        if (!isUserEvent(e)) return
         if (!videoCheckbox.checked && !commentsCheckbox.checked) {
           checkbox.checked = true
           this.showKindsMessage('コメントなし・コメントありの、少なくとも1つは録画します')
@@ -395,20 +416,22 @@ class SettingsModal {
     // 解像度が変わった時の録り方。録画中に変えた場合は、録り直して反映する（App.ts で設定の変更を監視している）
     const fixedResolutionSelect = modal.querySelector('#fixedResolutionSelect') as HTMLSelectElement
     for (const radio of modal.querySelectorAll<HTMLInputElement>('input[name="resolutionMode"]')) {
-      radio.addEventListener('change', () => {
-        if (!radio.checked) return
+      radio.addEventListener('change', (e) => {
+        if (!isUserEvent(e) || !radio.checked) return
         fixedResolutionSelect.disabled = radio.value !== 'fixed'
         this.updateSetting('RESOLUTION_MODE', radio.value as ResolutionMode)
       })
     }
-    fixedResolutionSelect?.addEventListener('change', () => {
-      this.updateSetting('FIXED_RESOLUTION_HEIGHT', Number(fixedResolutionSelect.value))
+    fixedResolutionSelect?.addEventListener('change', (e) => {
+      if (!isUserEvent(e)) return
+      this.updateSetting('FIXED_RESOLUTION_HEIGHT', validFixedResolutionHeight(Number(fixedResolutionSelect.value)))
     })
 
     // 容量の上限。動かしている間は表示だけ更新し、保存は手を離した時に行う
     const storageRange = modal.querySelector('#storageRange') as HTMLInputElement
     storageRange?.addEventListener('input', () => this.updateStorageLabel(Number(storageRange.value)))
-    storageRange?.addEventListener('change', () => {
+    storageRange?.addEventListener('change', (e) => {
+      if (!isUserEvent(e)) return
       this.flushWheelSave()
       this.saveStorageLimit(Number(storageRange.value))
     })
@@ -418,7 +441,7 @@ class SettingsModal {
     // （設定画面をスクロールしている途中にスライダーの上を通っても、上限を変えない。上限を下げると古い録画が消えるため）
     let wheelPixels = 0
     storageRange?.addEventListener('wheel', (e) => {
-      if (document.activeElement !== storageRange || e.ctrlKey) return // Ctrl+ホイールは拡大・縮小
+      if (!isUserEvent(e) || document.activeElement !== storageRange || e.ctrlKey) return // Ctrl+ホイールは拡大・縮小
       if (e.deltaY === 0 || Math.abs(e.deltaY) < Math.abs(e.deltaX)) return
       e.preventDefault()
       wheelPixels += e.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? e.deltaY : Math.sign(e.deltaY) * WHEEL_STEP_PIXELS
@@ -434,8 +457,12 @@ class SettingsModal {
     }, { passive: false })
 
     // すべての録画を削除
-    modal.querySelector('#clearButton')?.addEventListener('click', async () => {
-      if (!confirm('すべての録画を削除しますか？\n（元に戻せません）')) return
+    modal.querySelector('#clearButton')?.addEventListener('click', async (e) => {
+      if (!isUserEvent(e)) return
+      // まだ取り込んでいない以前のバージョンの録画も消えることを、先に伝える
+      const legacy = await LEGACY_RECORDINGS.getValue().catch(() => null)
+      const legacyNote = legacy ? `\n（まだ取り込んでいない以前のバージョンの録画 ${legacy.count}本も削除されます）` : ''
+      if (!confirm(`すべての録画を削除しますか？${legacyNote}\n（元に戻せません）`)) return
       try {
         const kept = await this.clearStorage()
         // 録画中の録画は、それまでの分を削除して続きを録画する
@@ -459,7 +486,10 @@ class SettingsModal {
 
   // 容量の上限を保存する。今の使用量より下げると、超えた分の古い録画がすぐに消えるので、確かめてから保存する
   // （スライダー・キー・ホイールのどれで動かしても。やめたら、スライダーを元の値に戻す）
-  private saveStorageLimit(next: number) {
+  private saveStorageLimit(value: number) {
+    // 1〜100 GB の GB 単位にそろえる（スライダーの値が書き換えられていても、それ以外にしない）
+    const next = Math.min(Math.max(Math.round(value / GB) * GB, GB), MAX_STORAGE_SIZE_LIMIT)
+    if (!Number.isFinite(next)) return
     const previous = this.settings.MAX_STORAGE_SIZE
     if (next === previous) return
     const usage = this.currentStorageUsage

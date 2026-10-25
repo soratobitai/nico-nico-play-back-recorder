@@ -1,10 +1,13 @@
 // ニコ生のページ（content script）と、拡張機能側の保存先（bridge）とのやり取りの決まり
 import type { NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment } from './db'
 
+// content script → background: このタブの ID を教えてほしい（プレイバックのウィンドウの大きさを、タブごとに覚える）
+const TAB_ID_MESSAGE = 'playback:tab-id'
+
 type BridgeRequest =
     | { type: 'createSegment', segment: NewSegment }
     | { type: 'setSegmentInit', segmentId: string, init: Blob }
-    | { type: 'appendFragments', segmentId: string, fragments: NewFragment[] }
+    | { type: 'appendFragments', segmentId: string, fragments: NewFragment[], recordedAt?: number }
     | { type: 'finishSegment', segmentId: string, endedAt: number, mimeType?: string }
     | { type: 'getTimeline', programId: string }
     | { type: 'getTimelineForSegments', segmentIds: string[] }
@@ -58,5 +61,5 @@ type BridgeReply =
     | { id: number, ok: true, result: unknown }
     | { id: number, ok: false, error: { name: string, message: string } }
 
-export { WRITE_REQUEST_TYPES, CLOSE_SEGMENTS_MESSAGE, BRIDGE_TOKEN_MESSAGE, BRIDGE_TOKEN_KEY, BRIDGE_INIT_MESSAGE }
+export { WRITE_REQUEST_TYPES, CLOSE_SEGMENTS_MESSAGE, BRIDGE_TOKEN_MESSAGE, BRIDGE_TOKEN_KEY, BRIDGE_INIT_MESSAGE, TAB_ID_MESSAGE }
 export type { BridgeRequest, BridgeResults, BridgeRequestType, BridgeRequestOf, BridgeEnvelope, BridgeReply, DeletedSpace }

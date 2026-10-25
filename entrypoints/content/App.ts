@@ -3,7 +3,7 @@ import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStat
 import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
 import { getProgramData, captureThumbnail, downloadBlob } from "../../utils/feature"
 import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setKindChips, setKindRecording, showBarHint, setRecorderError } from "../../utils/ui"
-import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, type ResolutionMode } from '../../utils/storage'
+import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, validResolutionMode, validFixedResolutionHeight, type ResolutionMode } from '../../utils/storage'
 import { createVideoCapture, createVideoSource, createCommentSource, type RecordingSource } from '../../utils/recording-source'
 import { createKindRecorder, type KindRecorder } from '../../utils/kind-recorder'
 import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen-capture'
@@ -99,8 +99,8 @@ export default async () => {
         AUTO_RELOAD_ON_FAILURE.getValue(),
         RECORD_VIDEO.getValue(),
         RECORD_WITH_COMMENTS.getValue(),
-        RESOLUTION_MODE.getValue(),
-        FIXED_RESOLUTION_HEIGHT.getValue(),
+        RESOLUTION_MODE.getValue().then(validResolutionMode),
+        FIXED_RESOLUTION_HEIGHT.getValue().then(validFixedResolutionHeight),
     ])
 
     // 一時保存に付ける印の鍵を読んでおく（拡張機能が更新されると読めなくなるので、ページを開いた時に）
@@ -412,11 +412,11 @@ export default async () => {
     }
     // 録画中に解像度の設定を変えた場合は、録り直して反映する
     RESOLUTION_MODE.watch((newValue) => {
-        resolutionMode = newValue
+        resolutionMode = validResolutionMode(newValue)
         restartVideoKinds()
     })
     FIXED_RESOLUTION_HEIGHT.watch((newValue) => {
-        fixedResolutionHeight = newValue
+        fixedResolutionHeight = validFixedResolutionHeight(newValue)
         if (resolutionMode === 'fixed') restartVideoKinds()
     })
 

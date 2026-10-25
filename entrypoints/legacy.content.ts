@@ -4,7 +4,7 @@
 // （埋め込めない時は、裏のタブで開く）。取り込み用の URL は誰でも開けるので、URL に付いた合言葉を background に確かめてから取り込む。
 // 埋め込まれた時は、埋め込んだのがこの拡張機能の録画一覧かも確かめる
 import { countLegacyRecordingsUnlessImporting, type LegacyImportProgress, type LegacySummary } from '@/utils/library/migrate'
-import { importLegacy, getUsage } from '@/utils/library/api'
+import { importLegacy, getUsage, estimateStorage } from '@/utils/library/api'
 import { isExtensionContextValid } from '@/utils/library/client'
 import { LEGACY_RECORDINGS, MAX_STORAGE_SIZE } from '@/utils/storage'
 import {
@@ -23,6 +23,7 @@ const CHECK_ATTEMPTS = 20
 // 録画一覧が頼んだ取り込みか（URL に付いた合言葉を background に確かめる。合言葉は1回しか使えない）
 const isRequestedRun = async (run: string) => {
     for (let i = 0; i < CHECK_ATTEMPTS; i++) {
+        if (!isExtensionContextValid()) return false // 拡張機能が更新された
         const reply = await chrome.runtime.sendMessage({ type: LEGACY_IMPORT_CHECK_MESSAGE, run }).catch(() => null)
         if (reply?.ok) return true
         await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL_MS))
@@ -55,15 +56,32 @@ const reportLegacyRecordings = async ({ keepWhenNone = false } = {}) => {
     }
 }
 
+// 使用量を数え直す間隔（録画が多いと数えるのに時間がかかるので、取り込む1本ごとには数え直さない）
+const USAGE_REFRESH_MS = 10 * 1000
+// PC の空き容量のうち、取り込んだ後も残しておく分（録画を続けられるように）
+const DISK_MARGIN_BYTES = 512 * 1024 * 1024
+
 // 容量の上限まで、録画を続ける分の空き（LEGACY_IMPORT_HEADROOM）を残して移せるか
 // （上限いっぱいまで移すと、次の録画で、移した録画が古い順に削除されてしまうので、入らない録画は以前の保存先に残す）
-const canFit = async (bytes: number) => {
-    const [usage, limit] = await Promise.all([getUsage(), MAX_STORAGE_SIZE.getValue()])
-    return usage.bytes + bytes + LEGACY_IMPORT_HEADROOM <= limit
+// 使用量はしばらく覚えておき、移すと答えた分を足していく
+const createCanFit = () => {
+    let usage: { bytes: number, at: number } | null = null
+    return async (bytes: number) => {
+        if (!usage || Date.now() - usage.at > USAGE_REFRESH_MS) usage = { bytes: (await getUsage()).bytes, at: Date.now() }
+        if (usage.bytes + bytes + LEGACY_IMPORT_HEADROOM > await MAX_STORAGE_SIZE.getValue()) return false
+        usage.bytes += bytes
+        return true
+    }
+}
+
+// この大きさを移す PC の空き容量があるか（分からなければ、あるものとする）
+const hasDiskSpace = async (bytes: number) => {
+    const { usage, quota } = await estimateStorage()
+    return usage === undefined || quota === undefined || quota - usage >= bytes + DISK_MARGIN_BYTES
 }
 
 export default defineContentScript({
-    matches: ['*://live.nicovideo.jp/*'],
+    matches: ['https://live.nicovideo.jp/*'],
     // 録画一覧に埋め込まれた枠でも動かす（ニコ生のページの中の枠では、何もしない）
     allFrames: true,
     main() {
@@ -100,7 +118,8 @@ export default defineContentScript({
                     send(progress)
                 },
                 isCancelled: () => cancelled,
-                canFit,
+                canFit: createCanFit(),
+                hasDiskSpace,
                 // 1本移すたびと取り込み終えた時に、残りを知らせる（途中で止まっても、録画一覧に出る数と、上限を上げる大きさが合うように）
                 onRemaining: (remaining) => void setLegacyRecordings(remaining).catch(() => {}),
             })
@@ -117,7 +136,7 @@ export default defineContentScript({
                     console.error('以前の録画を取り込めませんでした:', error)
                     await Promise.race([reportLegacyRecordings({ keepWhenNone: embedded }), new Promise(resolve => setTimeout(resolve, RECOUNT_TIMEOUT_MS))])
                     return {
-                        migrated: last.migrated, failed: last.failed, cancelled: false, full: false, diskFull: false, busy: false, error: String(error),
+                        migrated: last.migrated, failed: last.failed, cancelled, full: false, diskFull: false, busy: false, error: String(error),
                     }
                 })
                 .then((finished) => {
@@ -140,6 +159,8 @@ export default defineContentScript({
             if (!importPage || typeof message.run !== 'string') return
             // 取り込んでいる最中なら、新しい合言葉で知らせ続ける（録画一覧を開き直した時など）
             run = message.run
+            // 前にやめるように言われていても、新しく始めた取り込みは続ける
+            cancelled = false
             startImport()
         })
 

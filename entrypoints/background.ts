@@ -1,4 +1,4 @@
-import { BRIDGE_TOKEN_KEY, BRIDGE_TOKEN_MESSAGE, CLOSE_SEGMENTS_MESSAGE } from '@/utils/library/protocol'
+import { BRIDGE_TOKEN_KEY, BRIDGE_TOKEN_MESSAGE, CLOSE_SEGMENTS_MESSAGE, TAB_ID_MESSAGE } from '@/utils/library/protocol'
 import { closeSegments } from '@/utils/library/db'
 import { OPEN_LIBRARY_MESSAGE, openLibrary } from '@/utils/library/open-library'
 import { LEGACY_IMPORT_PROGRESS_MESSAGE, LEGACY_IMPORT_CHECK_MESSAGE, LEGACY_IMPORT_TAB_KEY, legacyImportRunKey, isLegacyImportPage } from '@/utils/library/legacy-import'
@@ -45,6 +45,10 @@ export default defineBackground(() => {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // タブの中の content script からの依頼にだけ答える
         if (!sender.tab) return
+        if (message?.type === TAB_ID_MESSAGE) {
+            sendResponse({ tabId: sender.tab.id })
+            return
+        }
         if (message?.type === BRIDGE_TOKEN_MESSAGE) {
             getBridgeToken().then(token => sendResponse({ token }))
             return true
