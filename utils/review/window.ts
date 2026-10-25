@@ -29,8 +29,8 @@ const TAB_SIZE_KEY = 'nicoPlaybackRecorder.playbackWindowSize'
 const SETTLE_MS = 1000
 // 大きさを変えている間は覚えず、変え終えてから覚える
 const SAVE_DELAY_MS = 500
-// 覚える大きさの範囲（閉じる途中などの、おかしな値は覚えない）
-const MIN_SIZE = 200
+// 覚える大きさの範囲（閉じる途中などの、おかしな値は覚えない。Chrome は幅 約270・高さ 約100 より小さくしない）
+const MIN_SIZE = 50
 const MAX_SIZE = 10000
 
 type PlaybackWindowOptions = {
@@ -108,7 +108,7 @@ const rememberSize = (pip: Window, requested: PlaybackWindowSize, frame: Playbac
     }
     let timer: ReturnType<typeof setTimeout> | undefined
     pip.addEventListener('resize', () => {
-        if (Date.now() - openedAt < SETTLE_MS) return
+        if (pip.closed || Date.now() - openedAt < SETTLE_MS) return
         // 閉じた後は大きさを読めないので、変えた時の大きさを覚えておく
         const size = { width: pip.outerWidth - frameSize.width, height: pip.outerHeight - frameSize.height }
         if (!isSize(size)) return
