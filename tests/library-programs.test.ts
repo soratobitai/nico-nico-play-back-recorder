@@ -49,6 +49,17 @@ describe('番組ごとにまとめる', () => {
         expect(isRecordingSegment({ ...segment, endedAt: 10_000 }, 20_000)).toBe(false)
     })
 
+    it('一時保存していた前に録った分を、後から移して書き込んだだけの区間は、録画中にしない', () => {
+        // 10 秒まで録った区間を、1時間後に移した（その時に書き込まれた）
+        const hour = 60 * 60 * 1000
+        const moved = summary({ segmentId: 'a', startedAt: 0, endedAt: null, duration: 10, updatedAt: hour })
+        expect(isRecordingSegment(moved, hour + 1000)).toBe(false)
+        expect(summarizePrograms([moved], hour + 1000)[0].recording).toBe(false)
+        // 録り続けていて、少し前に録った分が書き込まれた（録画中）
+        const live = summary({ segmentId: 'b', startedAt: hour - 60_000, endedAt: null, duration: 55, updatedAt: hour })
+        expect(isRecordingSegment(live, hour + 1000)).toBe(true)
+    })
+
     it('以前のバージョンから移した録画は、配信者とタイトルで見分ける', () => {
         expect(programKeyOf({ programId: 'legacy', title: 'T', userName: 'U' })).toBe('legacy:U:T')
         expect(programKeyOf({ programId: 'lv1', title: 'T', userName: 'U' })).toBe('lv1')
