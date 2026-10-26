@@ -61,9 +61,11 @@ const BAR_HTML = `
   <span class="npr-hint" role="status"></span>
   <div class="npr-status">
     <span class="npr-status-dot" aria-hidden="true"></span>
-    <span id="recordStatus" class="npr-status-label" role="status">準備中</span>
+    <span class="npr-status-text">
+      <span id="recordStatus" class="npr-status-label" role="status">準備中</span>
+      <span id="recordQuality" class="npr-quality" hidden></span>
+    </span>
     <span id="recordTime" class="npr-time" aria-label="録画時間">0:00</span>
-    <span id="recordQuality" class="npr-quality" hidden></span>
   </div>
 
   <div class="npr-kinds" role="group" aria-label="録画する種類">
@@ -209,8 +211,9 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     setRecorderState(state)
 }
 
-// 幅ごとに詰める表示（style.css のコンテナクエリ）でも入り切らない時は、最も詰めた表示にする
-// （ブラウザの最小フォントサイズの設定などで、文字が想定より大きく表示される環境）
+// 入り切らない時は、入り切るまで1段ずつ詰める（style.css の data-fit。文字を減らす段階が先で、項目を隠す段階が後）
+// 幅を決め打ちせず、実際に入り切るかを測って決める（文字の大きさが環境で違っても、はみ出さないように）
+const FIT_STEPS = 10
 
 // 中身が、バーの左右の余白を除いた所からはみ出しているか（余白にはみ出しただけでは scrollWidth に出ないので、位置で比べる）
 // 隠れている部分（大きさが 0）と、バーの上に重ねて出すお知らせは数えない。バーが隠れていれば、はみ出していないことにする
@@ -224,11 +227,18 @@ const isOverflowing = (target: HTMLElement) => {
         return rect.width > 0 && rect.right > right + 0.5
     })
 }
-// 詰めた表示をいったん外して入り切るか確かめ、入り切らなければ詰め直す（画面に出る前に行うので、ちらつかない）
+// 詰めた表示をいったん外して入り切るか確かめ、入り切らなければ1段ずつ詰める（画面に出る前に行うので、ちらつかない）
 const fitBar = () => {
     if (!bar) return
-    delete bar.dataset.tight
-    if (isOverflowing(bar)) bar.dataset.tight = ''
+    let steps = 0
+    const apply = () => {
+        bar!.dataset.fit = Array.from({ length: steps }, (_, i) => i + 1).join(' ')
+    }
+    apply()
+    while (steps < FIT_STEPS && isOverflowing(bar)) {
+        steps++
+        apply()
+    }
 }
 // 次に描く前に1回だけ確かめる（大きさが変わったことを知らせる処理の中で表示を変えると、知らせが繰り返されるため）
 let fitFrame = 0

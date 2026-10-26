@@ -34,7 +34,6 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
   text-align: left;
-  container-type: inline-size;
   /* z-index は付けない（下の「放送参加」の部分から上に開くギフト・エモーションなどの表示が、
      録画バーの下に隠れないように。付けると、z-index のない表示より常に上に描かれる） */
 }
@@ -73,15 +72,14 @@
   letter-spacing: 0;
   white-space: nowrap;
 }
-/* 録画の画質（720p など。マウスを乗せると種類ごとの大きさ） */
+/* 録画の状態の文字と、その下に小さく録画の画質（720p など。マウスを乗せると種類ごとの大きさ） */
+.npr-status-text { display: flex; flex-direction: column; justify-content: center; gap: 1px; }
 .npr-quality {
-  padding: 0 5px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 4px;
   color: var(--npr-muted);
-  font-size: 10.5px;
+  font-size: 9px;
   font-weight: 700;
-  line-height: 16px;
+  line-height: 1;
+  letter-spacing: 0.03em;
   white-space: nowrap;
 }
 
@@ -333,72 +331,36 @@
 .npr-record.is-stop svg { width: 11px; height: 11px; color: var(--npr-rec); }
 .npr-record.is-stop:hover { background: rgba(var(--npr-rec-rgb), 0.22); color: #fff; }
 
-/* 幅が狭い時は、文字を小さくし、アイコンだけにする（文字は読み上げには残す）。
-   「録画一覧」「プレイバック」「画面録画」の文字はできるだけ残し、録画開始・停止の文字、録画時間、
-   録画の状態の文字から先に詰める。
-   はみ出さないように、各段階で中身が必要とする幅を測って、次の段階へ切り替える幅を決めている
-   （「直前1分」のボタンを足した時に、ボタン1つ分（28px と間の 4px）ずつ広げた。
-   録画の画質（1080p で 45px と間の 8px）を足した時に、画質を隠すまでの段階を 54px ずつ広げた） */
+/* 幅が狭い時は、入り切るまで1段ずつ詰める（ui.ts の fitBar が data-fit に、詰めた段階を 1 から順に入れる）。
+   文字を小さくする・ボタンの文字をアイコンだけにする・説明の文字を隠す（文字は読み上げには残す）を先に行い、
+   録画時間・画質・直前1分のボタンといった項目を隠すのは、それでも入り切らない時だけにする */
 /* 1. 画面録画・プレイバックの文字を小さくする */
-@container (max-width: 796px) {
-  .npr-screen-button { padding: 0 10px 0 8px; gap: 5px; font-size: 9.5px; }
-  #playbackButton { padding: 0 8px; gap: 5px; font-size: 9.5px; }
-}
+.npr-bar[data-fit~="1"] .npr-screen-button { padding: 0 10px 0 8px; gap: 5px; font-size: 9.5px; }
+.npr-bar[data-fit~="1"] #playbackButton { padding: 0 8px; gap: 5px; font-size: 9.5px; }
 /* 2. 録画開始・停止をアイコンだけにする */
-@container (max-width: 781px) {
-  .npr-bar .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .npr-record { width: 28px; padding: 0; justify-content: center; }
-}
-/* 3. 録画時間を隠す */
-@container (max-width: 741px) {
-  .npr-time { display: none; }
-}
-/* 4. 録画の状態の文字を隠す（色の丸だけにする） */
-@container (max-width: 676px) {
-  .npr-bar .npr-status-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .npr-kinds,
-  .npr-screen { padding-left: 8px; }
-}
-/* 4.5. 録画の画質を隠す（マウスを乗せた時の説明は、録画の状態の丸に乗せても出ない。録画一覧で画質が分かる） */
-@container (max-width: 621px) {
-  .npr-quality { display: none; }
-}
-/* 5. 録画一覧をアイコンだけにする */
-@container (max-width: 567px) {
-  #recordingsButton { width: 28px; padding: 0; justify-content: center; }
-  #recordingsButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-/* 6. プレイバックをアイコンだけにする */
-@container (max-width: 512px) {
-  #playbackButton { width: 28px; padding: 0; justify-content: center; }
-  #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-/* 7. 画面録画をアイコンだけにする */
-@container (max-width: 447px) {
-  .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
-  .npr-screen-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-}
-/* 8. 直前1分のボタンを隠す（ボタンを足す前と同じ幅まで入るように。場面の動画は、プレイバック・録画一覧からも保存できる） */
-@container (max-width: 364px) {
-  #clipButton { display: none; }
-}
-/* 9. 録る種類のチップの余白を詰める */
-@container (max-width: 382px) {
-  .npr-chip { padding: 0 6px; gap: 4px; }
-  .npr-kinds { gap: 3px; }
-}
-
-/* 幅ごとに詰めても入り切らない時（文字が想定より大きく表示される環境）は、最も詰めた表示にする（ui.ts の fitBar） */
-.npr-bar[data-tight] .npr-screen-label,
-.npr-bar[data-tight] .npr-label,
-.npr-bar[data-tight] .npr-status-label,
-.npr-bar[data-tight] .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.npr-bar[data-tight] :is(.npr-time, .npr-quality) { display: none; }
-.npr-bar[data-tight] .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
-.npr-bar[data-tight] :is(#playbackButton, #recordingsButton, .npr-record) { width: 28px; padding: 0; justify-content: center; }
-.npr-bar[data-tight] :is(.npr-kinds, .npr-screen) { padding-left: 8px; }
-.npr-bar[data-tight] .npr-chip { padding: 0 6px; gap: 4px; }
-.npr-bar[data-tight] .npr-kinds { gap: 3px; }
+.npr-bar[data-fit~="2"] .npr-record-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.npr-bar[data-fit~="2"] .npr-record { width: 28px; padding: 0; justify-content: center; }
+/* 3. 録画一覧をアイコンだけにする */
+.npr-bar[data-fit~="3"] #recordingsButton { width: 28px; padding: 0; justify-content: center; }
+.npr-bar[data-fit~="3"] #recordingsButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* 4. プレイバックをアイコンだけにする */
+.npr-bar[data-fit~="4"] #playbackButton { width: 28px; padding: 0; justify-content: center; }
+.npr-bar[data-fit~="4"] #playbackButton .npr-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* 5. 画面録画をアイコンだけにする */
+.npr-bar[data-fit~="5"] .npr-screen-button { width: 26px; padding: 0; justify-content: center; }
+.npr-bar[data-fit~="5"] .npr-screen-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* 6. 録る種類のチップと、区切りの余白を詰める */
+.npr-bar[data-fit~="6"] .npr-chip { padding: 0 6px; gap: 4px; }
+.npr-bar[data-fit~="6"] .npr-kinds { gap: 3px; }
+.npr-bar[data-fit~="6"] :is(.npr-kinds, .npr-screen) { padding-left: 8px; }
+/* 7. 録画の状態の文字を隠す（色の丸と、その下の画質だけにする） */
+.npr-bar[data-fit~="7"] .npr-status-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* 8. 録画時間を隠す */
+.npr-bar[data-fit~="8"] .npr-time { display: none; }
+/* 9. 録画の画質を隠す（録画一覧で画質が分かる） */
+.npr-bar[data-fit~="9"] .npr-quality { display: none; }
+/* 10. 直前1分のボタンを隠す（場面の動画は、プレイバック・録画一覧からも保存できる） */
+.npr-bar[data-fit~="10"] #clipButton { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .npr-bar .npr-status-dot,
