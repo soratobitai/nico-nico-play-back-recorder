@@ -4,6 +4,7 @@
 // 右: 選んだ番組（プレイヤー・種類ごとの録った時間のタイムライン・保存した時のファイルの単位の録画の一覧）
 import * as db from '@/utils/library/db'
 import type { RecordingKind } from '@/utils/library/db'
+import type { VideoSize } from '@/utils/fmp4'
 import {
     summarizePrograms, filterPrograms, groupByDay, sortPrograms, recordedSeconds, thumbnailOf, filesOf, isRecordingSegment,
     type ProgramSummary, type ProgramOrder, type RecordingFile,
@@ -78,6 +79,13 @@ let viewState: ReviewViewState | null = null
 let fileKind: RecordingKind | null = null
 // 区間ごとの映像・音声の設定の印（保存した時のファイルの単位を出すのに使う。分かったものだけ覚える）
 const signatures = new Map<string, string | null>()
+// 区間ごとの録画の映像の大きさ（録画の一覧に画質を出す。mp4 の初期化セグメントから読む）
+const videoSizes = new Map<string, VideoSize>()
+// 録画の画質（720p など）。分からなければ null
+const qualityOf = (file: RecordingFile) => {
+    const size = file.segments.map(segment => videoSizes.get(segment.segmentId)).find(Boolean)
+    return size ? { label: `${size.height}p`, detail: `${size.width}×${size.height}` } : null
+}
 // 選んで削除している間の、選んだ番組
 let selecting: Set<string> | null = null
 // タイムラインを掴んで動かしている間（読み直しても、タイムラインを作り直さない）
@@ -196,8 +204,9 @@ const loadSignatures = async () => {
         .filter(segment => segment.format === 'fmp4' && !signatures.get(segment.segmentId))
         .map(segment => segment.segmentId)
     if (unknown.length === 0) return
-    for (const [segmentId, signature] of await db.getInitSignatures(unknown)) {
+    for (const [segmentId, { signature, size }] of await db.getInitInfo(unknown)) {
         if (signature !== null) signatures.set(segmentId, signature)
+        if (size) videoSizes.set(segmentId, size)
     }
 }
 
@@ -409,7 +418,15 @@ const renderProgram = () => {
     const meta: HTMLElement[] = program.userName ? [element('span', 'meta-user', program.userName)] : []
     meta.push(element('span', undefined, period))
     if (program.recording) meta.push(element('span', 'recording', '録画中'))
-    meta.push(element('span', undefined, formatDuration(recordedSeconds(program.segments))), element('span', undefined, formatBytes(program.bytes)))
+    meta.push(element('span', undefined, formatDuration(recordedSeconds(program.segments))))
+    // 画質（録画の映像の高さ。途中で変わった・種類で違う時は、低い順に並べる）
+    const heights = [...new Set(program.segments.map(segment => videoSizes.get(segment.segmentId)?.height).filter((h): h is number => !!h))].sort((a, b) => a - b)
+    if (heights.length > 0) {
+        const quality = element('span', undefined, heights.map(h => `${h}p`).join('・'))
+        quality.title = '画質（録画の映像の高さ）'
+        meta.push(quality)
+    }
+    meta.push(element('span', undefined, formatBytes(program.bytes)))
     programMeta.replaceChildren(...meta)
 
     // 番組のページ（以前のバージョンから移した録画は、番組が分からない）
@@ -786,11 +803,27 @@ const renderFiles = (program: ProgramSummary) => {
         fileList.replaceChildren(element('li', 'files-empty', 'この種類の録画はありません。'))
         return
     }
-    fileList.replaceChildren(...files.map((file, position) => fileRow(program, file, position)))
+    fileList.replaceChildren(...files.map((file, position) => fileRow(program, file, position, files[position - 1])))
     updateCurrentFile()
 }
 
-const fileRow = (program: ProgramSummary, file: RecordingFile, position: number) => {
+// 録画の長さ・画質・大きさ（画質にマウスを乗せると、映像の大きさ）
+const fileSize = (file: RecordingFile) => {
+    const quality = qualityOf(file)
+    const span = element('span', 'file-size', [formatDuration(file.seconds), quality?.label, formatBytes(file.bytes)].filter(Boolean).join('・'))
+    if (quality) span.title = `画質 ${quality.detail}`
+    return span
+}
+
+// 画質が変わった所の説明（前と後の画質が分かれば、それも出す）
+const qualityChange = (previous: RecordingFile | undefined, file: RecordingFile) => {
+    const before = previous && qualityOf(previous)
+    const after = qualityOf(file)
+    return before && after && before.label !== after.label ? `ここで画質が変わりました（${before.label} → ${after.label}）` : 'ここで画質が変わりました'
+}
+
+// previous: 1つ前の録画（画質が変わった所で、前の画質を出す）
+const fileRow = (program: ProgramSummary, file: RecordingFile, position: number, previous?: RecordingFile) => {
     const first = file.segments[0]
     const item = element('li', `file kind-${file.kind}`)
     item.dataset.kind = file.kind
@@ -824,9 +857,9 @@ const fileRow = (program: ProgramSummary, file: RecordingFile, position: number)
     const info = element('div', 'file-info')
     info.append(
         element('span', 'file-when', when),
-        element('span', 'file-size', `${formatDuration(file.seconds)}・${formatBytes(file.bytes)}`),
+        fileSize(file),
     )
-    if (file.splitBySettings) info.append(element('span', 'file-note', 'ここで画質が変わりました'))
+    if (file.splitBySettings) info.append(element('span', 'file-note', qualityChange(previous, file)))
 
     const actions = element('div', 'file-actions')
     const save = element('button', 'icon-button')

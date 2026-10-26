@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createFmp4Splitter, splitFmp4Blob, buildFmp4File, parseInit, parseMoof, type Fragment } from '@/utils/fmp4'
+import { createFmp4Splitter, splitFmp4Blob, buildFmp4File, parseInit, parseMoof, videoSizeOf, type Fragment } from '@/utils/fmp4'
 
 // MediaRecorder（Chrome）で録った約8秒の MP4
 const fixture = new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures/recorder-sample.mp4')))
@@ -147,6 +147,33 @@ describe('createFmp4Splitter（録画中のデータを分ける）', () => {
         const splitter = createFmp4Splitter()
         const result = splitter.push(bytes).fragments
         expect(result.map(f => f.keyframe)).toEqual([true, false, true])
+    })
+})
+
+describe('videoSizeOf（映像の大きさ）', () => {
+    it('初期化セグメントから映像の大きさを読む（トラックの表示の大きさがなければ、映像の設定から読む）', async () => {
+        const { init } = await splitFmp4Blob(fixtureBlob)
+        const bytes = new Uint8Array(await init.arrayBuffer())
+        expect(videoSizeOf(bytes)).toEqual({ width: 320, height: 180 })
+
+        // トラックの表示の大きさ（どの tkhd も、最後の8バイト）を 0 にしても、映像の設定から読める
+        const copy = bytes.slice()
+        const view = new DataView(copy.buffer)
+        const text = (i: number) => String.fromCharCode(...copy.subarray(i, i + 4))
+        let zeroed = 0
+        for (let i = 4; i + 4 <= copy.length; i++) {
+            if (text(i) !== 'tkhd') continue
+            const boxEnd = i - 4 + view.getUint32(i - 4)
+            copy.fill(0, boxEnd - 8, boxEnd)
+            zeroed++
+        }
+        expect(zeroed).toBeGreaterThan(0)
+        expect(videoSizeOf(copy)).toEqual({ width: 320, height: 180 })
+    })
+
+    it('MP4 でないデータ・映像のトラックがないものは null', () => {
+        expect(videoSizeOf(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]))).toBeNull()
+        expect(videoSizeOf(new Uint8Array(0))).toBeNull()
     })
 })
 

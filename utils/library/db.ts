@@ -5,7 +5,7 @@
 // 録画は「区間（segment）」ごとに保存する。区間は1回の録画処理（MediaRecorder）で録った範囲で、
 // fmp4 の区間は「初期化セグメント」と数秒ごとの「断片（fragment）」に分けて持つ。
 // 断片のまま持つので、録画中でも再生でき、容量の上限を超えたら古い断片から消していける。
-import { buildFmp4File, initSignature } from '../fmp4'
+import { buildFmp4File, initSignature, videoSizeOf, type VideoSize } from '../fmp4'
 import { groupIntoFiles } from './programs'
 
 const DB_NAME = 'PlaybackLibrary'
@@ -269,14 +269,31 @@ const signatureOf = async (segment: Pick<SegmentRecord, 'format' | 'init'>) => {
     }
 }
 
-// 区間ごとの映像・音声の設定の印（録画一覧のページで、保存した時のファイルの単位を出すのに使う）
-const getInitSignatures = async (segmentIds: string[]) => {
+// 区間ごとの、映像・音声の設定の印と映像の大きさ（録画一覧のページで、保存した時のファイルの単位と画質を出すのに使う）
+// mp4 の初期化セグメントがない（まだ届いていない・webm など）区間は、どちらも null
+type InitInfo = { signature: string | null, size: VideoSize | null }
+const getInitInfo = async (segmentIds: string[]) => {
     const segments = await withTransaction([SEGMENTS], 'readonly', tx => Promise.all(
         segmentIds.map(id => promisify<SegmentRecord | undefined>(tx.objectStore(SEGMENTS).get(id))),
     ))
     // 初期化セグメントを読むのは、読み出しを終えてから（待っている間に読み出しが閉じないように）
-    return new Map(await Promise.all(segmentIds.map(async (id, i) => [id, segments[i] ? await signatureOf(segments[i]!) : null] as const)))
+    return new Map(await Promise.all(segmentIds.map(async (id, i): Promise<readonly [string, InitInfo]> => {
+        const segment = segments[i]
+        if (!segment || segment.format !== 'fmp4' || !segment.init) return [id, { signature: null, size: null }]
+        const init = new Uint8Array(await segment.init.arrayBuffer())
+        let signature: string | null = null
+        try {
+            signature = initSignature(init)
+        } catch {
+            // 読めない
+        }
+        return [id, { signature, size: videoSizeOf(init) }]
+    })))
 }
+
+// 区間ごとの映像・音声の設定の印
+const getInitSignatures = async (segmentIds: string[]) =>
+    new Map([...await getInitInfo(segmentIds)].map(([id, info]) => [id, info.signature] as const))
 
 const deleteSegments = (segmentIds: string[]) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
     for (const segmentId of segmentIds) {
@@ -498,6 +515,7 @@ export {
     listAllSegments,
     buildDownloadFiles,
     getInitSignatures,
+    getInitInfo,
     clearAll,
     getUsage,
     closeStaleSegments,
@@ -508,4 +526,4 @@ export {
     enforceLimit,
     SegmentNotFoundError,
 }
-export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment, TimelineFragment, DownloadFile }
+export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment, TimelineFragment, DownloadFile, InitInfo }

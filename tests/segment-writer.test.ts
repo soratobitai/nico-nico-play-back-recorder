@@ -56,6 +56,16 @@ describe('mp4 の書き込み', () => {
         expect(init.size + fragments.reduce((sum, f) => sum + f.blob.size, 0)).toBe(fixture.length)
     })
 
+    it('初期化セグメントが届いたら、録画の映像の大きさを知らせる（録画バーに画質を出す）', async () => {
+        const onVideoSize = vi.fn()
+        const writer = createSegmentWriter(segment('fmp4', 'video/mp4'), onVideoSize)
+        await writer.start()
+        await writeFixture(writer)
+
+        expect(onVideoSize).toHaveBeenCalledTimes(1)
+        expect(onVideoSize).toHaveBeenCalledWith({ width: 320, height: 180 })
+    })
+
     it('保存したら、プレイバックのウィンドウへ初期化セグメントと断片を知らせる', async () => {
         const events: LiveFeedEvent[] = []
         const unsubscribe = subscribeLiveFeed(event => events.push(event))

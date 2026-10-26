@@ -325,7 +325,39 @@ const initSignature = (init: Uint8Array): string => {
     }).join('|')
 }
 
+type VideoSize = { width: number, height: number }
+
+// 初期化セグメントから、映像の大きさ（ピクセル）を読む。映像のトラックがない・読めなければ null
+// トラックの表示の大きさ（tkhd の幅・高さ。16.16 の固定小数点で、ボックスの最後にある）を使い、なければ映像の設定（avc1 などの幅・高さ）を使う
+const videoSizeOf = (init: Uint8Array): VideoSize | null => {
+    try {
+        const view = new DataView(init.buffer, init.byteOffset, init.byteLength)
+        const moov = readBoxes(init).find(b => b.type === 'moov')
+        for (const trak of children(moov, 'trak')) {
+            const mdia = child(trak, 'mdia')
+            const hdlr = child(mdia, 'hdlr')
+            if (!hdlr || readBoxType(init, hdlr.bodyStart + 4) !== 'vide') continue
+            const tkhd = child(trak, 'tkhd')
+            if (tkhd && tkhd.end - 8 >= tkhd.bodyStart) {
+                const width = view.getUint32(tkhd.end - 8) >>> 16
+                const height = view.getUint32(tkhd.end - 4) >>> 16
+                if (width > 0 && height > 0) return { width, height }
+            }
+            // stsd の最初の映像の設定: 項目の数のあと、ボックスの頭（8）・予約（6）・参照（2）・予約（16）の次に幅・高さ
+            const stsd = child(child(child(mdia, 'minf'), 'stbl'), 'stsd')
+            if (stsd && stsd.bodyStart + 44 <= stsd.end) {
+                const width = view.getUint16(stsd.bodyStart + 40)
+                const height = view.getUint16(stsd.bodyStart + 42)
+                if (width > 0 && height > 0) return { width, height }
+            }
+        }
+    } catch {
+        // 読めない
+    }
+    return null
+}
+
 const isMp4MimeType = (mimeType: string) => mimeType.toLowerCase().startsWith('video/mp4')
 
-export { createFmp4Splitter, splitFmp4Blob, buildFmp4File, moofSizeOf, parseInit, parseMoof, initSignature, isMp4MimeType }
-export type { Fragment, FragmentBlob, Fmp4Segment }
+export { createFmp4Splitter, splitFmp4Blob, buildFmp4File, moofSizeOf, parseInit, parseMoof, initSignature, videoSizeOf, isMp4MimeType }
+export type { Fragment, FragmentBlob, Fmp4Segment, VideoSize }

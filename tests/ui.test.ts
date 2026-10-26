@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { insertRecorderBar, setRecorderState, setKindChips, setKindRecording, showBarHint, setScreenCaptureButton, setPlaybackButton, setClipWaiting, getTimeString } from '@/utils/ui'
+import { insertRecorderBar, setRecorderState, setKindChips, setKindRecording, showBarHint, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setRecordingQuality, getTimeString } from '@/utils/ui'
 import { isPlaybackSupported } from '@/utils/review/window'
 import { getProgramData } from '@/utils/feature'
 import { setAcceptSyntheticEvents } from '@/utils/user-event'
@@ -56,6 +56,21 @@ describe('録画バー', () => {
         expect(start).not.toHaveBeenCalled()
         expect(showSettings).not.toHaveBeenCalled()
         expect(openRecordings).not.toHaveBeenCalled()
+    })
+
+    it('録画している画質を出す（コメントなし → コメントあり → 画面録画 の順に最初の種類。マウスを乗せると種類ごと）', () => {
+        insertRecorderBar(options())
+        const label = $<HTMLElement>('#recordQuality')
+        expect(label.hidden).toBe(true)
+
+        setRecordingQuality([{ kind: 'screen', width: 1280, height: 720 }, { kind: 'comments', width: 640, height: 360 }])
+        expect(label.hidden).toBe(false)
+        expect(label.textContent).toBe('360p')
+        expect(label.title).toBe('録画の画質\nコメントあり 640×360\n画面録画 1280×720')
+
+        // 録っていない時は隠す
+        setRecordingQuality([])
+        expect(label.hidden).toBe(true)
     })
 
     it('録画開始と停止は1つのボタンで切り替わる', () => {

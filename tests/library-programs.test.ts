@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { summarizePrograms, filterPrograms, groupByDay, programKeyOf, sortPrograms, recordedSeconds, thumbnailOf, filesOf, isRecordingSegment } from '@/utils/library/programs'
 import {
-    clearAll, createSegment, setSegmentInit, appendFragments, finishSegment, buildDownloadFiles, listAllSegments, getTimelineForSegments, getInitSignatures, closeSegments,
+    clearAll, createSegment, setSegmentInit, appendFragments, finishSegment, buildDownloadFiles, listAllSegments, getTimelineForSegments, getInitSignatures, getInitInfo, closeSegments,
     type NewSegment, type SegmentSummary,
 } from '@/utils/library/db'
 import { splitFmp4Blob, initSignature } from '@/utils/fmp4'
@@ -286,6 +286,16 @@ describe('まとめて保存（buildDownloadFiles）', () => {
         expect(signatures.get('A')).toBe(initSignature(new Uint8Array(await init.arrayBuffer())))
         expect(signatures.get('B')).not.toBe(signatures.get('A'))
         expect([signatures.get('E'), signatures.get('missing')]).toEqual([null, null])
+    })
+
+    it('区間ごとに、設定の印と映像の大きさを読める（初期化セグメントのない区間・ない区間は null）', async () => {
+        await record(segment('A', 1000))
+        await createSegment(segment('E', 17000))
+
+        const info = await getInitInfo(['A', 'E', 'missing'])
+
+        expect(info.get('A')).toEqual({ signature: initSignature(new Uint8Array(await init.arrayBuffer())), size: { width: 320, height: 180 } })
+        expect([info.get('E'), info.get('missing')]).toEqual([{ signature: null, size: null }, { signature: null, size: null }])
     })
 
     it('初期化セグメントのつなげるかどうかの印は、作った日時などに左右されず、解像度の違いでは変わる', async () => {

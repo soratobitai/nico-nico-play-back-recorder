@@ -1,6 +1,6 @@
 import { checkLiveStatus } from '../services/api'
 import { setRecorderState, getTimeString } from './ui'
-import { createFmp4Splitter, isMp4MimeType } from './fmp4'
+import { createFmp4Splitter, isMp4MimeType, videoSizeOf, type VideoSize } from './fmp4'
 import * as library from './library/api'
 import { publishLiveFeed } from './review/live-feed'
 import type { NewSegment, NewFragment, SegmentSummary } from './library/db'
@@ -115,7 +115,8 @@ const SEGMENT_RECORD_BYTES = 1024 * 1024
 // 書き込んだら、同じページのプレイバックのウィンドウへ知らせる。
 // webm などは、届いたデータをそのまま断片として書き込む。
 // write は届いた順に1つずつ呼ぶこと（前の write が終わってから次を呼ぶ）
-const createSegmentWriter = (segment: NewSegment) => {
+// onVideoSize: 録画の映像の大きさが分かった（mp4 の初期化セグメントが届いた時。録画バーに画質を出す）
+const createSegmentWriter = (segment: NewSegment, onVideoSize?: (size: VideoSize) => void) => {
     const splitter = segment.format === 'fmp4' ? createFmp4Splitter() : null
     openSegmentIds.add(segment.segmentId)
     pageSegments.push({ segmentId: segment.segmentId, kind: segment.kind, startedAt: segment.startedAt })
@@ -140,6 +141,8 @@ const createSegmentWriter = (segment: NewSegment) => {
             }
             const { init, fragments } = splitter.push(new Uint8Array(await data.arrayBuffer()))
             if (init) {
+                const size = videoSizeOf(init)
+                if (size) onVideoSize?.(size)
                 const initBlob = new Blob([init], { type: segment.mimeType })
                 await retryOnQuotaExceeded(initBlob.size, () => library.setSegmentInit(segment.segmentId, initBlob))
                 publishLiveFeed({ type: 'init', segment, init: initBlob })

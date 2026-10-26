@@ -1,5 +1,5 @@
 // ニコ生のページに置く録画バー（プレイヤーの下の1行）
-// 左: 録画の状態と録画時間 / 中: 録る種類（コメントなし・コメントあり。設定のショートカット）と、画面録画を始めるボタン /
+// 左: 録画の状態と録画時間・画質 / 中: 録る種類（コメントなし・コメントあり。設定のショートカット）と、画面録画を始めるボタン /
 // 右: プレイバック・録画一覧・スクリーンショット・直前1分・設定・録画開始/停止
 // 録画の再生・保存・削除は、録画一覧のページ（拡張機能のページ）で行う。
 import { getScreenShotAndDownload } from "./feature"
@@ -7,6 +7,7 @@ import { UI_COLLAPSED } from "./storage"
 import { KIND_ICON_PATHS, SCREEN_DOT } from "./kind-icons"
 import { RECENT_CLIP_SECONDS } from "./review/clip"
 import { isUserEvent } from "./user-event"
+import type { RecordingKind } from "./library/db"
 
 type BarState = 'preparing' | 'recording' | 'stopped' | 'error'
 type VideoKind = 'video' | 'comments'
@@ -62,6 +63,7 @@ const BAR_HTML = `
     <span class="npr-status-dot" aria-hidden="true"></span>
     <span id="recordStatus" class="npr-status-label" role="status">準備中</span>
     <span id="recordTime" class="npr-time" aria-label="録画時間">0:00</span>
+    <span id="recordQuality" class="npr-quality" hidden></span>
   </div>
 
   <div class="npr-kinds" role="group" aria-label="録画する種類">
@@ -104,6 +106,7 @@ let recordButton: HTMLButtonElement | null = null
 let screenCaptureButton: HTMLButtonElement | null = null
 let playbackButton: HTMLButtonElement | null = null
 let clipButton: HTMLButtonElement | null = null
+let qualityLabel: HTMLElement | null = null
 let clipMaking = false // 直前1分の動画を作っている
 let state: BarState = 'preparing'
 let hintTimer: ReturnType<typeof setTimeout> | undefined
@@ -116,6 +119,22 @@ let toggleButton: HTMLButtonElement | null = null
 // ユーザーが操作した時だけ呼ぶ（ページのスクリプトが、ボタンを押したことにして操作できないように。utils/user-event.ts）
 const byUser = <E extends Event>(handler: (event: E) => void) => (event: E) => {
     if (isUserEvent(event)) handler(event)
+}
+
+// 録画している画質（録画の映像の大きさ）。コメントなし → コメントあり → 画面録画 の順に、最初に録っている種類の高さを出し、
+// マウスを乗せると種類ごとの大きさを出す。録っていない時（空）は隠す
+type RecordingQuality = { kind: RecordingKind, width: number, height: number }
+const QUALITY_KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
+const QUALITY_KIND_LABELS: Record<RecordingKind, string> = { video: 'コメントなし', comments: 'コメントあり', screen: '画面録画' }
+const setRecordingQuality = (qualities: RecordingQuality[]) => {
+    if (!qualityLabel) return
+    const sorted = [...qualities].sort((a, b) => QUALITY_KIND_ORDER.indexOf(a.kind) - QUALITY_KIND_ORDER.indexOf(b.kind))
+    qualityLabel.hidden = sorted.length === 0
+    if (sorted.length === 0) return
+    const details = sorted.map(q => `${QUALITY_KIND_LABELS[q.kind]} ${q.width}×${q.height}`)
+    qualityLabel.textContent = `${sorted[0].height}p`
+    qualityLabel.title = ['録画の画質', ...details].join('\n')
+    qualityLabel.setAttribute('aria-label', `録画の画質 ${details.join('、')}`)
 }
 
 const stopSpaceOnButton = (event: KeyboardEvent) => {
@@ -138,6 +157,7 @@ const insertRecorderBar = ({ start, stop, showSettings, toggleKind, toggleScreen
     screenCaptureButton = $<HTMLButtonElement>('#screenCaptureButton')
     playbackButton = $<HTMLButtonElement>('#playbackButton')
     clipButton = $<HTMLButtonElement>('#clipButton')
+    qualityLabel = $<HTMLElement>('#recordQuality')
 
     // 録画開始・停止（1つのボタンで切り替える。ダブルクリックの2回目で、止めた録画をまた始めないように、続けて押した分は無視する）
     recordButton.addEventListener('click', byUser((event: MouseEvent) => {
@@ -385,6 +405,7 @@ export {
     setScreenCaptureButton,
     setPlaybackButton,
     setClipWaiting,
+    setRecordingQuality,
     getTimeString,
     insertToggleButton,
     updateToggleButton,

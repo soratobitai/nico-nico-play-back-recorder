@@ -4,6 +4,7 @@
 import { createSegmentWriter, getRecordingMimeType, segmentFormatOf, isQuotaExceeded } from './recording'
 import type { RecordingSource } from './recording-source'
 import type { NewSegment, RecordingKind, SegmentSummary } from './library/db'
+import type { VideoSize } from './fmp4'
 
 // 区間に記録する番組の情報など
 type SegmentDetails = Pick<NewSegment, 'programId' | 'title' | 'userName' | 'thumbnail' | 'programBeginAt'>
@@ -18,11 +19,12 @@ type KindRecorderOptions = {
     onSegmentFinished?: (segment: SegmentSummary) => void
     onSaveFailed?: (error: unknown) => void // 古い録画を消しても保存できなかった
     onEnded?: () => void // stop() を呼ばずに録画が止まった（映像が終わった など）
+    onVideoSize?: (size: VideoSize) => void // 今の区間の録画の映像の大きさが分かった（区切るたびに、新しい区間の大きさで呼ばれる）
 }
 
 const createKindRecorder = ({
     kind, createSource, segmentDetails, chunkIntervalMs,
-    onStarted, onData, onSegmentFinished, onSaveFailed, onEnded,
+    onStarted, onData, onSegmentFinished, onSaveFailed, onEnded, onVideoSize,
 }: KindRecorderOptions) => {
     let source: RecordingSource | null = null
     let current: MediaRecorder | null = null
@@ -48,6 +50,8 @@ const createKindRecorder = ({
             mimeType: recordingMimeType,
             startedAt: segmentStartedAt,
             ...segmentDetails(),
+        }, (size) => {
+            if (recorder === current) onVideoSize?.(size)
         })
         const failed = (error: unknown) => {
             if (isQuotaExceeded(error) && recorder === current) onSaveFailed?.(error)

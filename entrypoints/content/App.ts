@@ -2,10 +2,11 @@ import { enforceLimit, flushPending, closeStaleSegments, setPendingLimit, initPe
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds, getPageSegments } from "../../utils/recording"
 import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
 import { getProgramData, captureThumbnail, downloadBlob } from "../../utils/feature"
-import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setKindChips, setKindRecording, showBarHint, setRecorderError } from "../../utils/ui"
+import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setKindChips, setKindRecording, showBarHint, setRecorderError, setRecordingQuality } from "../../utils/ui"
 import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, validResolutionMode, validFixedResolutionHeight, type ResolutionMode } from '../../utils/storage'
 import { createVideoCapture, createVideoSource, createCommentSource, type RecordingSource } from '../../utils/recording-source'
 import { createKindRecorder, type KindRecorder } from '../../utils/kind-recorder'
+import type { VideoSize } from '../../utils/fmp4'
 import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen-capture'
 import { checkLiveStatus } from '../../services/api'
 import { isPlaybackSupported, isPlaybackOpen, togglePlaybackWindow } from '../../utils/review/window'
@@ -130,6 +131,12 @@ export default async () => {
     let cancelRestarts: (() => VideoKind[]) | undefined // 順番待ちの録り直しを取り消す
     const discardPending = new Set<VideoKind>() // 録り直す時に、それまでの区間を残さない種類
     let sessionStartedAt = 0 // 録画を始めた時刻
+    // 種類ごとの、今録っている映像の大きさ（録画バーに画質を出す。区切ると、新しい区間の大きさになる）
+    const videoSizes = new Map<RecordingKind, VideoSize>()
+    // 録っている種類（録り直しを待っている種類も）の分だけ出す
+    const refreshQuality = () => setRecordingQuality([...videoSizes]
+        .filter(([kind]) => recorders.has(kind) || restartPending.has(kind as VideoKind))
+        .map(([kind, size]) => ({ kind, ...size })))
 
     // 残さずに消してよい、録り始めて間もない区間か
     const isEarlySegment = (recorder: KindRecorder | undefined) =>
@@ -183,6 +190,11 @@ export default async () => {
                 recorders.delete(kind)
                 afterKindStopped(kind)
             },
+            onVideoSize: (size) => {
+                if (recorders.get(kind) !== recorder) return
+                videoSizes.set(kind, size)
+                refreshQuality()
+            },
         })
         try {
             recorder.start()
@@ -209,6 +221,9 @@ export default async () => {
 
     // 種類の録画が止まった後。録画している種類がなくなったら停止する
     const afterKindStopped = (kind: RecordingKind) => {
+        // 録り直しを待っている種類（解像度が変わった直後など）は、録り直すまで前の画質を出しておく（表示がちらつかないように）
+        if (!restartPending.has(kind as VideoKind)) videoSizes.delete(kind)
+        refreshQuality()
         refreshRecordingIndicators()
         if (sessionActive && recorders.size === 0 && restartPending.size === 0) stopSession('stopped')
     }
@@ -426,6 +441,7 @@ export default async () => {
     // 録画バーの、種類ごとに今録っているかの表示を合わせる（画面録画のボタンと、録る種類のチップ）
     // 録り直しを待っている種類（解像度が変わった直後など）は、録っていることにする（表示がちらつかないように）
     const refreshRecordingIndicators = () => {
+        refreshQuality()
         setScreenCaptureButton(recorders.has('screen'))
         const recording = (kind: VideoKind) => recorders.has(kind) || restartPending.has(kind)
         setKindRecording({ video: recording('video'), comments: recording('comments') })
