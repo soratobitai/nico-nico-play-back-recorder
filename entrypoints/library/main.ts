@@ -3,8 +3,9 @@
 // 左: 番組の一覧（検索・種類で絞り込み・並べ方・選んで削除）
 // 右: 選んだ番組（プレイヤー・種類ごとの録った時間のタイムライン・保存した時のファイルの単位の録画の一覧）
 import * as db from '@/utils/library/db'
-import type { RecordingKind } from '@/utils/library/db'
+import type { RecordingKind, SegmentSummary, SourceSize } from '@/utils/library/db'
 import type { VideoSize } from '@/utils/fmp4'
+import { describeQuality, mainSources } from '@/utils/quality'
 import {
     summarizePrograms, filterPrograms, groupByDay, sortPrograms, recordedSeconds, thumbnailOf, filesOf, isRecordingSegment,
     type ProgramSummary, type ProgramOrder, type RecordingFile,
@@ -81,10 +82,14 @@ let fileKind: RecordingKind | null = null
 const signatures = new Map<string, string | null>()
 // 区間ごとの録画の映像の大きさ（録画の一覧に画質を出す。mp4 の初期化セグメントから読む）
 const videoSizes = new Map<string, VideoSize>()
-// 録画の画質（720p など）。分からなければ null
+// 区間を録っていた間の配信の映像の大きさと、その長さ（描き直して録った区間でなければ、録画の大きさのまま）
+const sourcesOf = (segment: SegmentSummary, size: VideoSize): SourceSize[] =>
+    segment.sourceSizes?.length ? segment.sourceSizes : [{ ...size, seconds: segment.duration }]
+// 録画の画質（720p など。配信と違う大きさに描き直して録った時は「288p→720p」）。分からなければ null
 const qualityOf = (file: RecordingFile) => {
     const size = file.segments.map(segment => videoSizes.get(segment.segmentId)).find(Boolean)
-    return size ? { label: `${size.height}p`, detail: `${size.width}×${size.height}` } : null
+    if (!size) return null
+    return { height: size.height, ...describeQuality(size, mainSources(file.segments.flatMap(segment => sourcesOf(segment, size)))) }
 }
 // 選んで削除している間の、選んだ番組
 let selecting: Set<string> | null = null
@@ -419,11 +424,20 @@ const renderProgram = () => {
     meta.push(element('span', undefined, period))
     if (program.recording) meta.push(element('span', 'recording', '録画中'))
     meta.push(element('span', undefined, formatDuration(recordedSeconds(program.segments))))
-    // 画質（録画の映像の高さ。途中で変わった・種類で違う時は、低い順に並べる）
-    const heights = [...new Set(program.segments.map(segment => videoSizes.get(segment.segmentId)?.height).filter((h): h is number => !!h))].sort((a, b) => a - b)
-    if (heights.length > 0) {
-        const quality = element('span', undefined, heights.map(h => `${h}p`).join('・'))
-        quality.title = '画質（録画の映像の高さ）'
+    // 画質（録画の映像の高さ。途中で変わった・種類で違う時は、低い順に並べる。描き直して録った時は、配信の画質も出す）
+    const bySize = new Map<number, { size: VideoSize, sources: SourceSize[] }>()
+    for (const segment of program.segments) {
+        const size = videoSizes.get(segment.segmentId)
+        if (!size) continue
+        const entry = bySize.get(size.height) ?? { size, sources: [] }
+        entry.sources.push(...sourcesOf(segment, size))
+        bySize.set(size.height, entry)
+    }
+    const qualities = [...bySize.values()].sort((a, b) => a.size.height - b.size.height)
+        .map(({ size, sources }) => describeQuality(size, mainSources(sources)))
+    if (qualities.length > 0) {
+        const quality = element('span', undefined, qualities.map(q => q.label).join('・'))
+        quality.title = ['画質（録画の映像の大きさ）', ...qualities.map(q => q.detail)].join('\n')
         meta.push(quality)
     }
     meta.push(element('span', undefined, formatBytes(program.bytes)))
@@ -819,7 +833,7 @@ const fileSize = (file: RecordingFile) => {
 const qualityChange = (previous: RecordingFile | undefined, file: RecordingFile) => {
     const before = previous && qualityOf(previous)
     const after = qualityOf(file)
-    return before && after && before.label !== after.label ? `ここで画質が変わりました（${before.label} → ${after.label}）` : 'ここで画質が変わりました'
+    return before && after && before.height !== after.height ? `ここで画質が変わりました（${before.height}p → ${after.height}p）` : 'ここで画質が変わりました'
 }
 
 // previous: 1つ前の録画（画質が変わった所で、前の画質を出す）

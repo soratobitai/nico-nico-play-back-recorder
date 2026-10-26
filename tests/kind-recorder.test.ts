@@ -317,4 +317,25 @@ describe('createKindRecorder', () => {
         recorder.start()
         expect(recorder.fixedSize).toBe(true)
     })
+
+    it('決まった大きさに描き直して録る時だけ、書き込む時の配信の映像の大きさを一緒に保存する', async () => {
+        let source: { width: number, height: number } | null = { width: 512, height: 288 }
+        const fixed = create({ createSource: () => ({ ...createSource(), fixedSize: true }), sourceSize: () => source })
+        fixed.recorder.start()
+        await flush()
+        FakeRecorder.instances[0].emit('a')
+        await flush()
+        source = { width: 1280, height: 720 }
+        FakeRecorder.instances[0].emit('b')
+        await flush()
+        expect(vi.mocked(library.appendFragments).mock.calls.map(([, , size]) => size)).toEqual([{ width: 512, height: 288 }, { width: 1280, height: 720 }])
+
+        vi.mocked(library.appendFragments).mockClear()
+        const asIs = create({ sourceSize: () => source })
+        asIs.recorder.start()
+        await flush()
+        FakeRecorder.instances[1].emit('a')
+        await flush()
+        expect(vi.mocked(library.appendFragments).mock.calls.map(([, , size]) => size)).toEqual([null])
+    })
 })

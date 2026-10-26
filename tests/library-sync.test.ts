@@ -103,6 +103,16 @@ describe('一時保存した書き込み', () => {
         expect(sent).toEqual([finish('A')])
     })
 
+    it('配信の映像の大きさを付けた断片の書き込みも、そのまま送る。大きさの形がおかしければ、印が正しくても送らない', async () => {
+        const fragments = [{ index: 0, blob: new Blob(['data']), moofSize: 0, startTime: 0, duration: 1, wallClock: 0 }]
+        await savePendingRequest({ type: 'appendFragments', segmentId: 'A', fragments, recordedAt: 5, sourceSize: { width: 512, height: 288 } })
+        await savePendingRequest({ type: 'appendFragments', segmentId: 'B', fragments, recordedAt: 5, sourceSize: { width: '512', height: 288 } as never })
+        const sent: BridgeRequest[] = []
+
+        expect(await flush(async request => { sent.push(request) })).toEqual({ sent: 1, complete: true })
+        expect(sent).toMatchObject([{ type: 'appendFragments', segmentId: 'A', recordedAt: 5, sourceSize: { width: 512, height: 288 } }])
+    })
+
     it('印の付いた本物の依頼の Blob を、同じ形のオブジェクトに差し替えても、送らない', async () => {
         const blob = new Blob(['data'])
         await savePendingRequest({ type: 'appendFragments', segmentId: 'A', fragments: [{ index: 0, blob, moofSize: 0, startTime: 0, duration: 1, wallClock: 0 }] })

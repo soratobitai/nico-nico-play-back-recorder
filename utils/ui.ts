@@ -7,7 +7,9 @@ import { UI_COLLAPSED } from "./storage"
 import { KIND_ICON_PATHS, SCREEN_DOT } from "./kind-icons"
 import { RECENT_CLIP_SECONDS } from "./review/clip"
 import { isUserEvent } from "./user-event"
+import { describeQuality } from "./quality"
 import type { RecordingKind } from "./library/db"
+import type { VideoSize } from "./fmp4"
 
 type BarState = 'preparing' | 'recording' | 'stopped' | 'error'
 type VideoKind = 'video' | 'comments'
@@ -125,7 +127,8 @@ const byUser = <E extends Event>(handler: (event: E) => void) => (event: E) => {
 
 // 録画している画質（録画の映像の大きさ）。コメントなし → コメントあり → 画面録画 の順に、最初に録っている種類の高さを出し、
 // マウスを乗せると種類ごとの大きさを出す。録っていない時（空）は隠す
-type RecordingQuality = { kind: RecordingKind, width: number, height: number }
+// source: 決まった大きさに描き直して録っている時の、今の配信の映像の大きさ（配信と違えば「288p→720p」のように出す）
+type RecordingQuality = { kind: RecordingKind, width: number, height: number, source?: VideoSize | null }
 const QUALITY_KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
 const QUALITY_KIND_LABELS: Record<RecordingKind, string> = { video: 'コメントなし', comments: 'コメントあり', screen: '画面録画' }
 const setRecordingQuality = (qualities: RecordingQuality[]) => {
@@ -133,8 +136,9 @@ const setRecordingQuality = (qualities: RecordingQuality[]) => {
     const sorted = [...qualities].sort((a, b) => QUALITY_KIND_ORDER.indexOf(a.kind) - QUALITY_KIND_ORDER.indexOf(b.kind))
     qualityLabel.hidden = sorted.length === 0
     if (sorted.length === 0) return
-    const details = sorted.map(q => `${QUALITY_KIND_LABELS[q.kind]} ${q.width}×${q.height}`)
-    qualityLabel.textContent = `${sorted[0].height}p`
+    const describe = (q: RecordingQuality) => describeQuality(q, q.source ? [q.source] : [])
+    const details = sorted.map(q => `${QUALITY_KIND_LABELS[q.kind]} ${describe(q).detail}`)
+    qualityLabel.textContent = describe(sorted[0]).label
     qualityLabel.title = ['録画の画質', ...details].join('\n')
     qualityLabel.setAttribute('aria-label', `録画の画質 ${details.join('、')}`)
 }

@@ -44,6 +44,27 @@ describe('録画中の保存', () => {
         expect((await listAllSegments())[0]).toMatchObject({ bytes: 100, fragmentCount: 1 })
     })
 
+    it('配信の映像の大きさが付いていれば、大きさごとに録った長さを足していく（同じ断片を2回受け取っても数え直さない）', async () => {
+        await createSegment(segment('A', 1000))
+        await appendFragments('A', [fragment(0, 1000), fragment(1, 2000)], 2000, { width: 512, height: 288 })
+        await appendFragments('A', [fragment(1, 2000)], 2000, { width: 512, height: 288 })
+        await appendFragments('A', [fragment(2, 3000)], 3000, { width: 1280, height: 720 })
+        await appendFragments('A', [fragment(3, 4000)], 4000, { width: 512, height: 288 })
+        // 配信の大きさが分からない・おかしい時は、記録しない
+        await appendFragments('A', [fragment(4, 5000)], 5000)
+        await appendFragments('A', [fragment(5, 6000)], 6000, { width: 0, height: 288 })
+
+        const [summary] = await listAllSegments()
+        expect(summary.sourceSizes).toEqual([{ width: 512, height: 288, seconds: 3 }, { width: 1280, height: 720, seconds: 1 }])
+    })
+
+    it('配信の映像の大きさが付いていない区間（配信のままの大きさで録った区間など）には、記録しない', async () => {
+        await createSegment(segment('A', 1000))
+        await appendFragments('A', [fragment(0, 1000)], 1000)
+
+        expect((await listAllSegments())[0]).not.toHaveProperty('sourceSizes')
+    })
+
     it('存在しない区間に断片を足そうとすると例外になる', async () => {
         await expect(appendFragments('missing', [fragment(0, 1000)])).rejects.toMatchObject({ name: 'SegmentNotFoundError' })
     })

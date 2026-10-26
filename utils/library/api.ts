@@ -7,6 +7,7 @@ import { PENDING_SIGNING_KEY } from '../storage'
 import { importLegacyRecordings } from './migrate'
 import { WRITE_REQUEST_TYPES, type BridgeRequest, type BridgeRequestOf, type BridgeRequestType, type BridgeResults } from './protocol'
 import type { NewSegment, NewFragment } from './db'
+import type { VideoSize } from '../fmp4'
 
 // 一時保存した区間。続きの書き込みは、一時保存した分を先に拡張機能側へ移してから直接保存する
 // （移せなければ、続きも一時保存する。区間を作る依頼だけ一時保存されて、続きが拡張機能側に直接届くと、
@@ -109,7 +110,9 @@ const callLibrary = async <T extends BridgeRequestType>(request: BridgeRequestOf
 const createSegment = (segment: NewSegment) => callLibrary({ type: 'createSegment', segment })
 const setSegmentInit = (segmentId: string, init: Blob) => callLibrary({ type: 'setSegmentInit', segmentId, init })
 // 受け取った時刻を付ける（一時保存して後で移しても、受け取った時刻のまま。録画一覧で録画中かを決める）
-const appendFragments = (segmentId: string, fragments: NewFragment[]) => callLibrary({ type: 'appendFragments', segmentId, fragments, recordedAt: Date.now() })
+// sourceSize: 録った時の配信の映像の大きさ（決まった大きさに描き直して録っている時だけ。録画一覧で元の配信の画質を出す）
+const appendFragments = (segmentId: string, fragments: NewFragment[], sourceSize?: VideoSize | null) =>
+    callLibrary({ type: 'appendFragments', segmentId, fragments, recordedAt: Date.now(), ...(sourceSize ? { sourceSize } : {}) })
 const finishSegment = (segmentId: string, endedAt: number, mimeType?: string) => callLibrary({ type: 'finishSegment', segmentId, endedAt, mimeType })
 const getTimeline = (programId: string) => callLibrary({ type: 'getTimeline', programId })
 const getTimelineForSegments = (segmentIds: string[]) => callLibrary({ type: 'getTimelineForSegments', segmentIds })

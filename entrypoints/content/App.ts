@@ -133,10 +133,15 @@ export default async () => {
     let sessionStartedAt = 0 // 録画を始めた時刻
     // 種類ごとの、今録っている映像の大きさ（録画バーに画質を出す。区切ると、新しい区間の大きさになる）
     const videoSizes = new Map<RecordingKind, VideoSize>()
+    // 今の配信の映像の大きさ（音声のみの時など、分からなければ null）
+    const sourceSize = (): VideoSize | null => video.videoWidth > 0 && video.videoHeight > 0
+        ? { width: video.videoWidth, height: video.videoHeight }
+        : null
     // 録っている種類（録り直しを待っている種類も）の分だけ出す
+    // 決まった大きさに描き直して録っている種類は、配信の画質も出す（「1本の録画にそろえる」で、配信の画質が違う時）
     const refreshQuality = () => setRecordingQuality([...videoSizes]
         .filter(([kind]) => recorders.has(kind) || restartPending.has(kind as VideoKind))
-        .map(([kind, size]) => ({ kind, ...size })))
+        .map(([kind, size]) => ({ kind, ...size, source: recorders.get(kind)?.fixedSize ? sourceSize() : null })))
 
     // 残さずに消してよい、録り始めて間もない区間か
     const isEarlySegment = (recorder: KindRecorder | undefined) =>
@@ -195,6 +200,7 @@ export default async () => {
                 videoSizes.set(kind, size)
                 refreshQuality()
             },
+            sourceSize,
         })
         try {
             recorder.start()
@@ -618,6 +624,8 @@ export default async () => {
         if (!video) return
 
         video.addEventListener("resize", () => {
+            // 描き直して録っている種類の、配信の画質の表示を合わせる
+            refreshQuality()
             if (!sessionActive) return
             const kinds = VIDEO_KINDS.filter(kind => recorders.get(kind) && !recorders.get(kind)!.fixedSize)
             console.log("動画の解像度が変わりました", `${video.videoWidth}x${video.videoHeight}`, kinds)

@@ -68,6 +68,14 @@ describe('録画バー', () => {
         expect(label.textContent).toBe('360p')
         expect(label.title).toBe('録画の画質\nコメントあり 640×360\n画面録画 1280×720')
 
+        // 決まった大きさに描き直して録っている時は、配信の画質も出す（配信と同じ大きさなら出さない）
+        setRecordingQuality([
+            { kind: 'video', width: 1280, height: 720, source: { width: 512, height: 288 } },
+            { kind: 'screen', width: 1280, height: 720, source: { width: 1280, height: 720 } },
+        ])
+        expect(label.textContent).toBe('288p→720p')
+        expect(label.title).toBe('録画の画質\nコメントなし 1280×720（配信の 512×288 を引き伸ばして録画）\n画面録画 1280×720')
+
         // 録っていない時は隠す
         setRecordingQuality([])
         expect(label.hidden).toBe(true)

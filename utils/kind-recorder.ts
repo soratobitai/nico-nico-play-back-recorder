@@ -20,11 +20,13 @@ type KindRecorderOptions = {
     onSaveFailed?: (error: unknown) => void // 古い録画を消しても保存できなかった
     onEnded?: () => void // stop() を呼ばずに録画が止まった（映像が終わった など）
     onVideoSize?: (size: VideoSize) => void // 今の区間の録画の映像の大きさが分かった（区切るたびに、新しい区間の大きさで呼ばれる）
+    // 今の配信の映像の大きさ（分からなければ null）。決まった大きさに描き直して録る時に、録画と一緒に記録する（録画一覧で元の配信の画質を出す）
+    sourceSize?: () => VideoSize | null
 }
 
 const createKindRecorder = ({
     kind, createSource, segmentDetails, chunkIntervalMs,
-    onStarted, onData, onSegmentFinished, onSaveFailed, onEnded, onVideoSize,
+    onStarted, onData, onSegmentFinished, onSaveFailed, onEnded, onVideoSize, sourceSize,
 }: KindRecorderOptions) => {
     let source: RecordingSource | null = null
     let current: MediaRecorder | null = null
@@ -43,6 +45,8 @@ const createKindRecorder = ({
         const mimeType = getRecordingMimeType()
         const recorder = new MediaRecorder(source!.stream, mimeType ? { mimeType } : {})
         const recordingMimeType = mimeType ?? (recorder.mimeType || 'video/webm')
+        // 配信のままの大きさで録る時は、録画の大きさが配信の大きさなので記録しない
+        const fixedSize = source!.fixedSize
         const writer = createSegmentWriter({
             segmentId: crypto.randomUUID(),
             kind,
@@ -52,7 +56,7 @@ const createKindRecorder = ({
             ...segmentDetails(),
         }, (size) => {
             if (recorder === current) onVideoSize?.(size)
-        })
+        }, () => fixedSize ? sourceSize?.() ?? null : null)
         const failed = (error: unknown) => {
             if (isQuotaExceeded(error) && recorder === current) onSaveFailed?.(error)
         }

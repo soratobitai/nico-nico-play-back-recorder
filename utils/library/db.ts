@@ -40,7 +40,13 @@ type SegmentRecord = {
     // 録画しているページが、最後に録画のデータを受け取った時刻（ミリ秒。そのページの時計。録画中かどうかを決める）
     // 一時保存から後で移した時も、受け取った時の時刻のまま（移した時の書き込みで「録画中」にしないように。以前の区間にはない）
     recordedAt?: number
+    // 録っている間の配信の映像の大きさ（決まった大きさに描き直して録った区間だけ。録画一覧で、元の配信の画質を出す）
+    // 途中で配信の画質が変わったら、大きさごとに、その大きさで録った長さを持つ（以前の区間や、配信のままの大きさで録った区間にはない）
+    sourceSizes?: SourceSize[]
 }
+
+// 配信の映像の大きさと、その大きさで録った長さ（秒）
+type SourceSize = VideoSize & { seconds: number }
 
 type FragmentRecord = {
     segmentId: string
@@ -53,7 +59,7 @@ type FragmentRecord = {
     keyframe?: boolean // 映像がキーフレームから始まる（この断片から再生を始められる）。ない場合は始められるものとする
 }
 
-type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration' | 'updatedAt' | 'recordedAt'>
+type NewSegment = Omit<SegmentRecord, 'endedAt' | 'init' | 'bytes' | 'fragmentCount' | 'duration' | 'updatedAt' | 'recordedAt' | 'sourceSizes'>
 type NewFragment = Omit<FragmentRecord, 'segmentId'>
 // UI などに渡す区間の情報（大きなデータは含めない）
 type SegmentSummary = Omit<SegmentRecord, 'init'>
@@ -158,11 +164,17 @@ const setSegmentInit = (segmentId: string, init: Blob) => withTransaction([SEGME
     await promisify(store.put(segment))
 })
 
+// 区間に持てる配信の映像の大きさの数（配信の画質の数より十分に多く）
+const MAX_SOURCE_SIZES = 16
+const isPositiveNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0
+
 // recordedAt: 録画しているページが、この断片を受け取った時刻（ないもの（以前の録画の取り込みなど）は、書き込んだ時刻）
-const appendFragments = (segmentId: string, fragments: NewFragment[], recordedAt?: number) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
+// sourceSize: この断片を録った時の配信の映像の大きさ（決まった大きさに描き直して録っている時だけ）
+const appendFragments = (segmentId: string, fragments: NewFragment[], recordedAt?: number, sourceSize?: VideoSize) => withTransaction([SEGMENTS, FRAGMENTS], 'readwrite', async (tx) => {
     const segments = tx.objectStore(SEGMENTS)
     const segment = await getSegmentRecord(segments, segmentId)
     const store = tx.objectStore(FRAGMENTS)
+    let addedSeconds = 0
     for (const fragment of fragments) {
         const previous = await promisify<FragmentRecord | undefined>(store.get([segmentId, fragment.index]))
         await promisify(store.put({ ...fragment, segmentId }))
@@ -171,6 +183,7 @@ const appendFragments = (segmentId: string, fragments: NewFragment[], recordedAt
             segment.bytes -= previous.blob.size
         } else {
             segment.fragmentCount += 1
+            if (Number.isFinite(fragment.duration) && fragment.duration > 0) addedSeconds += fragment.duration
         }
         segment.bytes += fragment.blob.size
         segment.duration = Math.max(segment.duration, fragment.startTime + fragment.duration)
@@ -179,6 +192,16 @@ const appendFragments = (segmentId: string, fragments: NewFragment[], recordedAt
     if (segment.endedAt !== null) segment.endedAt = Math.max(segment.endedAt, lastWriteOf(segment))
     segment.updatedAt = Date.now()
     segment.recordedAt = recordedAt ?? segment.updatedAt
+    if (sourceSize && isPositiveNumber(sourceSize.width) && isPositiveNumber(sourceSize.height)) {
+        const { width, height } = sourceSize
+        const known = segment.sourceSizes ?? []
+        const same = known.find(size => size.width === width && size.height === height)
+        if (same) {
+            same.seconds += addedSeconds
+        } else if (known.length < MAX_SOURCE_SIZES) {
+            segment.sourceSizes = [...known, { width, height, seconds: addedSeconds }]
+        }
+    }
     await promisify(segments.put(segment))
 })
 
@@ -526,4 +549,4 @@ export {
     enforceLimit,
     SegmentNotFoundError,
 }
-export type { RecordingKind, SegmentFormat, SegmentRecord, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment, TimelineFragment, DownloadFile, InitInfo }
+export type { RecordingKind, SegmentFormat, SegmentRecord, SourceSize, FragmentRecord, NewSegment, NewFragment, SegmentSummary, Usage, TimelineSegment, TimelineFragment, DownloadFile, InitInfo }

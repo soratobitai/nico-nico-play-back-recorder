@@ -83,6 +83,7 @@ const isWellFormed = (request: BridgeRequest) => {
         case 'appendFragments':
             return typeof request.segmentId === 'string' && Array.isArray(request.fragments) && request.fragments.every(f =>
                 !!f && f.blob instanceof Blob && [f.index, f.moofSize, f.startTime, f.duration, f.wallClock].every(isFiniteNumber))
+                && (request.sourceSize === undefined || (!!request.sourceSize && [request.sourceSize.width, request.sourceSize.height].every(isFiniteNumber)))
         case 'createSegment': return !!request.segment && typeof request.segment.segmentId === 'string' && isFiniteNumber(request.segment.startedAt)
         case 'finishSegment': return typeof request.segmentId === 'string' && isFiniteNumber(request.endedAt)
         case 'deleteSegments': return Array.isArray(request.segmentIds) && request.segmentIds.every(id => typeof id === 'string')

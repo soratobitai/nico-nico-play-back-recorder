@@ -116,7 +116,8 @@ const SEGMENT_RECORD_BYTES = 1024 * 1024
 // webm などは、届いたデータをそのまま断片として書き込む。
 // write は届いた順に1つずつ呼ぶこと（前の write が終わってから次を呼ぶ）
 // onVideoSize: 録画の映像の大きさが分かった（mp4 の初期化セグメントが届いた時。録画バーに画質を出す）
-const createSegmentWriter = (segment: NewSegment, onVideoSize?: (size: VideoSize) => void) => {
+// sourceSize: 今の配信の映像の大きさ（決まった大きさに描き直して録る時だけ。断片と一緒に記録して、録画一覧で元の配信の画質を出す）
+const createSegmentWriter = (segment: NewSegment, onVideoSize?: (size: VideoSize) => void, sourceSize?: () => VideoSize | null) => {
     const splitter = segment.format === 'fmp4' ? createFmp4Splitter() : null
     openSegmentIds.add(segment.segmentId)
     pageSegments.push({ segmentId: segment.segmentId, kind: segment.kind, startedAt: segment.startedAt })
@@ -125,7 +126,8 @@ const createSegmentWriter = (segment: NewSegment, onVideoSize?: (size: VideoSize
 
     const append = (fragments: NewFragment[]) => {
         const bytes = fragments.reduce((sum, f) => sum + f.blob.size, 0)
-        return retryOnQuotaExceeded(bytes, () => library.appendFragments(segment.segmentId, fragments))
+        const source = sourceSize?.() ?? null
+        return retryOnQuotaExceeded(bytes, () => library.appendFragments(segment.segmentId, fragments, source))
     }
 
     return {

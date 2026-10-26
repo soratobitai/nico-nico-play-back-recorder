@@ -36,6 +36,16 @@ beforeEach(async () => {
     vi.mocked(client.getBridge).mockResolvedValue({ call } as never)
 })
 
+describe('断片の書き込み', () => {
+    it('配信の映像の大きさがあれば依頼に付け、なければ付けない', async () => {
+        await api.appendFragments('A', [fragment(0)], { width: 512, height: 288 })
+        await api.appendFragments('A', [fragment(1)], null)
+
+        expect(call.mock.calls[0][0]).toMatchObject({ type: 'appendFragments', segmentId: 'A', sourceSize: { width: 512, height: 288 } })
+        expect(call.mock.calls[1][0]).not.toHaveProperty('sourceSize')
+    })
+})
+
 describe('一時保存', () => {
     it('区間を作る依頼を一時保存したら、その区間の続きは、一時保存した分を先に移せた時だけ直接保存する（順番が入れ替わって捨てられないように）', async () => {
         call.mockRejectedValueOnce(new client.BridgeUnavailableError('timeout'))
