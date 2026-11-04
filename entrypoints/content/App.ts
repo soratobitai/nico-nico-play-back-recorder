@@ -15,6 +15,7 @@ import { RECENT_CLIP_SECONDS, buildRecentClipFile, recordedUntil } from '../../u
 import { requestOpenLibrary } from '../../utils/library/open-library'
 import { isExtensionContextValid } from '../../utils/library/client'
 import type { RecordingKind } from '../../utils/library/db'
+import { startDiagnostics, diagEvent } from '../../utils/diagnostics'
 import SettingsModal from './settings-modal'
 import './settings-modal.css'
 
@@ -122,6 +123,8 @@ export default async () => {
     const { programId, userName, title, beginAt } = getProgramData() // 番組情報を取得
     const video: HTMLVideoElement = document.querySelector("video") as HTMLVideoElement
     // 動画の取り込み（コメントなし・コメントありで共有する）
+    // 調査用の記録（診断版だけ）
+    startDiagnostics(video, { programId, recordVideo, recordWithComments, resolutionMode, fixedResolutionHeight, mimeType: getRecordingMimeType() })
     const videoCapture = createVideoCapture(video)
 
     // ---- 種類ごとの録画 ----
@@ -171,6 +174,7 @@ export default async () => {
 
     const startKind = (kind: RecordingKind, createSource: () => RecordingSource): boolean => {
         if (recorders.has(kind)) return true
+        diagEvent('kind:start', { kind })
         // 録画している種類のうち1つだけを見張る（データが届かなくなったらライブが続いているか確かめる）
         // 区間を録り始めた時にも見張り始める（新しい区間のデータが一度も届かない場合にも気づけるように）
         const watch = (mediaRecorder: MediaRecorder) => {
@@ -297,8 +301,10 @@ export default async () => {
         sessionActive = true
         sessionId++
         sessionStartedAt = Date.now()
+        diagEvent('session:begin', { pageAgeMs: Math.round(performance.now()) })
         // 一定の間隔で、すべての種類の区間を区切る（区間の間に空白を作らないよう、すぐに次の区間を録り始める）
         const splitAll = () => {
+            diagEvent('split')
             console.log("🔄 録画を区切ります...")
             staggered(WATCH_ORDER.filter(kind => recorders.has(kind)), kind => recorders.get(kind)?.split())
         }
@@ -319,6 +325,7 @@ export default async () => {
 
     // すべての種類の録画を止める
     const stopSession = (state: 'stopped' | 'error' = 'stopped') => {
+        diagEvent('session:stop', { state })
         startAttempt++
         sessionActive = false
         clearTimeout(firstSplitTimer)
@@ -340,6 +347,7 @@ export default async () => {
     // 描き直せない種類は、大きさが変わった所から再生できなくなるので、すぐに止める
     // discardEarly: 録り直す前の区間は残さない（録り始めてすぐに解像度が変わった時）
     const scheduleRestart = (kinds: VideoKind[], { discardEarly = false } = {}) => {
+        diagEvent('restart', { kinds, discardEarly })
         // 前の録り直しで、まだ順番待ちの種類は、今回まとめて録り直す（同じ種類を続けて2回録り直さない）
         for (const kind of cancelRestarts?.() ?? []) restartPending.add(kind)
         cancelRestarts = undefined

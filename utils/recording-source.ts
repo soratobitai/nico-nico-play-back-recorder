@@ -4,6 +4,7 @@
 // - 画面録画: プレイヤーの表示部分を画面ごと（screen-capture。ユーザーの操作から始める必要があるので、ここでは作らない）
 import { createFramePipeline, drawContain, getOutputSize, isFramePipelineSupported } from './frame-pipeline'
 import { createCommentCompositor } from './comment-compositor'
+import { watchAudio } from './diagnostics'
 
 type RecordingSource = {
     stream: MediaStream
@@ -37,6 +38,7 @@ const createVideoCapture = (video: HTMLVideoElement) => {
                 if (capture) stopAll(capture)
                 capture = (video as HTMLVideoElement & { captureStream: () => MediaStream }).captureStream()
             }
+            watchAudio(capture.getAudioTracks().at(-1)) // 診断版だけ
             const tracks = [capture.getVideoTracks().at(-1), capture.getAudioTracks().at(-1)]
                 .filter((track): track is MediaStreamTrack => !!track)
             const stream = new MediaStream(tracks.map(track => track.clone()))

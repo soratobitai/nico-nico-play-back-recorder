@@ -4,6 +4,7 @@ import { createFmp4Splitter, isMp4MimeType, videoSizeOf, type VideoSize } from '
 import * as library from './library/api'
 import { publishLiveFeed } from './review/live-feed'
 import type { NewSegment, NewFragment, SegmentSummary } from './library/db'
+import { diagSegmentInit, diagFragments } from './diagnostics'
 
 // 録画状態の一元管理クラス
 export type RecordingState = 'preparing' | 'recording' | 'stopped' | 'error'
@@ -143,6 +144,7 @@ const createSegmentWriter = (segment: NewSegment, onVideoSize?: (size: VideoSize
             }
             const { init, fragments } = splitter.push(new Uint8Array(await data.arrayBuffer()))
             if (init) {
+                diagSegmentInit(segment.segmentId, segment.kind, init) // 診断版だけ
                 const size = videoSizeOf(init)
                 if (size) onVideoSize?.(size)
                 const initBlob = new Blob([init], { type: segment.mimeType })
@@ -150,6 +152,7 @@ const createSegmentWriter = (segment: NewSegment, onVideoSize?: (size: VideoSize
                 publishLiveFeed({ type: 'init', segment, init: initBlob })
             }
             if (fragments.length === 0) return
+            diagFragments(segment.segmentId, segment.kind, segment.startedAt, fragments) // 診断版だけ
             const saved = fragments.map(f => ({
                 index: index++,
                 blob: new Blob([f.bytes]),

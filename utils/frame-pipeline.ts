@@ -4,6 +4,8 @@
 // コマを受け取る MediaStreamTrackProcessor と、描き直したコマを流す MediaStreamTrackGenerator を使い、
 // コマが届くたびに描く。
 
+import { watchPipeline } from './diagnostics'
+
 // Chrome にしかない API なので TypeScript の型定義にない。使う分だけ宣言する
 declare const MediaStreamTrackProcessor: {
     new (init: { track: MediaStreamTrack }): { readable: ReadableStream<VideoFrame> }
@@ -62,10 +64,12 @@ const createFramePipeline = (
     const writer = generator.writable.getWriter()
 
     let stopped = false
+    const probe = watchPipeline(`${width}x${height}`) // 診断版だけ
     const pump = async () => {
         while (!stopped) {
             const { value: frame, done } = await reader.read()
             if (done || !frame) break
+            const readAt = performance.now()
             try {
                 // 1コマ描けなかっただけなら、そのコマを飛ばして続ける（描き直しを止めると、その後の映像がなくなる）
                 try {
@@ -76,6 +80,7 @@ const createFramePipeline = (
                 }
                 // 書き込んだコマは generator 側で解放される
                 await writer.write(new VideoFrame(canvas, { timestamp: frame.timestamp }))
+                probe?.frame(frame.timestamp, readAt, performance.now())
             } finally {
                 frame.close()
             }
@@ -89,6 +94,7 @@ const createFramePipeline = (
         track: generator,
         stop: () => {
             stopped = true
+            probe?.stop()
             reader.cancel().catch(() => {})
             generator.stop()
         },

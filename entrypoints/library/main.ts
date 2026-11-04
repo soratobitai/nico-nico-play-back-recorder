@@ -17,6 +17,7 @@ import { downloadBlob, formatDateForFileName, getVideoExtension } from '@/utils/
 import { MAX_STORAGE_SIZE } from '@/utils/storage'
 import { formatRecorded, formatElapsed, formatBroadcastTime } from '@/utils/time-format'
 import { setupLegacyImport } from './legacy'
+import { DIAG_ENABLED, loadDiagnostics, clearDiagnostics } from '@/utils/diagnostics'
 
 // 一覧を読み直す間隔（録画中の番組の分が増える）
 const REFRESH_INTERVAL_MS = 15 * 1000
@@ -1005,6 +1006,34 @@ setupLegacyImport({
     formatBytes,
     reload: () => load(),
 })
+
+// 診断版だけ: 調査用の記録（音ズレなどの原因を調べる）を、1つのファイルにして保存する・消す
+if (DIAG_ENABLED) {
+    const box = element('div', 'diag-tools')
+    const save = element('button', 'button small', '診断ログを保存')
+    save.type = 'button'
+    save.addEventListener('click', async () => {
+        const sessions = await loadDiagnostics()
+        const count = Object.keys(sessions).length
+        if (count === 0) {
+            showToast('診断ログはまだありません（診断版で番組を開くと記録されます）')
+            return
+        }
+        downloadBlob(new Blob([JSON.stringify(sessions)], { type: 'application/json' }), `npr-diag-${formatDateForFileName(Date.now())}.json`)
+        showToast(`診断ログを保存しました（${count}回分）`)
+    })
+    const clear = element('button', 'button small', '診断ログを消す')
+    clear.type = 'button'
+    clear.addEventListener('click', async () => {
+        if (!confirm('診断ログを消しますか？')) return
+        await clearDiagnostics()
+        showToast('診断ログを消しました')
+    })
+    box.append(save, clear)
+    box.style.cssText = 'display: flex; gap: 8px; margin-left: auto'
+    usage.style.marginLeft = '12px'
+    usage.before(box)
+}
 
 // 最初に選ぶ番組（指定がなければ、最近録った番組）
 void load().then(() => {
