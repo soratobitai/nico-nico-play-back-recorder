@@ -1,4 +1,6 @@
 
+import { downloadBlob } from './download'
+
 const getProgramData = () => {
     // ユーザー名を取得（ページの構造が変わって取れなくても、録画は続けられるように空にする）
     let userName_ = ''
@@ -62,26 +64,6 @@ const captureThumbnail = (video: HTMLVideoElement | null, width = 160): string |
     }
 }
 
-// Blob をファイルとしてダウンロードする
-// ownerDocument: ダウンロードを始めるページ（ボタンを押したページ）。Chrome は、操作のないまま続けてダウンロードした
-// ページでは2回目から止める（「複数のファイルをダウンロード」の確認）。プレイバックの窓で押した時は、窓の操作は
-// ニコ生のタブの操作に数えられないので、窓で始める。窓が閉じられていたら、このページで始める
-const downloadBlob = (blob: Blob, filename: string, ownerDocument: Document = document) => {
-    const url = URL.createObjectURL(blob)
-    const owner = ownerDocument.defaultView && ownerDocument.body ? ownerDocument : document
-
-    // 一時的にaタグを作成して自動クリック
-    const a = owner.createElement('a')
-    a.href = url
-    a.download = filename
-    owner.body.appendChild(a)
-    a.click()
-    a.remove()
-
-    // クリック直後に解放するとダウンロードが始まる前に読めなくなることがあるので、少し待ってから解放する
-    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000)
-}
-
 // 動画の形式からダウンロード時の拡張子を決める（webm で録画した環境以外は mp4）
 const getVideoExtension = (type: string) => type.startsWith('video/webm') ? 'webm' : 'mp4'
 
@@ -106,7 +88,7 @@ const getScreenShotAndDownload = async () => {
 
             const { userName, title } = getProgramData()
             const timeString = formatDateForFileName(Date.now())
-            downloadBlob(blob, `${[userName, title, timeString].filter(Boolean).join('_')}.png`)
+            void downloadBlob(blob, `${[userName, title, timeString].filter(Boolean).join('_')}.png`)
         }, "image/png")
     } catch (err) {
         console.error("スクリーンショット処理中にエラー:", err)

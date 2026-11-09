@@ -521,7 +521,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
                 showFlash('スクリーンショットを保存できませんでした')
                 return
             }
-            downloadBlob(blob, name, doc)
+            void downloadBlob(blob, name, doc)
             showFlash('スクリーンショットを保存しました')
         }, 'image/png')
     }
@@ -545,7 +545,7 @@ const mountReviewView = ({ root, mode, readTimeline, readFragments, subscribe, p
                 showFlash('保存できる場面がありません')
                 return
             }
-            downloadBlob(file.blob, saveFileName(kind, file.startedAt, 'mp4'), doc)
+            await downloadBlob(file.blob, saveFileName(kind, file.startedAt, 'mp4'), doc)
             showFlash(`${Math.round(file.duration)}秒の動画を保存しました`)
         } catch (error) {
             console.error('動画を保存できませんでした:', error)

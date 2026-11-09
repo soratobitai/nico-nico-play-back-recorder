@@ -747,7 +747,7 @@ export default async () => {
                 showBarHint('保存できる録画がありませんでした')
                 return
             }
-            downloadBlob(file.blob, sceneFileName([userName, title].filter(Boolean).join('_'), kind, file.startedAt, 'mp4'))
+            await downloadBlob(file.blob, sceneFileName([userName, title].filter(Boolean).join('_'), kind, file.startedAt, 'mp4'))
             showBarHint(`${Math.round(file.duration)}秒の動画を保存しました`)
         } catch (error) {
             console.log('直前の動画を保存できませんでした:', error)

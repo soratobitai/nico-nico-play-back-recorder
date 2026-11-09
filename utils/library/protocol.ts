@@ -20,6 +20,8 @@ type BridgeRequest =
     | { type: 'clearAll' }
     | { type: 'deleteSegments', segmentIds: string[] }
     | { type: 'estimateStorage' }
+    // ファイルの保存を、拡張機能のページで始める（utils/download.ts）
+    | { type: 'download', blob: Blob, filename: string }
 
 type DeletedSpace = { freed: number, deletedSegmentIds: string[] }
 
@@ -38,6 +40,7 @@ type BridgeResults = {
     clearAll: number // 残した録画中の区間の数
     deleteSegments: void
     estimateStorage: { usage?: number, quota?: number }
+    download: void
 }
 
 type BridgeRequestType = BridgeRequest['type']

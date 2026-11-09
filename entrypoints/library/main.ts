@@ -509,7 +509,7 @@ const downloadSegments = (program: ProgramSummary, segmentIds: string[]) => {
             }
             for (const [i, file] of files.entries()) {
                 const name = [program.userName, program.title, formatDateForFileName(file.startedAt)].filter(Boolean).join('_')
-                downloadBlob(file.blob, `${name}${kindSuffix(file.kind)}.${getVideoExtension(file.mimeType)}`)
+                void downloadBlob(file.blob, `${name}${kindSuffix(file.kind)}.${getVideoExtension(file.mimeType)}`)
                 if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
             }
             showToast(files.length > 1
@@ -1019,7 +1019,7 @@ if (DIAG_ENABLED) {
             showToast('診断ログはまだありません（診断版で番組を開くと記録されます）')
             return
         }
-        downloadBlob(new Blob([JSON.stringify(sessions)], { type: 'application/json' }), `npr-diag-${formatDateForFileName(Date.now())}.json`)
+        void downloadBlob(new Blob([JSON.stringify(sessions)], { type: 'application/json' }), `npr-diag-${formatDateForFileName(Date.now())}.json`)
         showToast(`診断ログを保存しました（${count}回分）`)
     })
     const clear = element('button', 'button small', '診断ログを消す')
