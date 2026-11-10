@@ -1,6 +1,6 @@
 // 録画する映像の作り方（動画の取り込みを種類ごとに共有する）
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createVideoCapture, createVideoSource, createCommentSource } from '@/utils/recording-source'
+import { createVideoCapture, createVideoSource, createCommentSource, createContinuousAudio } from '@/utils/recording-source'
 
 class FakeTrack {
     readyState: 'live' | 'ended' = 'live'
@@ -108,5 +108,62 @@ describe('種類ごとの映像', () => {
         const capture = createVideoCapture(video)
 
         expect(createCommentSource(capture, video, null)).toBeNull()
+    })
+})
+
+// Web Audio の代わり（つないだ先の音声のトラックを返す）
+class FakeAudioContext {
+    static instances: FakeAudioContext[] = []
+    static startState: 'running' | 'suspended' = 'running'
+    state: 'running' | 'suspended' | 'closed' = FakeAudioContext.startState
+    connected: unknown[] = []
+    output = new FakeTrack('audio')
+    constructor() { FakeAudioContext.instances.push(this) }
+    createMediaStreamSource(stream: FakeStream) {
+        return { connect: (node: unknown) => this.connected.push([stream.getAudioTracks()[0], node]) }
+    }
+    createMediaStreamDestination() { return { stream: new FakeStream([this.output]) } }
+    resume = vi.fn(async () => {})
+    close = vi.fn(async () => { this.state = 'closed' })
+}
+
+describe('録画の音声（再生が止まっている間も途切れない音声にする）', () => {
+    beforeEach(() => {
+        FakeAudioContext.instances = []
+        FakeAudioContext.startState = 'running'
+        vi.stubGlobal('AudioContext', FakeAudioContext)
+    })
+
+    it('Web Audio に通した音声を使い、止める時に Web Audio も閉じる', () => {
+        const input = new FakeTrack('audio')
+        const audio = createContinuousAudio(input as unknown as MediaStreamTrack)
+        const context = FakeAudioContext.instances[0]
+
+        expect(context.connected[0]).toEqual([input, expect.anything()])
+        expect(audio.track()).toBe(context.output)
+
+        audio.stop()
+        expect(context.close).toHaveBeenCalled()
+        expect(context.output.readyState).toBe('ended')
+    })
+
+    it('Web Audio が動いていない時（自動再生の決まりで止められた など）は、元の音声をそのまま使い、動き出したら Web Audio の音声を使う', () => {
+        FakeAudioContext.startState = 'suspended'
+        const input = new FakeTrack('audio')
+        const audio = createContinuousAudio(input as unknown as MediaStreamTrack)
+        const context = FakeAudioContext.instances[0]
+
+        expect(context.resume).toHaveBeenCalled()
+        expect(audio.track()).toBe(input)
+
+        context.state = 'running'
+        expect(audio.track()).toBe(context.output)
+    })
+
+    it('音声のない動画では、Web Audio を作らない', () => {
+        const audio = createContinuousAudio(undefined)
+
+        expect(audio.track()).toBeUndefined()
+        expect(FakeAudioContext.instances).toHaveLength(0)
     })
 })

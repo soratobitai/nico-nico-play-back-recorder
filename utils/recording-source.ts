@@ -4,9 +4,10 @@
 // - 画面録画: プレイヤーの表示部分を画面ごと（screen-capture。ユーザーの操作から始める必要があるので、ここでは作らない）
 import { createFramePipeline, drawContain, getOutputSize, isFramePipelineSupported } from './frame-pipeline'
 import { createCommentCompositor } from './comment-compositor'
-import { watchAudio } from './diagnostics'
+import { watchAudio, diagEvent } from './diagnostics'
 
 type RecordingSource = {
+    // 録画に渡す映像と音声（録り始めるたびに読む。音声は、その時に使える方。下の createContinuousAudio）
     stream: MediaStream
     // 動画の解像度が変わっても、録画の解像度が変わらない（録り直さなくてよい）
     fixedSize: boolean
@@ -14,6 +15,54 @@ type RecordingSource = {
     steadySize: boolean
     stop: () => void
 }
+
+// 録画の音声を、再生が止まっている間も途切れない音声にする（止まっている間は無音になる）
+// ニコ生のプレイヤーが読み込み待ちで止まっている間は、取り込んだ映像には止まったコマが届き続けるが、音声は届かない。
+// Chrome の録画（MediaRecorder）は、取り込んだ音声を、届かなかった間を空けずにつないでいくので、そのまま録ると、
+// 止まるたびに音声だけが短くなり、その区間の終わりまで、止まっていた時間だけ音が映像より先に出る
+// （録り始めた時に止まっていた場合も、音声が後から始まるのに映像と同じ 0 秒にそろえられるので、同じく音が先に出る）。
+// Web Audio に通すと、元の音声が届かない間も、実際の時間に合わせて無音が続く音声になるので、映像とずれない。
+// Web Audio が動いていない時（ページで操作する前で、ブラウザの自動再生の決まりで止められた など）は、元の音声をそのまま録る
+// （音声のない録画にしないように）。ページを操作したら動かし始める。録り始めるたびに（区切って録り直す時も）どちらを使うか決める
+const createContinuousAudio = (audioTrack: MediaStreamTrack | undefined) => {
+    if (!audioTrack || typeof AudioContext === 'undefined') return { track: () => audioTrack, stop: () => {} }
+    let context: AudioContext | null = null
+    let output: MediaStreamTrack | undefined
+    try {
+        context = new AudioContext()
+        const input = context.createMediaStreamSource(new MediaStream([audioTrack]))
+        const destination = context.createMediaStreamDestination()
+        input.connect(destination)
+        output = destination.stream.getAudioTracks()[0]
+        if (context.state !== 'running') {
+            context.resume().catch(() => {})
+            // 自動再生の決まりで止められた時は、ページを操作した時に動かし始める
+            const resume = () => {
+                if (context?.state === 'suspended') context.resume().catch(() => {})
+            }
+            for (const type of ['pointerdown', 'keydown']) globalThis.addEventListener?.(type, resume, { capture: true, once: true })
+        }
+    } catch (error) {
+        console.log('録画の音声を Web Audio に通せませんでした（元の音声をそのまま録ります）:', error)
+        context = null
+    }
+    return {
+        // 録り始める時に使う音声
+        track: () => {
+            const continuous = context?.state === 'running' && output?.readyState === 'live'
+            diagEvent('audio:track', { webAudio: continuous, state: context?.state ?? 'none' }) // 診断版だけ
+            return continuous ? output : audioTrack
+        },
+        stop: () => {
+            output?.stop()
+            context?.close().catch(() => {})
+        },
+    }
+}
+
+// 映像のトラックと音声のトラックを、録画に渡す1つの MediaStream にする
+const withAudio = (videoTrack: MediaStreamTrack, audioTrack: MediaStreamTrack | undefined) =>
+    new MediaStream(audioTrack ? [videoTrack, audioTrack] : [videoTrack])
 
 const stopAll = (stream: MediaStream) => stream.getTracks().forEach(track => track.stop())
 
@@ -63,13 +112,17 @@ const createVideoSource = (capture: VideoCapture, video: HTMLVideoElement, fixed
         const { width, height } = fixedHeight || !video.videoWidth || !video.videoHeight
             ? getOutputSize(fixedHeight ?? 720, null)
             : { width: even(video.videoWidth), height: even(video.videoHeight) }
+        const audio = createContinuousAudio(stream.getAudioTracks()[0])
         const pipeline = createFramePipeline(track, width, height, (ctx, frame) => drawContain(ctx, frame, width, height))
         return {
-            stream: new MediaStream([pipeline.track, ...stream.getAudioTracks()]),
+            get stream() {
+                return withAudio(pipeline.track, audio.track())
+            },
             fixedSize: fixedHeight !== null,
             steadySize: true,
             stop: () => {
                 pipeline.stop()
+                audio.stop()
                 release()
             },
         }
@@ -85,16 +138,21 @@ const createCommentSource = (capture: VideoCapture, video: HTMLVideoElement, fix
         release()
         return null
     }
+    const audio = createContinuousAudio(stream.getAudioTracks()[0])
+    const [videoTrack] = compositor.stream.getVideoTracks()
     return {
-        stream: compositor.stream,
+        get stream() {
+            return withAudio(videoTrack, audio.track())
+        },
         fixedSize: fixedHeight !== null,
         steadySize: true, // 合成する大きさは、作った時に決める
         stop: () => {
             compositor.stop()
+            audio.stop()
             release()
         },
     }
 }
 
-export { createVideoCapture, createVideoSource, createCommentSource }
+export { createVideoCapture, createVideoSource, createCommentSource, createContinuousAudio }
 export type { RecordingSource, VideoCapture }
