@@ -25,11 +25,6 @@ const stateManager = new RecordingStateManager()
 
 // 録画を区切る間隔（内部の区切り。プレイバックと録画一覧ではつながって再生される）
 const SEGMENT_INTERVAL_MS = 5 * 60 * 1000
-// 番組を開いた直後は、ニコ生のプレイヤーや他の拡張機能の処理が重なって最も重く、この間に録り始めた区間は
-// 音ズレしやすい（低スペックの PC で。区切って録り直した後の区間では直ることが多い）。
-// ページを開いてから PAGE_BUSY_MS 以内に録り始めた時は、FIRST_SPLIT_MS 後に1回早めに区切り、その後は SEGMENT_INTERVAL_MS ごとに区切る
-const PAGE_BUSY_MS = 60 * 1000
-const FIRST_SPLIT_MS = 30 * 1000
 // データを受け取って保存する間隔
 const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
 // 容量の上限を超えた分を消す間隔
@@ -134,7 +129,6 @@ export default async () => {
     let sessionActive = false // 録画中（停止するまで。録り直しを待っている間も含む）
     let sessionId = 0 // 録画を始めるたびに変わる（止めた後に、前の録画のためにずらした処理を行わない）
     let splitTimer: ReturnType<typeof setInterval> | undefined
-    let firstSplitTimer: ReturnType<typeof setTimeout> | undefined
     let limitTimer: ReturnType<typeof setInterval> | undefined
     let restartTimer: ReturnType<typeof setTimeout> | undefined
     let cancelRestarts: (() => VideoKind[]) | undefined // 順番待ちの録り直しを取り消す
@@ -303,23 +297,11 @@ export default async () => {
         sessionStartedAt = Date.now()
         diagEvent('session:begin', { pageAgeMs: Math.round(performance.now()) })
         // 一定の間隔で、すべての種類の区間を区切る（区間の間に空白を作らないよう、すぐに次の区間を録り始める）
-        const splitAll = () => {
+        splitTimer = setInterval(() => {
             diagEvent('split')
             console.log("🔄 録画を区切ります...")
             staggered(WATCH_ORDER.filter(kind => recorders.has(kind)), kind => recorders.get(kind)?.split())
-        }
-        const startSplitInterval = () => {
-            splitTimer = setInterval(splitAll, SEGMENT_INTERVAL_MS)
-        }
-        // ページを開いた直後の重い時に録り始めたら、落ち着いた頃に1回早めに区切る（音ズレした区間を短くする）
-        if (performance.now() <= PAGE_BUSY_MS) {
-            firstSplitTimer = setTimeout(() => {
-                splitAll()
-                startSplitInterval()
-            }, FIRST_SPLIT_MS)
-        } else {
-            startSplitInterval()
-        }
+        }, SEGMENT_INTERVAL_MS)
         limitTimer = setInterval(enforceStorageLimit, ENFORCE_LIMIT_INTERVAL_MS)
     }
 
@@ -328,7 +310,6 @@ export default async () => {
         diagEvent('session:stop', { state })
         startAttempt++
         sessionActive = false
-        clearTimeout(firstSplitTimer)
         clearInterval(splitTimer)
         clearInterval(limitTimer)
         clearTimeout(restartTimer)
