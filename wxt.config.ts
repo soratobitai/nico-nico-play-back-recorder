@@ -2,8 +2,9 @@ import { defineConfig } from 'wxt'
 import type { WxtViteConfig } from 'wxt'
 
 // 診断版（npm run build:diag）は、普段の版と取り違えないように .output/chrome-mv3-diag に作る
-const modeArg = process.argv.indexOf('--mode')
-const isDiagBuild = modeArg >= 0 && process.argv[modeArg + 1] === 'diag'
+// （--mode diag・--mode=diag・-m diag のどの書き方でも）
+const isDiagBuild = process.argv.some((arg, i) =>
+  /^(--mode|-m)=diag$/.test(arg) || (['--mode', '-m'].includes(arg) && process.argv[i + 1] === 'diag'))
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({

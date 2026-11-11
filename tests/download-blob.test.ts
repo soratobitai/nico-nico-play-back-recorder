@@ -32,7 +32,9 @@ describe('downloadBlob', () => {
 
         await downloadBlob(blob, 'a.png')
 
-        expect(call).toHaveBeenCalledWith({ type: 'download', blob, filename: 'a.png' })
+        // 応答がない時に長く待たない
+        expect(call).toHaveBeenCalledWith({ type: 'download', blob, filename: 'a.png' }, expect.any(Number))
+        expect(call.mock.calls[0][1]).toBeLessThanOrEqual(10 * 1000)
         expect(clicked).toEqual([])
     })
 

@@ -24,10 +24,19 @@ type RecordingSource = {
 // Web Audio に通すと、元の音声が届かない間も、実際の時間に合わせて無音が続く音声になるので、映像とずれない。
 // Web Audio が動いていない時（ページで操作する前で、ブラウザの自動再生の決まりで止められた など）は、元の音声をそのまま録る
 // （音声のない録画にしないように）。ページを操作したら動かし始める。録り始めるたびに（区切って録り直す時も）どちらを使うか決める
+const RESUME_EVENTS = ['pointerdown', 'keydown']
 const createContinuousAudio = (audioTrack: MediaStreamTrack | undefined) => {
     if (!audioTrack || typeof AudioContext === 'undefined') return { track: () => audioTrack, stop: () => {} }
     let context: AudioContext | null = null
     let output: MediaStreamTrack | undefined
+    // 自動再生の決まりで止められた時は、ページを操作した時に動かし始める
+    // （動かせない操作（一部のキーなど）もあるので、動き出すまで操作のたびに試す）
+    const resume = () => {
+        if (context?.state === 'suspended') context.resume().catch(() => {})
+    }
+    const stopWaiting = () => {
+        for (const type of RESUME_EVENTS) globalThis.removeEventListener?.(type, resume, { capture: true })
+    }
     try {
         context = new AudioContext()
         const input = context.createMediaStreamSource(new MediaStream([audioTrack]))
@@ -36,15 +45,18 @@ const createContinuousAudio = (audioTrack: MediaStreamTrack | undefined) => {
         output = destination.stream.getAudioTracks()[0]
         if (context.state !== 'running') {
             context.resume().catch(() => {})
-            // 自動再生の決まりで止められた時は、ページを操作した時に動かし始める
-            const resume = () => {
-                if (context?.state === 'suspended') context.resume().catch(() => {})
+            for (const type of RESUME_EVENTS) globalThis.addEventListener?.(type, resume, { capture: true })
+            context.onstatechange = () => {
+                if (context?.state === 'running') stopWaiting()
             }
-            for (const type of ['pointerdown', 'keydown']) globalThis.addEventListener?.(type, resume, { capture: true, once: true })
         }
     } catch (error) {
         console.log('録画の音声を Web Audio に通せませんでした（元の音声をそのまま録ります）:', error)
+        stopWaiting()
+        output?.stop()
+        context?.close().catch(() => {})
         context = null
+        output = undefined
     }
     return {
         // 録り始める時に使う音声
@@ -54,6 +66,7 @@ const createContinuousAudio = (audioTrack: MediaStreamTrack | undefined) => {
             return continuous ? output : audioTrack
         },
         stop: () => {
+            stopWaiting()
             output?.stop()
             context?.close().catch(() => {})
         },
@@ -112,8 +125,8 @@ const createVideoSource = (capture: VideoCapture, video: HTMLVideoElement, fixed
         const { width, height } = fixedHeight || !video.videoWidth || !video.videoHeight
             ? getOutputSize(fixedHeight ?? 720, null)
             : { width: even(video.videoWidth), height: even(video.videoHeight) }
-        const audio = createContinuousAudio(stream.getAudioTracks()[0])
         const pipeline = createFramePipeline(track, width, height, (ctx, frame) => drawContain(ctx, frame, width, height))
+        const audio = createContinuousAudio(stream.getAudioTracks()[0])
         return {
             get stream() {
                 return withAudio(pipeline.track, audio.track())

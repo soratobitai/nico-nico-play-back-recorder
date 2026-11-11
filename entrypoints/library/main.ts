@@ -13,7 +13,7 @@ import {
 import { SHOW_PROGRAM_MESSAGE } from '@/utils/library/open-library'
 import { mountReviewView, KIND_LABELS, type ReviewView, type ReviewViewState } from '@/utils/review/view'
 import { REVIEW_STYLE } from '@/utils/review/style'
-import { downloadBlob, formatDateForFileName, getVideoExtension } from '@/utils/feature'
+import { downloadBlob, formatDateForFileName, getVideoExtension, fileNamePrefix } from '@/utils/feature'
 import { MAX_STORAGE_SIZE } from '@/utils/storage'
 import { formatRecorded, formatElapsed, formatBroadcastTime } from '@/utils/time-format'
 import { setupLegacyImport } from './legacy'
@@ -508,7 +508,7 @@ const downloadSegments = (program: ProgramSummary, segmentIds: string[]) => {
                 return
             }
             for (const [i, file] of files.entries()) {
-                const name = [program.userName, program.title, formatDateForFileName(file.startedAt)].filter(Boolean).join('_')
+                const name = [fileNamePrefix(program.userName, program.title), formatDateForFileName(file.startedAt)].filter(Boolean).join('_')
                 void downloadBlob(file.blob, `${name}${kindSuffix(file.kind)}.${getVideoExtension(file.mimeType)}`)
                 if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 300))
             }

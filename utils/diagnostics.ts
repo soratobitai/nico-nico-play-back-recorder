@@ -8,16 +8,21 @@ const DIAG_ENABLED = import.meta.env.MODE === 'diag'
 const DIAG_PREFIX = 'diag:'
 // 保存領域に書き込む間隔
 const FLUSH_MS = 10 * 1000
+// 残しておく記録の数（ページを開くたびに1つ増える。古いものから消す）
+const KEEP_SESSIONS = 20
+// 音声を数える時に、読み切れずにためておくデータの上限（ページが忙しい時に、ためすぎないように）
+const AUDIO_BUFFER_FRAMES = 300
 
 // Chrome にしかない API なので TypeScript の型定義にない。使う分だけ宣言する
 declare const MediaStreamTrackProcessor: {
-    new (init: { track: MediaStreamTrack }): { readable: ReadableStream<AudioData> }
+    new (init: { track: MediaStreamTrack, maxBufferSize?: number }): { readable: ReadableStream<AudioData> }
 } | undefined
 
 type PipelineStats = { frames: number, maxProcMs: number, lagMs: number, maxLagMs: number }
 type FragmentRow = { seg: string, kind: string, wallMs: number, a?: [number, number], v?: [number, number] }
 type Row = {
     t: number // 記録を始めてからの秒
+    hidden: boolean // タブが裏にあったか（裏のタブは、タイマーなどが遅くなる）
     loopMaxMs: number // ページの処理の詰まり（50ms ごとのタイマーが、どれだけ遅れたか）の最大
     longTaskMs: number // 50ms を超える処理の合計
     pipes: Record<string, PipelineStats> // 描き直しの処理ごと
@@ -36,7 +41,7 @@ let events: { t: number, type: string, detail?: unknown }[] = []
 let current: Row | null = null
 
 const now = () => +((performance.now() - startedAt) / 1000).toFixed(3)
-const newRow = (): Row => ({ t: Math.round((performance.now() - startedAt) / 1000), loopMaxMs: 0, longTaskMs: 0, pipes: {}, frags: [] })
+const newRow = (): Row => ({ t: Math.round((performance.now() - startedAt) / 1000), hidden: document.hidden, loopMaxMs: 0, longTaskMs: 0, pipes: {}, frags: [] })
 const row = () => current ??= newRow()
 
 const flush = () => {
@@ -44,13 +49,34 @@ const flush = () => {
     const chunk = { meta: chunkIndex === 0 ? meta : undefined, rows, events }
     rows = []
     events = []
-    chrome.storage.local.set({ [`${sessionKey}:${String(chunkIndex++).padStart(5, '0')}`]: chunk }).catch(() => {})
+    try {
+        chrome.storage.local.set({ [`${sessionKey}:${String(chunkIndex++).padStart(5, '0')}`]: chunk }).catch(() => {})
+    } catch {
+        // 拡張機能が更新された後は書き込めない
+    }
+}
+
+// 古い記録を消す（新しい KEEP_SESSIONS 個を残す）
+const pruneSessions = async () => {
+    const keys = Object.keys(await chrome.storage.local.get(null)).filter(k => k.startsWith(DIAG_PREFIX))
+    const sessions = [...new Set(keys.map(k => k.slice(0, k.lastIndexOf(':'))))].sort()
+    const old = new Set(sessions.slice(0, Math.max(0, sessions.length - KEEP_SESSIONS)))
+    if (old.size > 0) await chrome.storage.local.remove(keys.filter(k => old.has(k.slice(0, k.lastIndexOf(':')))))
 }
 
 // 記録を始める（ニコ生のページで、番組を開いた時に1回）
-const startDiagnostics = (video: HTMLVideoElement, info: Record<string, unknown>) => {
+// 記録できなくても、録画は続ける
+const startDiagnostics = (video: HTMLVideoElement | null, info: Record<string, unknown>) => {
     if (!DIAG_ENABLED || active) return
+    try {
+        start(video, info)
+    } catch (error) {
+        console.log('診断の記録を始められませんでした:', error)
+    }
+}
+const start = (video: HTMLVideoElement | null, info: Record<string, unknown>) => {
     active = true
+    pruneSessions().catch(() => {})
     startedAt = performance.now()
     sessionKey = `${DIAG_PREFIX}${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 6)}`
     const nav = navigator as Navigator & { deviceMemory?: number }
@@ -62,7 +88,9 @@ const startDiagnostics = (video: HTMLVideoElement, info: Record<string, unknown>
         memoryGB: nav.deviceMemory,
         pageAgeMs: Math.round(performance.now()),
         startedAt: new Date().toISOString(),
+        hidden: document.hidden,
     }
+    document.addEventListener('visibilitychange', () => diagEvent('page:visibility', { hidden: document.hidden }))
 
     // ページの処理の詰まり
     let expected = performance.now() + 50
@@ -85,23 +113,24 @@ const startDiagnostics = (video: HTMLVideoElement, info: Record<string, unknown>
     let lagCount = 0
     let lagMax = 0
     const onFrame = (_now: number, frameMeta: { mediaTime: number }) => {
+        if (!video) return
         const lag = (video.currentTime - frameMeta.mediaTime) * 1000
         lagSum += lag
         lagCount++
         lagMax = Math.max(lagMax, lag)
         video.requestVideoFrameCallback(onFrame)
     }
-    if ('requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onFrame)
-    for (const type of ['waiting', 'playing', 'stalled', 'ratechange', 'resize', 'seeking', 'seeked', 'emptied', 'loadeddata', 'pause', 'play']) {
-        video.addEventListener(type, () => diagEvent(`video:${type}`, { ct: +video.currentTime.toFixed(2), rate: video.playbackRate, size: `${video.videoWidth}x${video.videoHeight}` }))
+    if (video && 'requestVideoFrameCallback' in video) video.requestVideoFrameCallback(onFrame)
+    for (const type of video ?  ['waiting', 'playing', 'stalled', 'ratechange', 'resize', 'seeking', 'seeked', 'emptied', 'loadeddata', 'pause', 'play'] : []) {
+        video?.addEventListener(type, () => diagEvent(`video:${type}`, { ct: +video.currentTime.toFixed(2), rate: video.playbackRate, size: `${video.videoWidth}x${video.videoHeight}` }))
     }
 
     // 1秒ごとに行をまとめる
-    let lastQuality = video.getVideoPlaybackQuality?.()
+    let lastQuality = video?.getVideoPlaybackQuality?.()
     setInterval(() => {
         const r = row()
-        const quality = video.getVideoPlaybackQuality?.()
-        r.play = {
+        const quality = video?.getVideoPlaybackQuality?.()
+        if (video) r.play = {
             ct: +video.currentTime.toFixed(2),
             rate: video.playbackRate,
             paused: video.paused,
@@ -141,7 +170,12 @@ const watchAudio = (track: MediaStreamTrack | undefined) => {
     watchedAudio.add(track.id)
     diagEvent('audio:watch', { id: track.id.slice(0, 8) })
     const stats = audioStats = { samples: 0, sampleRate: 0, gapMs: 0 }
-    const reader = new MediaStreamTrackProcessor({ track: track.clone() }).readable.getReader()
+    let reader: ReadableStreamDefaultReader<AudioData>
+    try {
+        reader = new MediaStreamTrackProcessor({ track: track.clone(), maxBufferSize: AUDIO_BUFFER_FRAMES }).readable.getReader()
+    } catch {
+        return
+    }
     let expectedNext: number | null = null
     const pump = async () => {
         for (;;) {

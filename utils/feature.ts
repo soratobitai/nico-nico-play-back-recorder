@@ -13,8 +13,9 @@ const FRAME_WAIT_MS = 2000
 const grabFrame = async (track: MediaStreamTrack) => {
     if (typeof MediaStreamTrackProcessor === 'undefined' || track.readyState !== 'live') return null
     const clone = track.clone()
-    const reader = new MediaStreamTrackProcessor({ track: clone }).readable.getReader()
+    let reader: ReadableStreamDefaultReader<VideoFrame> | null = null
     try {
+        reader = new MediaStreamTrackProcessor({ track: clone }).readable.getReader()
         const result = await Promise.race([reader.read(), new Promise<null>(resolve => setTimeout(() => resolve(null), FRAME_WAIT_MS))])
         const frame = result?.value
         if (!frame) return null
@@ -28,7 +29,7 @@ const grabFrame = async (track: MediaStreamTrack) => {
             frame.close()
         }
     } finally {
-        reader.cancel().catch(() => {})
+        reader?.cancel().catch(() => {})
         clone.stop()
     }
 }
@@ -104,52 +105,69 @@ const getVideoExtension = (type: string) => type.startsWith('video/webm') ? 'web
 // プレイヤーでコメントを非表示にしている時は、コメントありは同じ絵になるので保存しない。
 // ゲームやギフトの演出は、ページから絵として読み出せない（別のサイトの画像を使っているため）。
 // 画面録画中（screenTrack: 画面録画の映像）は、その映像から1コマを切り出して「画面録画」の1枚も保存する（演出も入る）
+// 1枚も保存できなければ false
 const getScreenShotAndDownload = async (screenTrack?: MediaStreamTrack) => {
     const video = document.querySelector('video')
-    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return
+    const videoReady = !!video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !!video.videoWidth && !!video.videoHeight
+    if (!videoReady && !screenTrack) return false
 
-    try {
-        // 画面録画の1コマは、ほかの2枚を描く間に取る（なるべく同じ瞬間になるように）
-        const screenShot = screenTrack ? grabFrame(screenTrack).catch(() => null) : Promise.resolve(null)
-        const draw = (width: number, height: number, paint: (ctx: CanvasRenderingContext2D) => void) => {
-            const canvas = document.createElement('canvas')
-            canvas.width = width
-            canvas.height = height
-            const ctx = canvas.getContext('2d')
-            if (!ctx) throw new Error('Canvas 2D context not available')
-            paint(ctx)
-            return canvas
+    // 画面録画の1コマは、ほかの2枚を描く間に取る（なるべく同じ瞬間になるように）
+    const screenShot = screenTrack ? grabFrame(screenTrack).catch(() => null) : Promise.resolve(null)
+    const draw = (width: number, height: number, paint: (ctx: CanvasRenderingContext2D) => void) => {
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error('Canvas 2D context not available')
+        paint(ctx)
+        return canvas
+    }
+    // 1枚を描けなくても、ほかは保存する
+    const tryDraw = (label: string, make: () => HTMLCanvasElement) => {
+        try {
+            return make()
+        } catch (error) {
+            console.error(`スクリーンショット（${label}）を作れませんでした:`, error)
+            return null
         }
-        // 先に両方を描いてから保存する（保存している間に、場面が進まないように）
-        const shots = [{ canvas: draw(video.videoWidth, video.videoHeight, ctx => ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight)), suffix: '' }]
+    }
+    // 先に描いてから保存する（保存している間に、場面が進まないように）
+    const shots: { canvas: HTMLCanvasElement, suffix: string }[] = []
+    if (video && videoReady) {
+        const plain = tryDraw('コメントなし', () => draw(video.videoWidth, video.videoHeight, ctx => ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight)))
+        if (plain) shots.push({ canvas: plain, suffix: '' })
         const commentCanvas = document.querySelector<HTMLCanvasElement>(COMMENT_CANVAS_SELECTOR)
-        if (commentCanvas?.checkVisibility()) {
+        if (commentCanvas?.checkVisibility() && commentCanvas.width > 0 && commentCanvas.height > 0) {
             // 縦横比はコメントの canvas（＝プレイヤーの表示領域）に合わせ、動画は収まるように中央に描く（録画の「コメントあり」と同じ）
             const { width, height } = getOutputSize(video.videoHeight, commentCanvas)
-            shots.push({
-                canvas: draw(width, height, (ctx) => {
-                    ctx.fillStyle = '#000'
-                    ctx.fillRect(0, 0, width, height)
-                    const scale = Math.min(width / video.videoWidth, height / video.videoHeight)
-                    const w = video.videoWidth * scale
-                    const h = video.videoHeight * scale
-                    ctx.drawImage(video, (width - w) / 2, (height - h) / 2, w, h)
-                    ctx.drawImage(commentCanvas, 0, 0, width, height)
-                }),
-                suffix: '_コメントあり',
-            })
+            const withComments = tryDraw('コメントあり', () => draw(width, height, (ctx) => {
+                ctx.fillStyle = '#000'
+                ctx.fillRect(0, 0, width, height)
+                const scale = Math.min(width / video.videoWidth, height / video.videoHeight)
+                const w = video.videoWidth * scale
+                const h = video.videoHeight * scale
+                ctx.drawImage(video, (width - w) / 2, (height - h) / 2, w, h)
+                ctx.drawImage(commentCanvas, 0, 0, width, height)
+            }))
+            if (withComments) shots.push({ canvas: withComments, suffix: '_コメントあり' })
         }
-        const screen = await screenShot
-        if (screen) shots.push({ canvas: screen, suffix: '_画面録画' })
-        const { userName, title } = getProgramData()
-        const name = [userName, title, formatDateForFileName(Date.now())].filter(Boolean).join('_')
-        for (const { canvas, suffix } of shots) {
-            const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
-            if (blob) await downloadBlob(blob, `${name}${suffix}.png`)
-        }
-    } catch (err) {
-        console.error('スクリーンショット処理中にエラー:', err)
     }
+    const screen = await screenShot
+    if (screen) shots.push({ canvas: screen, suffix: '_画面録画' })
+    const { userName, title } = getProgramData()
+    const name = [fileNamePrefix(userName, title), formatDateForFileName(Date.now())].filter(Boolean).join('_')
+    let saved = 0
+    for (const { canvas, suffix } of shots) {
+        try {
+            const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+            if (!blob) continue
+            await downloadBlob(blob, `${name}${suffix}.png`)
+            saved++
+        } catch (error) {
+            console.error('スクリーンショットを保存できませんでした:', error)
+        }
+    }
+    return saved > 0
 }
 
 // 日時を「YYYY-MM-DD hh mm ss」の形にする（時・分・秒の区切りを timeSeparator で指定する）
@@ -171,6 +189,15 @@ const formatDateTime = (input: string | number, timeSeparator: string) => {
 // ファイル名用（ファイル名に使えない「:」を含めない）: 2025-01-02 030405
 const formatDateForFileName = (input: string | number) => formatDateTime(input, '')
 
+// ファイル名の始め（配信者_タイトル）。長い時は FILE_NAME_PREFIX_MAX 文字で切る
+// （ファイル名が長すぎると Chrome が終わりを切るので、後ろに付ける日時や種類（_コメントあり など）が消えないように。
+//   Mac などはファイル名が 255 バイトまでで、日本語は1文字 3 バイト）
+const FILE_NAME_PREFIX_MAX = 60
+const fileNamePrefix = (...parts: (string | null | undefined)[]) => {
+    const chars = [...parts.filter(Boolean).join('_')]
+    return chars.length > FILE_NAME_PREFIX_MAX ? `${chars.slice(0, FILE_NAME_PREFIX_MAX - 1).join('')}…` : chars.join('')
+}
+
 // 表示用: 2025-01-02 03:04:05
 
 
@@ -183,4 +210,5 @@ export {
     downloadBlob,
     getScreenShotAndDownload,
     formatDateForFileName,
+    fileNamePrefix,
 }

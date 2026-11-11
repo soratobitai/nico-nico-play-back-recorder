@@ -160,6 +160,36 @@ describe('録画の音声（再生が止まっている間も途切れない音�
         expect(audio.track()).toBe(context.output)
     })
 
+    it('Web Audio が動いていない時は、動き出すまでページの操作のたびに動かそうとし、動き出したら・止めたらやめる', () => {
+        const page = new EventTarget()
+        vi.stubGlobal('addEventListener', page.addEventListener.bind(page))
+        vi.stubGlobal('removeEventListener', page.removeEventListener.bind(page))
+        FakeAudioContext.startState = 'suspended'
+        const audio = createContinuousAudio(new FakeTrack('audio') as unknown as MediaStreamTrack)
+        const context = FakeAudioContext.instances[0] as FakeAudioContext & { onstatechange?: () => void }
+        context.resume.mockClear()
+
+        // 動かせない操作だった時も、次の操作でまた試す
+        page.dispatchEvent(new Event('keydown'))
+        page.dispatchEvent(new Event('pointerdown'))
+        expect(context.resume).toHaveBeenCalledTimes(2)
+
+        context.state = 'running'
+        context.onstatechange?.()
+        page.dispatchEvent(new Event('pointerdown'))
+        expect(context.resume).toHaveBeenCalledTimes(2)
+
+        // 止めた後も試さない
+        const other = createContinuousAudio(new FakeTrack('audio') as unknown as MediaStreamTrack)
+        const otherContext = FakeAudioContext.instances[1]
+        otherContext.resume.mockClear()
+        other.stop()
+        otherContext.state = 'suspended'
+        page.dispatchEvent(new Event('pointerdown'))
+        expect(otherContext.resume).not.toHaveBeenCalled()
+        audio.stop()
+    })
+
     it('音声のない動画では、Web Audio を作らない', () => {
         const audio = createContinuousAudio(undefined)
 

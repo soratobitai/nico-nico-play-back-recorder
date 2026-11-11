@@ -243,15 +243,28 @@ export default async () => {
         if (!restartPending.has(kind as VideoKind)) videoSizes.delete(kind)
         refreshQuality()
         refreshRecordingIndicators()
-        if (sessionActive && recorders.size === 0 && restartPending.size === 0) stopSession('stopped')
+        stopIfIdle()
+    }
+
+    // 録画している種類（録り直しを待っている種類も）がなくなったら停止する
+    // 準備中に「画面録画」を押して、選んだ種類を加えるのを待っている間に画面録画が終わった時は、
+    // 録画開始を待っていた状態に戻す（オートスタート・録画開始のボタンで始めようとしていた録画は続ける）
+    const stopIfIdle = () => {
+        if (!sessionActive || recorders.size > 0 || restartPending.size > 0) return
+        const resumeStart = kindsWaiting
+        stopSession('stopped')
+        if (resumeStart) initStream()
     }
 
     // 選んだ種類（コメントなし・コメントあり）を録っている録画か（停止中に「画面録画」だけを始めた時は false。
     // その間は、録画バーのチップで種類を切り替えても、選ぶだけで録り始めない）
     let kindsActive = false
+    // 準備中に「画面録画」を押して、選んだ種類を、動画が再生できるようになったら加えるのを待っている間（addKindsWhenVideoReady）
+    let kindsWaiting = false
+    // 始められた種類の数を返す
     const startEnabledKinds = () => {
         kindsActive = true
-        for (const kind of enabledKinds()) startKind(kind, () => createSourceFor(kind))
+        return enabledKinds().filter(kind => startKind(kind, () => createSourceFor(kind))).length
     }
 
     // 容量の上限を超えた分を、古い断片から削除する
@@ -300,6 +313,12 @@ export default async () => {
     // 録画を始めようとしている回。動画の準備を待っている間に止められた・待つのをやめた・別の方法で始まった時は変えて、
     // 待っていた開始をしない（止めた後に、動画が再生できるようになった知らせで録画が始まらないように）
     let startAttempt = 0
+    // 動画の準備を待って録画を始めようとしている回（initStream。startAttempt と同じなら、まだ待っている）
+    let waitingStartAttempt = -1
+    // オートスタートで録画を始める前（ページを開いてすぐ。録画バーは「準備中」で、まだ initStream を呼んでいない）
+    let autoStartPending = autoStart
+    // 録画開始を待っているか（オートスタート・録画開始のボタンで）
+    const startPending = () => !sessionActive && (autoStartPending || waitingStartAttempt === startAttempt)
 
     const beginSession = () => {
         if (sessionActive) return
@@ -323,6 +342,7 @@ export default async () => {
         startAttempt++
         sessionActive = false
         kindsActive = false
+        kindsWaiting = false
         clearInterval(splitTimer)
         clearInterval(limitTimer)
         clearTimeout(restartTimer)
@@ -451,6 +471,7 @@ export default async () => {
             return
         }
         setTabKinds(next)
+        if (sessionActive && !kindsActive && !kindsWaiting) showBarHint('今は画面録画だけを録っています（選んだ種類は、次に録画を始めた時に録ります）')
     }
     // 録画中に解像度の設定を変えた場合は、録り直して反映する
     RESOLUTION_MODE.watch((newValue) => {
@@ -499,15 +520,16 @@ export default async () => {
         }
 
         // 録画開始を待っている時（オートスタート・録画開始のボタンで、動画の準備を待っている「準備中」）は、
-        // 選んだ種類も、動画が再生できるようになったら加える（待っていた録画開始は、ここで始めた録画に置き換わる）
-        const withKinds = !sessionActive && stateManager.getState() === 'preparing'
+        // 選んだ種類も、動画が再生できるようになったら加える（待っていた録画開始は、ここで始めた録画に置き換わる）。
+        // 共有の確認を出している間に、停止を押された・待つのをやめた時は、画面録画だけ
+        const withKinds = startPending()
         beginSession()
         if (withKinds) addKindsWhenVideoReady()
         const started = startKind('screen', () => source)
         if (started) screenStream = source.stream
         if (!started) {
             source.stop()
-            if (recorders.size === 0) stopSession('stopped')
+            stopIfIdle()
         }
         refreshRecordingIndicators()
         return started
@@ -521,11 +543,13 @@ export default async () => {
         const tryAdd = () => {
             if (!sessionActive || sessionId !== id || kindsActive) return true
             if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA || video.paused || video.currentTime <= 0) return false
-            startEnabledKinds()
+            kindsWaiting = false
+            if (startEnabledKinds() === 0) showBarHint('コメントなし・コメントありの録画を始められませんでした（画面録画は続けています）')
             refreshRecordingIndicators()
             return true
         }
         if (tryAdd()) return
+        kindsWaiting = true
         const timer = setInterval(() => {
             if (tryAdd()) clearInterval(timer)
         }, VIDEO_READY_POLL_MS)
@@ -546,6 +570,7 @@ export default async () => {
 
         if (sessionActive) return
         const attempt = ++startAttempt
+        waitingStartAttempt = attempt
         const isCurrent = () => attempt === startAttempt
 
         // 録画開始前の状態を準備中に設定
@@ -608,8 +633,9 @@ export default async () => {
                         callback()
                     } else if (!sessionActive) {
                         console.log("動画が再生可能になりましたが、まだ再生されていません")
-                        // 再生されていない場合は状態を停止中に設定
+                        // 再生されていない場合は状態を停止中に設定（待つのをやめる）
                         stateManager.setState('stopped')
+                        startAttempt++
                     }
                 }, 500)
             }, { once: true })
@@ -656,6 +682,7 @@ export default async () => {
         initStream()
     }
     const stop = () => {
+        autoStartPending = false
         // 動画の準備を待っている間に止められたら、待っていた開始をしない
         if (!sessionActive) {
             startAttempt++
@@ -756,13 +783,20 @@ export default async () => {
                 segments = await read()
             }
             const saved: { kind: RecordingKind, seconds: number }[] = []
+            let failed = 0
             for (const kind of kinds) {
-                const file = await buildRecentClipFile(segments, kind, pressedAt, RECENT_CLIP_SECONDS, getFragmentBlobs)
-                if (!file) continue
-                await downloadBlob(file.blob, sceneFileName([userName, title].filter(Boolean).join('_'), kind, file.startedAt, 'mp4'))
-                saved.push({ kind, seconds: Math.round(file.duration) })
+                // 1つの種類を作れなくても、ほかの種類は保存する
+                try {
+                    const file = await buildRecentClipFile(segments, kind, pressedAt, RECENT_CLIP_SECONDS, getFragmentBlobs)
+                    if (!file) continue
+                    await downloadBlob(file.blob, sceneFileName([userName, title].filter(Boolean).join('_'), kind, file.startedAt, 'mp4'))
+                    saved.push({ kind, seconds: Math.round(file.duration) })
+                } catch (error) {
+                    console.log(`直前の動画（${kind}）を保存できませんでした:`, error)
+                    failed++
+                }
             }
-            if (saved.length === 0) showBarHint('保存できる録画がありませんでした')
+            if (saved.length === 0) showBarHint(failed > 0 ? '動画を保存できませんでした' : '保存できる録画がありませんでした')
             else if (saved.length === 1) showBarHint(`${saved[0].seconds}秒の動画を保存しました`)
             else showBarHint(`${saved.length}本の動画を保存しました（${saved.map(({ kind, seconds }) => `${KIND_LABELS[kind]} ${seconds}秒`).join('・')}）`)
         } catch (error) {
@@ -795,7 +829,12 @@ export default async () => {
         // 直前1分も、mp4 の録画だけ（断片をつないで切り出すため）
         saveClip: segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? () => void saveClip() : null,
         // スクリーンショット（コメントなし・コメントあり。画面録画中は、画面録画の映像からも1枚）
-        screenshot: () => void getScreenShotAndDownload(screenVideoTrack()),
+        screenshot: () => {
+            if (!extensionAvailable()) return
+            void getScreenShotAndDownload(screenVideoTrack()).then((saved) => {
+                if (!saved) showBarHint('スクリーンショットを保存できませんでした（動画の読み込みを待ってから押してください）')
+            })
+        },
         // 録画一覧のページを、この番組を選んだ状態で開く
         openRecordings: () => {
             if (!extensionAvailable()) return
@@ -820,6 +859,7 @@ export default async () => {
             await new Promise(resolve => setTimeout(resolve, 1000))
 
             executeWhenIdle(async () => {
+                autoStartPending = false
                 if (autoStart) {
                     initStream() // 録画を開始
                 } else {

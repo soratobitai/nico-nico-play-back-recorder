@@ -11,7 +11,7 @@ import { createReviewPlayer, type ReviewPlayer } from './player'
 import { formatRecorded, formatElapsed, formatBroadcastTime, formatAgo } from '../time-format'
 import { KIND_ICON_PATHS, SCREEN_DOT } from '../kind-icons'
 import { createRowFitter } from './fit'
-import { downloadBlob, formatDateForFileName } from '../feature'
+import { downloadBlob, formatDateForFileName, fileNamePrefix } from '../feature'
 import { CLIP_SECONDS, buildClipFile } from './clip'
 
 // 開いた時の再生位置（live: 最新の録画のこれだけ前から）
@@ -108,7 +108,7 @@ const isExtensionGone = () => {
 // 場面を保存するファイルの名前（配信者_タイトル_時刻。録画一覧の「保存」と同じく、コメントなし以外は種類を付ける）
 // プレイバック・録画一覧の「前後1分」と、録画バーの「直前1分」で使う
 const sceneFileName = (prefix: string | undefined, kind: RecordingKind, wallClock: number, extension: string) =>
-    `${[prefix, formatDateForFileName(wallClock)].filter(Boolean).join('_')}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.${extension}`
+    `${[fileNamePrefix(prefix), formatDateForFileName(wallClock)].filter(Boolean).join('_')}${kind === 'video' ? '' : `_${KIND_LABELS[kind]}`}.${extension}`
 
 // 押せないように見せる（disabled と違って、フォーカスは外れない。押された時の処理で、押せない時は何もしない）
 const setAriaDisabled = (button: HTMLButtonElement, value: boolean) => {

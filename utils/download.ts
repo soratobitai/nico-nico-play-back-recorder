@@ -23,10 +23,12 @@ const saveWithLink = (blob: Blob, filename: string, owner: Document = document) 
 // bridge を使えない時（拡張機能が更新された後など）は、ownerDocument（ボタンを押したページ）から保存する
 // （Chrome は、操作のないまま続けて保存したページでは2回目から確認を出す。プレイバックの窓で押した時は、
 //   窓の操作はニコ生のタブの操作に数えられないので、窓から始める）
+// bridge での保存は、すぐ終わる（保存を始めるだけ）。応答がない時に長く待たない
+const DOWNLOAD_TIMEOUT_MS = 10 * 1000
 const downloadBlob = async (blob: Blob, filename: string, ownerDocument: Document = document) => {
     if (location.protocol !== 'chrome-extension:') {
         try {
-            await (await getBridge()).call({ type: 'download', blob, filename })
+            await (await getBridge()).call({ type: 'download', blob, filename }, DOWNLOAD_TIMEOUT_MS)
             return
         } catch (error) {
             console.log('拡張機能のページで保存できなかったため、このページから保存します:', error)

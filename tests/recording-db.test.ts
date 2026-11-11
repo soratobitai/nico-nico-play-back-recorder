@@ -1,7 +1,7 @@
 // 以前のバージョンの録画の保存先（拡張機能側へ移すために読み出す・消す）
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveChunk, getAllChunks, deleteChunkByKeys, hasLegacyDatabase, deleteLegacyDatabase } from '@/hooks/indexedDB/recordingDB'
-import { formatDateForFileName } from '@/utils/feature'
+import { formatDateForFileName, fileNamePrefix } from '@/utils/feature'
 
 const putTemp = (sessionId: string, chunkIndex: number) =>
     saveChunk('Temps', sessionId, chunkIndex, new Blob(['x'], { type: 'video/mp4' }), null, Date.now(), 'user', 'title')
@@ -45,6 +45,21 @@ describe('日時の整形', () => {
 
     it('ファイル名用は「:」を使わない', () => {
         expect(formatDateForFileName(date)).toBe('2025-01-02 030405')
+    })
+})
+
+describe('ファイル名の始め（配信者_タイトル）', () => {
+    it('つなぎ、空の部分は飛ばす', () => {
+        expect(fileNamePrefix('配信者', 'タイトル')).toBe('配信者_タイトル')
+        expect(fileNamePrefix('', 'タイトル')).toBe('タイトル')
+        expect(fileNamePrefix(null, undefined)).toBe('')
+    })
+
+    it('長い時は60文字で切る（後ろに付ける日時や種類が消えないように）。絵文字の途中では切らない', () => {
+        const name = fileNamePrefix('配信者', '😀'.repeat(100))
+        expect([...name]).toHaveLength(60)
+        expect(name.endsWith('😀…')).toBe(true)
+        expect(fileNamePrefix('a'.repeat(60))).toBe('a'.repeat(60))
     })
 })
 
