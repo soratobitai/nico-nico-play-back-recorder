@@ -190,7 +190,7 @@ const segmentFormatOf = (mimeType: string) => isMp4MimeType(mimeType) ? 'fmp4' a
 // ライブ状態の確認に続けて失敗した時の、再確認の間隔の上限
 const MAX_LIVE_STATUS_RETRY_INTERVAL_MS = 60 * 1000
 
-// ondataavailable の発火が止まったことを検知する
+// 録画が止まったこと（動画が進まなくなったこと）を検知する。見張りを延ばすのは App.ts の watch（動画の再生位置が進んでいた時だけ呼ぶ）
 const resetTimeoutCheck = (
     mediaRecorder: MediaRecorder,
     SAVE_CHUNK_INTERVAL_MS: number,

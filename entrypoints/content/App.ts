@@ -166,14 +166,22 @@ export default async () => {
         return source
     }
 
+    // 見張りで最後に見た、動画の再生位置（startKind の watch）
+    let watchedVideoTime = -1
     const startKind = (kind: RecordingKind, createSource: () => RecordingSource): boolean => {
         if (recorders.has(kind)) return true
         diagEvent('kind:start', { kind })
-        // 録画している種類のうち1つだけを見張る（データが届かなくなったらライブが続いているか確かめる）
-        // 区間を録り始めた時にも見張り始める（新しい区間のデータが一度も届かない場合にも気づけるように）
-        const watch = (mediaRecorder: MediaRecorder) => {
+        // 録画している種類のうち1つだけを見張る（動画が進まなくなったらライブが続いているか確かめる）
+        // 見張りを延ばすのは、データが届いた時に動画の再生位置が進んでいた時だけ。録画のデータが届いたかでは決めない
+        // （Web Audio を通した音声（recording-source.ts）や画面録画は、放送が終わってプレイヤーが止まっても、
+        //   止まった画面と無音のデータが届き続けるので、データだけ見ていると放送の終わりに気づけない）。
+        // 区間を録り始めた時は、必ず見張り始める（新しい区間のデータが一度も届かない場合にも気づけるように）
+        const watch = (mediaRecorder: MediaRecorder, start = false) => {
             const watched = WATCH_ORDER.map(k => recorders.get(k)).find(Boolean)
             if (watched !== recorder) return
+            const progressed = !video.paused && video.currentTime !== watchedVideoTime
+            watchedVideoTime = video.currentTime
+            if (!start && !progressed) return
             resetTimeoutCheck(mediaRecorder, SAVE_CHUNK_INTERVAL_MS, autoReloadOnFailure, 0, () => stopSession('stopped'), programId)
         }
         const recorder: KindRecorder = createKindRecorder({
@@ -182,7 +190,7 @@ export default async () => {
             chunkIntervalMs: SAVE_CHUNK_INTERVAL_MS,
             segmentDetails: () => ({ programId, title, userName, thumbnail: captureThumbnail(video), programBeginAt: beginAt }),
             onStarted: (mediaRecorder) => {
-                watch(mediaRecorder)
+                watch(mediaRecorder, true)
                 if (!sessionActive || stateManager.getState() === 'recording') return
                 startTimer()
                 stateManager.setState('recording')
