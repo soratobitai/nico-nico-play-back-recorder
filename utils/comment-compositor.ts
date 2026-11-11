@@ -47,5 +47,5 @@ const createCommentCompositor = (video: HTMLVideoElement, source: MediaStream, f
     }
 }
 
-export { createCommentCompositor }
+export { createCommentCompositor, COMMENT_CANVAS_SELECTOR }
 export type { CommentCompositor }

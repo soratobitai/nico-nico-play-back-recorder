@@ -1,7 +1,7 @@
 import { enforceLimit, flushPending, closeStaleSegments, setPendingLimit, initPendingSigning, isPendingSegment, getTimelineForSegments, getFragmentBlobs } from "../../utils/library/api"
 import { getRecordingMimeType, segmentFormatOf, resetTimeoutCheck, RecordingStateManager, startTimer, stopTimer, getOpenSegmentIds, getPageSegments } from "../../utils/recording"
 import { CLOSE_SEGMENTS_MESSAGE } from "../../utils/library/protocol"
-import { getProgramData, captureThumbnail, downloadBlob } from "../../utils/feature"
+import { getProgramData, captureThumbnail, downloadBlob, getScreenShotAndDownload } from "../../utils/feature"
 import { insertRecorderBar, insertToggleButton, updateToggleButton, setScreenCaptureButton, setPlaybackButton, setClipWaiting, setKindChips, setKindRecording, showBarHint, setRecorderError, setRecordingQuality } from "../../utils/ui"
 import { MAX_STORAGE_SIZE, AUTO_START, AUTO_RELOAD_ON_FAILURE, RECORD_VIDEO, RECORD_WITH_COMMENTS, RESOLUTION_MODE, FIXED_RESOLUTION_HEIGHT, validResolutionMode, validFixedResolutionHeight, type ResolutionMode } from '../../utils/storage'
 import { createVideoCapture, createVideoSource, createCommentSource, type RecordingSource } from '../../utils/recording-source'
@@ -10,7 +10,7 @@ import type { VideoSize } from '../../utils/fmp4'
 import { isScreenCaptureSupported, startScreenCapture } from '../../utils/screen-capture'
 import { checkLiveStatus } from '../../services/api'
 import { isPlaybackSupported, isPlaybackOpen, togglePlaybackWindow } from '../../utils/review/window'
-import { sceneFileName } from '../../utils/review/view'
+import { sceneFileName, KIND_LABELS } from '../../utils/review/view'
 import { RECENT_CLIP_SECONDS, buildRecentClipFile, recordedUntil } from '../../utils/review/clip'
 import { requestOpenLibrary } from '../../utils/library/open-library'
 import { isExtensionContextValid } from '../../utils/library/client'
@@ -469,6 +469,9 @@ export default async () => {
     // 画面録画を始める（他の種類と並行して録る。停止中なら、画面録画だけを始める）
     // 始められたら true（共有の確認でキャンセルされた場合などは false）
     let screenStarting = false // 共有の確認を出している間（続けて押されても、2つ目の取り込みを始めない）
+    // 画面録画で取り込んでいる映像（録画バーのスクリーンショットで、ギフトなどの演出も入った1枚を切り出す）
+    let screenStream: MediaStream | null = null
+    const screenVideoTrack = () => recorders.has('screen') ? screenStream?.getVideoTracks()[0] : undefined
     const startScreen = async (): Promise<boolean> => {
         if (recorders.has('screen')) return true
         if (screenStarting) return false
@@ -493,6 +496,7 @@ export default async () => {
         beginSession()
         if (withKinds) addKindsWhenVideoReady()
         const started = startKind('screen', () => source)
+        if (started) screenStream = source.stream
         if (!started) {
             source.stop()
             if (recorders.size === 0) stopSession('stopped')
@@ -702,12 +706,12 @@ export default async () => {
     }
 
     // ---- 録画バーの「直前1分」 ----
-    // 押した時までの RECENT_CLIP_SECONDS 秒を、1本の mp4 にして保存する（ライブで「今の」と思ってから押すので、押した時より前を残す）。
+    // 押した時までの RECENT_CLIP_SECONDS 秒を、録っている種類ごとに1本ずつ mp4 にして保存する
+    // （ライブで「今の」と思ってから押すので、押した時より前を残す。コメントなし・コメントあり・画面録画のうち、録っている種類すべて）。
     // 録画は数秒ごとに保存しているので、押した時までの分が保存されるのを少し待ってから作る。
     // このページで録った区間だけを使う（同じ番組を他のタブで録った分は使わない）。
-    // 録っている種類のうち、画面に見えているものに近い種類を使う（画面録画 → コメントあり → コメントなし）。
-    // ただし、押した時の1分前から録れている種類を先にする（録り始めたばかりの種類で、短い動画にならないように）
-    const CLIP_KIND_ORDER: RecordingKind[] = ['screen', 'comments', 'video']
+    // 録り始めたばかりの種類は、録り始めてからの分だけの短い動画になる
+    const CLIP_KIND_ORDER: RecordingKind[] = ['video', 'comments', 'screen']
     // 押した時までの分が保存されるのを待つ上限と、保存先を確かめる間隔
     const CLIP_WAIT_LIMIT_MS = 10 * 1000
     const CLIP_POLL_MS = 1000
@@ -720,41 +724,39 @@ export default async () => {
     }
     // 録っている種類（画質が変わって録り直すのを待っている間も、録っているものとする）
     const isRecordingKind = (kind: RecordingKind) => recorders.has(kind) || restartPending.has(kind as VideoKind)
-    const chooseClipKind = (wallClock: number) => {
-        const kinds = CLIP_KIND_ORDER.filter(isRecordingKind)
-        const firstStart = (kind: RecordingKind) => getPageSegments().find(segment => segment.kind === kind)?.startedAt ?? Infinity
-        return kinds.find(kind => firstStart(kind) <= wallClock - RECENT_CLIP_SECONDS * 1000)
-            ?? kinds.reduce<RecordingKind | undefined>((best, kind) => best === undefined || firstStart(kind) < firstStart(best) ? kind : best, undefined)
-    }
     let clipPending = false
     const saveClip = async () => {
         if (clipPending || !extensionAvailable()) return
         const pressedAt = Date.now()
-        const kind = chooseClipKind(pressedAt)
-        if (!kind) {
+        const kinds = CLIP_KIND_ORDER.filter(isRecordingKind)
+        if (kinds.length === 0) {
             showBarHint('録画中に使えます（録画した場面は、プレイバックや録画一覧から保存できます）')
             return
         }
         clipPending = true
         setClipWaiting(true)
         try {
-            // 押した時までの分が保存されるのを待つ（録画が止まった時は、止めた時の分が保存されるのを少し待ってから、それまでの分で作る）
-            const read = () => getTimelineForSegments(recentSegmentIds(kind, pressedAt, RECENT_CLIP_SECONDS))
+            // 押した時までの分が保存されるのを待つ（録画が止まった種類は、止めた時の分が保存されるのを少し待ってから、それまでの分で作る）
+            const read = () => getTimelineForSegments(kinds.flatMap(kind => recentSegmentIds(kind, pressedAt, RECENT_CLIP_SECONDS)))
             let segments = await read()
+            const waiting = () => kinds.filter(kind => recordedUntil(segments, kind) < pressedAt)
             const deadline = Date.now() + CLIP_WAIT_LIMIT_MS
             let checksAfterStop = 0
-            while (recordedUntil(segments, kind) < pressedAt && Date.now() < deadline) {
-                if (!isRecordingKind(kind) && ++checksAfterStop > 2) break
+            while (waiting().length > 0 && Date.now() < deadline) {
+                if (!waiting().some(isRecordingKind) && ++checksAfterStop > 2) break
                 await sleep(CLIP_POLL_MS)
                 segments = await read()
             }
-            const file = await buildRecentClipFile(segments, kind, pressedAt, RECENT_CLIP_SECONDS, getFragmentBlobs)
-            if (!file) {
-                showBarHint('保存できる録画がありませんでした')
-                return
+            const saved: { kind: RecordingKind, seconds: number }[] = []
+            for (const kind of kinds) {
+                const file = await buildRecentClipFile(segments, kind, pressedAt, RECENT_CLIP_SECONDS, getFragmentBlobs)
+                if (!file) continue
+                await downloadBlob(file.blob, sceneFileName([userName, title].filter(Boolean).join('_'), kind, file.startedAt, 'mp4'))
+                saved.push({ kind, seconds: Math.round(file.duration) })
             }
-            await downloadBlob(file.blob, sceneFileName([userName, title].filter(Boolean).join('_'), kind, file.startedAt, 'mp4'))
-            showBarHint(`${Math.round(file.duration)}秒の動画を保存しました`)
+            if (saved.length === 0) showBarHint('保存できる録画がありませんでした')
+            else if (saved.length === 1) showBarHint(`${saved[0].seconds}秒の動画を保存しました`)
+            else showBarHint(`${saved.length}本の動画を保存しました（${saved.map(({ kind, seconds }) => `${KIND_LABELS[kind]} ${seconds}秒`).join('・')}）`)
         } catch (error) {
             console.log('直前の動画を保存できませんでした:', error)
             showBarHint('動画を保存できませんでした')
@@ -784,6 +786,8 @@ export default async () => {
         togglePlayback: isPlaybackSupported() && segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? togglePlayback : null,
         // 直前1分も、mp4 の録画だけ（断片をつないで切り出すため）
         saveClip: segmentFormatOf(getRecordingMimeType() ?? '') === 'fmp4' ? () => void saveClip() : null,
+        // スクリーンショット（コメントなし・コメントあり。画面録画中は、画面録画の映像からも1枚）
+        screenshot: () => void getScreenShotAndDownload(screenVideoTrack()),
         // 録画一覧のページを、この番組を選んだ状態で開く
         openRecordings: () => {
             if (!extensionAvailable()) return

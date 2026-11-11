@@ -1,5 +1,37 @@
 
 import { downloadBlob } from './download'
+import { getOutputSize } from './frame-pipeline'
+import { COMMENT_CANVAS_SELECTOR } from './comment-compositor'
+
+// Chrome にしかない API なので TypeScript の型定義にない。使う分だけ宣言する
+declare const MediaStreamTrackProcessor: {
+    new (init: { track: MediaStreamTrack }): { readable: ReadableStream<VideoFrame> }
+} | undefined
+
+// 映像のトラックから、今の1コマを canvas に描く（取れなければ null）
+const FRAME_WAIT_MS = 2000
+const grabFrame = async (track: MediaStreamTrack) => {
+    if (typeof MediaStreamTrackProcessor === 'undefined' || track.readyState !== 'live') return null
+    const clone = track.clone()
+    const reader = new MediaStreamTrackProcessor({ track: clone }).readable.getReader()
+    try {
+        const result = await Promise.race([reader.read(), new Promise<null>(resolve => setTimeout(() => resolve(null), FRAME_WAIT_MS))])
+        const frame = result?.value
+        if (!frame) return null
+        try {
+            const canvas = document.createElement('canvas')
+            canvas.width = frame.displayWidth
+            canvas.height = frame.displayHeight
+            canvas.getContext('2d')?.drawImage(frame, 0, 0)
+            return canvas
+        } finally {
+            frame.close()
+        }
+    } finally {
+        reader.cancel().catch(() => {})
+        clone.stop()
+    }
+}
 
 const getProgramData = () => {
     // ユーザー名を取得（ページの構造が変わって取れなくても、録画は続けられるように空にする）
@@ -67,31 +99,56 @@ const captureThumbnail = (video: HTMLVideoElement | null, width = 160): string |
 // 動画の形式からダウンロード時の拡張子を決める（webm で録画した環境以外は mp4）
 const getVideoExtension = (type: string) => type.startsWith('video/webm') ? 'webm' : 'mp4'
 
-// 動画のスクリーンショットを取得してダウンロードする関数
-const getScreenShotAndDownload = async () => {
-    const video = document.querySelector("video") as HTMLVideoElement
-    if (!video) return
-    if (video.readyState < 2) return // 動画が準備完了していない場合は何もしない
+// 録画バーのスクリーンショット: 今の場面を、動画の解像度の PNG で保存する
+// 「コメントなし」（動画だけ）と「コメントあり」（流れているコメントを重ねたもの。録画の「コメントあり」と同じ大きさ）の2枚。
+// プレイヤーでコメントを非表示にしている時は、コメントありは同じ絵になるので保存しない。
+// ゲームやギフトの演出は、ページから絵として読み出せない（別のサイトの画像を使っているため）。
+// 画面録画中（screenTrack: 画面録画の映像）は、その映像から1コマを切り出して「画面録画」の1枚も保存する（演出も入る）
+const getScreenShotAndDownload = async (screenTrack?: MediaStreamTrack) => {
+    const video = document.querySelector('video')
+    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return
 
     try {
-        const canvas = document.createElement("canvas")
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
-        const ctx = canvas.getContext("2d")
-        if (!ctx) throw new Error("Canvas 2D context not available")
-
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-
-        // toBlobの使用（非同期でUIフリーズ回避）
-        canvas.toBlob((blob) => {
-            if (!blob) return
-
-            const { userName, title } = getProgramData()
-            const timeString = formatDateForFileName(Date.now())
-            void downloadBlob(blob, `${[userName, title, timeString].filter(Boolean).join('_')}.png`)
-        }, "image/png")
+        // 画面録画の1コマは、ほかの2枚を描く間に取る（なるべく同じ瞬間になるように）
+        const screenShot = screenTrack ? grabFrame(screenTrack).catch(() => null) : Promise.resolve(null)
+        const draw = (width: number, height: number, paint: (ctx: CanvasRenderingContext2D) => void) => {
+            const canvas = document.createElement('canvas')
+            canvas.width = width
+            canvas.height = height
+            const ctx = canvas.getContext('2d')
+            if (!ctx) throw new Error('Canvas 2D context not available')
+            paint(ctx)
+            return canvas
+        }
+        // 先に両方を描いてから保存する（保存している間に、場面が進まないように）
+        const shots = [{ canvas: draw(video.videoWidth, video.videoHeight, ctx => ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight)), suffix: '' }]
+        const commentCanvas = document.querySelector<HTMLCanvasElement>(COMMENT_CANVAS_SELECTOR)
+        if (commentCanvas?.checkVisibility()) {
+            // 縦横比はコメントの canvas（＝プレイヤーの表示領域）に合わせ、動画は収まるように中央に描く（録画の「コメントあり」と同じ）
+            const { width, height } = getOutputSize(video.videoHeight, commentCanvas)
+            shots.push({
+                canvas: draw(width, height, (ctx) => {
+                    ctx.fillStyle = '#000'
+                    ctx.fillRect(0, 0, width, height)
+                    const scale = Math.min(width / video.videoWidth, height / video.videoHeight)
+                    const w = video.videoWidth * scale
+                    const h = video.videoHeight * scale
+                    ctx.drawImage(video, (width - w) / 2, (height - h) / 2, w, h)
+                    ctx.drawImage(commentCanvas, 0, 0, width, height)
+                }),
+                suffix: '_コメントあり',
+            })
+        }
+        const screen = await screenShot
+        if (screen) shots.push({ canvas: screen, suffix: '_画面録画' })
+        const { userName, title } = getProgramData()
+        const name = [userName, title, formatDateForFileName(Date.now())].filter(Boolean).join('_')
+        for (const { canvas, suffix } of shots) {
+            const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+            if (blob) await downloadBlob(blob, `${name}${suffix}.png`)
+        }
     } catch (err) {
-        console.error("スクリーンショット処理中にエラー:", err)
+        console.error('スクリーンショット処理中にエラー:', err)
     }
 }
 

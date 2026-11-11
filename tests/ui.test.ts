@@ -16,6 +16,7 @@ const options = (overrides: Partial<Parameters<typeof insertRecorderBar>[0]> = {
     togglePlayback: null,
     openRecordings: vi.fn(),
     saveClip: null,
+    screenshot: vi.fn(),
     ...overrides,
 })
 
