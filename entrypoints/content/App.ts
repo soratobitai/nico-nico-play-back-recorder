@@ -238,7 +238,11 @@ export default async () => {
         if (sessionActive && recorders.size === 0 && restartPending.size === 0) stopSession('stopped')
     }
 
+    // 選んだ種類（コメントなし・コメントあり）を録っている録画か（停止中に「画面録画」だけを始めた時は false。
+    // その間は、録画バーのチップで種類を切り替えても、選ぶだけで録り始めない）
+    let kindsActive = false
     const startEnabledKinds = () => {
+        kindsActive = true
         for (const kind of enabledKinds()) startKind(kind, () => createSourceFor(kind))
     }
 
@@ -310,6 +314,7 @@ export default async () => {
         diagEvent('session:stop', { state })
         startAttempt++
         sessionActive = false
+        kindsActive = false
         clearInterval(splitTimer)
         clearInterval(limitTimer)
         clearTimeout(restartTimer)
@@ -373,7 +378,7 @@ export default async () => {
     // 選んだ種類を先に始めてから、外した種類を止める（外した種類が最後に録っていた種類だと、
     // 止めた時に録画全体が終わり、その後で選んだ種類だけが録画の外で始まってしまうので）
     const applyKinds = () => {
-        if (!sessionActive) return
+        if (!sessionActive || !kindsActive) return
         const enabled = enabledKinds()
         for (const kind of enabled) {
             if (!restartPending.has(kind)) startKind(kind, () => createSourceFor(kind))
@@ -461,7 +466,7 @@ export default async () => {
         setKindRecording({ video: recording('video'), comments: recording('comments') })
     }
 
-    // 画面録画を始める（他の種類と並行して録る。停止中なら、設定で選んだ種類も一緒に録り始める）
+    // 画面録画を始める（他の種類と並行して録る。停止中なら、画面録画だけを始める）
     // 始められたら true（共有の確認でキャンセルされた場合などは false）
     let screenStarting = false // 共有の確認を出している間（続けて押されても、2つ目の取り込みを始めない）
     const startScreen = async (): Promise<boolean> => {
@@ -482,9 +487,11 @@ export default async () => {
             screenStarting = false
         }
 
-        const wasActive = sessionActive
+        // 録画開始を待っている時（オートスタート・録画開始のボタンで、動画の準備を待っている「準備中」）は、
+        // 選んだ種類も、動画が再生できるようになったら加える（待っていた録画開始は、ここで始めた録画に置き換わる）
+        const withKinds = !sessionActive && stateManager.getState() === 'preparing'
         beginSession()
-        if (!wasActive) startEnabledKinds()
+        if (withKinds) addKindsWhenVideoReady()
         const started = startKind('screen', () => source)
         if (!started) {
             source.stop()
@@ -492,6 +499,24 @@ export default async () => {
         }
         refreshRecordingIndicators()
         return started
+    }
+
+    // 動画が再生できるようになったら、選んだ種類を今の録画に加える（準備中に「画面録画」を押した時。
+    // 再生される前に録り始めると、録画（MediaRecorder）を始められないため）。録画を止めたら加えない
+    const VIDEO_READY_POLL_MS = 500
+    const addKindsWhenVideoReady = () => {
+        const id = sessionId
+        const tryAdd = () => {
+            if (!sessionActive || sessionId !== id || kindsActive) return true
+            if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA || video.paused || video.currentTime <= 0) return false
+            startEnabledKinds()
+            refreshRecordingIndicators()
+            return true
+        }
+        if (tryAdd()) return
+        const timer = setInterval(() => {
+            if (tryAdd()) clearInterval(timer)
+        }, VIDEO_READY_POLL_MS)
     }
 
     // 録画バーの画面録画のボタン。録っていれば画面録画だけやめ、録っていなければ始める
