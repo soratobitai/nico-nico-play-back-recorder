@@ -193,6 +193,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
         running.text.textContent = counting ? '取り込む録画を調べています…' : `以前の録画を取り込んでいます（${progress.done} / ${progress.total}本）`
         if (progress.bytesTotal > 0) running.bar.value = progress.bytesDone / progress.bytesTotal
         running.detail.textContent = counting ? '' : `${formatBytes(progress.bytesDone)} / ${formatBytes(progress.bytesTotal)}${progress.title ? `・${progress.title}` : ''}`
+        running.detail.title = running.detail.textContent
         running.cancel.textContent = cancelling ? 'やめています…' : 'やめる'
         // disabled にすると、キーボードで押した人のフォーカスが外れるので、押せないように見せるだけにする（もう一度押しても何もしない）
         running.cancel.setAttribute('aria-disabled', String(cancelling))
@@ -222,7 +223,7 @@ const setupLegacyImport = ({ notice, status, dialog, usageBytes, formatBytes, re
                 announce = '以前の録画を取り込んでいます'
                 const cancel = button('やめる', () => void cancelImport())
                 cancel.title = '取り込んでいる1本を取り込み終えてから、やめます（残りは後で取り込めます）'
-                running = { text: element('p', 'legacy-text'), bar: progressBar(null), detail: element('p', 'legacy-detail'), cancel }
+                running = { text: element('p', 'legacy-text'), bar: progressBar(null), detail: element('p', 'legacy-detail is-line'), cancel }
                 parts.push(running.text, running.bar, running.detail, raisedNote(), modeNote(), running.cancel)
                 updateRunning(state.progress, state.cancelling)
                 break
