@@ -16,6 +16,7 @@ import { requestOpenLibrary } from '../../utils/library/open-library'
 import { isExtensionContextValid } from '../../utils/library/client'
 import type { RecordingKind } from '../../utils/library/db'
 import { startDiagnostics, diagEvent } from '../../utils/diagnostics'
+import { watchPlaybackStability } from '../../utils/playback-stability'
 import SettingsModal from './settings-modal'
 import './settings-modal.css'
 
@@ -23,8 +24,15 @@ import './settings-modal.css'
 
 const stateManager = new RecordingStateManager()
 
-// 録画を区切る間隔（内部の区切り。プレイバックと録画一覧ではつながって再生される）
-const SEGMENT_INTERVAL_MS = 5 * 60 * 1000
+// 録画を区切る間隔（内部の区切り。プレイバックと録画一覧ではつながって再生される）。録画の形式ごと
+// 区切るたびに録画（エンコーダー）を作り直す。低スペックの PC では、作り直す瞬間にニコ生のプレイヤーが一瞬止まり、
+// 通信モードが「低遅延重視」だと、止まっては先へ飛ぶのを繰り返すことがあるので、mp4 では長くする
+// （mp4 は数秒ごとの断片の途中から再生でき、古い録画も断片ごとに消せるので、短く区切らなくてよい）。
+// 長く録り続けると、音声（音の出力の時計で進む）と映像（PC の時計で進む）のわずかな差がたまることがあるので、念のため区切る。
+// webm（mp4 で録れない環境）は途中から再生できず、区間ごとにしか消せないので、短く区切る
+const SEGMENT_INTERVAL_MS = { fmp4: 30 * 60 * 1000, opaque: 5 * 60 * 1000 } as const
+// 録り始める前に、プレイヤーの再生が落ち着くのを待つ上限（utils/playback-stability.ts。落ち着かなくても、これだけ待ったら録り始める）
+const STABLE_WAIT_MAX_MS = 30 * 1000
 // データを受け取って保存する間隔
 const SAVE_CHUNK_INTERVAL_MS = 3 * 1000
 // 容量の上限を超えた分を消す間隔
@@ -121,6 +129,15 @@ export default async () => {
     // 調査用の記録（診断版だけ）
     startDiagnostics(video, { programId, recordVideo, recordWithComments, resolutionMode, fixedResolutionHeight, mimeType: getRecordingMimeType() })
     const videoCapture = createVideoCapture(video)
+    // 再生が落ち着いているか（ページを開いた直後などに、録り始めるのを待つ）
+    const playbackStability = video ? watchPlaybackStability(video) : null
+    // 再生が落ち着くまで待つ（待つのをやめた時・取り消された時は false。cancelled が true になったら取り消す）
+    const waitForStablePlayback = async (cancelled: () => boolean) => {
+        const startedAt = Date.now()
+        const ready = await (playbackStability?.waitUntilStable(STABLE_WAIT_MAX_MS, cancelled) ?? Promise.resolve(!cancelled()))
+        if (ready) diagEvent('start:stable', { waitedMs: Date.now() - startedAt, stable: playbackStability?.isStable() ?? null }) // 診断版だけ
+        return ready
+    }
 
     // ---- 種類ごとの録画 ----
 
@@ -159,9 +176,19 @@ export default async () => {
         return kinds.length > 0 ? kinds : ['video']
     }
 
+    // 録画の音声を Web Audio に通せるようになったら（ページを操作して、ブラウザの自動再生の決まりが解けた時）、
+    // 元の音声で録っている区間を区切って、続きは Web Audio の音声で録る（recording-source.ts の createContinuousAudio。
+    // 元の音声のままだと、プレイヤーが読み込み待ちで止まるたびに音が先にずれていく。区切りの間隔が長いので、待たずに区切る）
+    const switchToContinuousAudio = (kind: VideoKind) => {
+        if (!sessionActive || !recorders.has(kind)) return
+        diagEvent('audio:switch', { kind }) // 診断版だけ
+        staggered([kind], k => recorders.get(k)?.split())
+    }
+
     const createSourceFor = (kind: VideoKind): RecordingSource => {
-        if (kind === 'video') return createVideoSource(videoCapture, video, fixedHeight())
-        const source = createCommentSource(videoCapture, video, fixedHeight())
+        const onContinuousAudio = () => switchToContinuousAudio(kind)
+        if (kind === 'video') return createVideoSource(videoCapture, video, fixedHeight(), onContinuousAudio)
+        const source = createCommentSource(videoCapture, video, fixedHeight(), onContinuousAudio)
         if (!source) throw new Error('この環境ではコメントありで録画できません')
         return source
     }
@@ -332,7 +359,7 @@ export default async () => {
             diagEvent('split')
             console.log("🔄 録画を区切ります...")
             staggered(WATCH_ORDER.filter(kind => recorders.has(kind)), kind => recorders.get(kind)?.split())
-        }, SEGMENT_INTERVAL_MS)
+        }, SEGMENT_INTERVAL_MS[segmentFormatOf(getRecordingMimeType() ?? '')])
         limitTimer = setInterval(enforceStorageLimit, ENFORCE_LIMIT_INTERVAL_MS)
     }
 
@@ -540,9 +567,12 @@ export default async () => {
     const VIDEO_READY_POLL_MS = 500
     const addKindsWhenVideoReady = () => {
         const id = sessionId
+        const waitingSince = Date.now()
         const tryAdd = () => {
             if (!sessionActive || sessionId !== id || kindsActive) return true
             if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA || video.paused || video.currentTime <= 0) return false
+            // 再生が落ち着くまで待つ（落ち着かなくても、STABLE_WAIT_MAX_MS 待ったら加える）
+            if (playbackStability && !playbackStability.isStable() && Date.now() - waitingSince < STABLE_WAIT_MAX_MS) return false
             kindsWaiting = false
             if (startEnabledKinds() === 0) showBarHint('コメントなし・コメントありの録画を始められませんでした（画面録画は続けています）')
             refreshRecordingIndicators()
@@ -603,13 +633,17 @@ export default async () => {
             // 既に録画中なら二重に開始しない（待っている間に画面録画のボタンで始まった場合など）。止められていたら始めない
             if (sessionActive || !isCurrent()) return
 
-            beginSession()
-            startEnabledKinds()
-            if (recorders.size === 0) {
-                // 録画開始に失敗した場合は状態を停止中に設定
-                stopSession('stopped')
-                clickReloadButton("録画開始に失敗")
-            }
+            // 再生が落ち着いてから録り始める（待っている間は準備中のまま。止められた・画面録画のボタンで始まったら、やめる）
+            void waitForStablePlayback(() => sessionActive || !isCurrent()).then((ready) => {
+                if (!ready || sessionActive || !isCurrent()) return
+                beginSession()
+                startEnabledKinds()
+                if (recorders.size === 0) {
+                    // 録画開始に失敗した場合は状態を停止中に設定
+                    stopSession('stopped')
+                    clickReloadButton("録画開始に失敗")
+                }
+            })
         }
 
         const waitForVideoReady = (video: HTMLVideoElement, callback: () => void) => {
@@ -865,7 +899,8 @@ export default async () => {
                 } else {
                     // 動画の準備は録画開始ボタンを押した時に待つので、ここでは待たずに開始できる状態にする
                     // （動画が一時停止中だと準備完了を検知できず、準備中のまま固まっていた）
-                    if (!sessionActive) stateManager.setState('stopped')
+                    // （すでに録画開始のボタンが押されて、再生が落ち着くのを待っている時は、準備中のまま）
+                    if (!startPending()) stateManager.setState('stopped')
                 }
                 await new Promise(resolve => setTimeout(resolve, 1000))
 

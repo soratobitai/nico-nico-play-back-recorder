@@ -258,7 +258,7 @@ const scheduleFit = () => {
 const STATE_LABELS: Record<BarState, string> = { preparing: '準備中', recording: '録画中', stopped: '停止中', error: '保存エラー' }
 // 文字を隠して丸やアイコンだけの時のための説明
 const STATE_TITLES: Record<BarState, string> = {
-    preparing: '準備中: 動画の読み込みを待っています',
+    preparing: '準備中: 動画の読み込みと、再生が落ち着くのを待っています',
     recording: '録画中',
     stopped: '停止中',
     error: `保存エラー: ${ERROR_MESSAGE}`,
@@ -287,7 +287,7 @@ const setRecorderState = (next: BarState) => {
     recordButton.classList.toggle('is-stop', recording)
     recordButton.querySelector('.npr-record-icon')!.innerHTML = recording ? ICONS.stop : ICONS.record
     recordButton.querySelector('.npr-record-label')!.textContent = recording ? '停止' : '録画開始'
-    recordButton.title = recording ? '録画を止めます' : next === 'preparing' ? '動画の読み込みを待っています' : '録画を始めます'
+    recordButton.title = recording ? '録画を止めます' : next === 'preparing' ? '動画の読み込みと、再生が落ち着くのを待っています' : '録画を始めます'
     updateClipButton()
 }
 

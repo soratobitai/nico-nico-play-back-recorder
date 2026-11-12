@@ -361,7 +361,7 @@ const getTimelineForSegments = (segmentIds: string[]) => withTransaction([SEGMEN
     return toTimeline(tx, segments.filter((s): s is SegmentRecord => !!s))
 })
 
-// 断片の時刻を、前の断片の続きに直す（これまでに保存した録画では、5分ごとに区切って止めた時の最後の断片を、
+// 断片の時刻を、前の断片の続きに直す（これまでに保存した録画では、区切って止めた時の最後の断片を、
 // その中のサンプルのない音声のトラックの時刻 0 から数えて、区間の始めから続く長い断片として保存していた。
 // 時間軸の上で区間の始めに並んで、再生する位置や切り出す範囲を間違えないように）
 const repairTimings = (fragments: FragmentRecord[]) => fragments.map((fragment, i) => {
@@ -409,7 +409,7 @@ const usageIn = async (tx: IDBTransaction) => {
 
 const getUsage = () => withTransaction([SEGMENTS], 'readonly', usageIn)
 
-// 録画中の区間は5分ごとに区切られ、数秒ごとに書き込まれるので、これだけ書き込みのない区間は録画を終えている
+// 録画中の区間は数秒ごとに書き込まれるので、これだけ書き込みのない区間は録画を終えている
 const STALE_SEGMENT_IDLE_MS = 5 * 60 * 1000
 // 録画一覧から、断片のない区間を消すまでの時間（ニコ生側に一時保存した続きを、次にニコ生のページを開いた時に移せるように）
 const EMPTY_SEGMENT_IDLE_MS = 3 * 24 * 60 * 60 * 1000

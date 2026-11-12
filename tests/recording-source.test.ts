@@ -190,6 +190,28 @@ describe('録画の音声（再生が止まっている間も途切れない音�
         audio.stop()
     })
 
+    it('元の音声で録り始めた後に Web Audio が動き出したら、1回だけ知らせる（区切って Web Audio の音声に切り替えるため）', () => {
+        FakeAudioContext.startState = 'suspended'
+        const onContinuous = vi.fn()
+        const audio = createContinuousAudio(new FakeTrack('audio') as unknown as MediaStreamTrack, onContinuous)
+        const context = FakeAudioContext.instances[0] as FakeAudioContext & { onstatechange?: () => void }
+
+        audio.track() // 元の音声で録り始める
+        context.state = 'running'
+        context.onstatechange?.()
+        context.onstatechange?.()
+        expect(onContinuous).toHaveBeenCalledTimes(1)
+        expect(audio.track()).toBe(context.output)
+
+        // 録り始める前に動き出した時は、知らせない（最初から Web Audio の音声で録る）
+        const before = vi.fn()
+        createContinuousAudio(new FakeTrack('audio') as unknown as MediaStreamTrack, before)
+        const other = FakeAudioContext.instances[1] as FakeAudioContext & { onstatechange?: () => void }
+        other.state = 'running'
+        other.onstatechange?.()
+        expect(before).not.toHaveBeenCalled()
+    })
+
     it('音声のない動画では、Web Audio を作らない', () => {
         const audio = createContinuousAudio(undefined)
 

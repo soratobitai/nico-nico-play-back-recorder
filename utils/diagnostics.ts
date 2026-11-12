@@ -26,7 +26,8 @@ type Row = {
     loopMaxMs: number // ページの処理の詰まり（50ms ごとのタイマーが、どれだけ遅れたか）の最大
     longTaskMs: number // 50ms を超える処理の合計
     pipes: Record<string, PipelineStats> // 描き直しの処理ごと
-    play?: { ct: number, rate: number, paused: boolean, dropped: number, frames: number, avgVideoLagMs: number, maxVideoLagMs: number }
+    // ahead: 先読みしてある秒数（再生位置から、読み込んである所の終わりまで）。live: ライブの先端からの遅れ（秒）
+    play?: { ct: number, rate: number, paused: boolean, dropped: number, frames: number, avgVideoLagMs: number, maxVideoLagMs: number, ahead: number, live: number | null }
     audio?: { samples: number, sampleRate: number, gapMs: number }
     frags: FragmentRow[]
 }
@@ -62,6 +63,17 @@ const pruneSessions = async () => {
     const sessions = [...new Set(keys.map(k => k.slice(0, k.lastIndexOf(':'))))].sort()
     const old = new Set(sessions.slice(0, Math.max(0, sessions.length - KEEP_SESSIONS)))
     if (old.size > 0) await chrome.storage.local.remove(keys.filter(k => old.has(k.slice(0, k.lastIndexOf(':')))))
+}
+
+// 先読みしてある秒数と、ライブの先端からの遅れ（「低遅延重視」では、先読みが少ないと止まりやすい）
+const bufferOf = (video: HTMLVideoElement) => {
+    const ct = video.currentTime
+    let ahead = 0
+    for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) <= ct + 0.1 && video.buffered.end(i) > ct) ahead = video.buffered.end(i) - ct
+    }
+    const live = video.seekable.length ? video.seekable.end(video.seekable.length - 1) - ct : null
+    return { ahead: +ahead.toFixed(2), live: live === null ? null : +live.toFixed(2) }
 }
 
 // 記録を始める（ニコ生のページで、番組を開いた時に1回）
@@ -138,6 +150,7 @@ const start = (video: HTMLVideoElement | null, info: Record<string, unknown>) =>
             frames: (quality?.totalVideoFrames ?? 0) - (lastQuality?.totalVideoFrames ?? 0),
             avgVideoLagMs: lagCount ? Math.round(lagSum / lagCount) : 0,
             maxVideoLagMs: Math.round(lagMax),
+            ...bufferOf(video),
         }
         lastQuality = quality
         lagSum = 0

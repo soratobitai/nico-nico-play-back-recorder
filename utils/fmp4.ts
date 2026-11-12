@@ -8,7 +8,7 @@ type Tracks = Map<number, TrackInfo>
 
 // 断片の中の、1つのトラック（映像・音声）の情報。時刻を書き換えるために moof の中での位置も持つ
 // startsWithSync: 最初のサンプルが、それだけで表示できるフレーム（キーフレーム）か
-// sampleCount: サンプルの数（0 のこともある。Chrome の MediaRecorder は、5分ごとに区切って止めた時の最後の断片に、
+// sampleCount: サンプルの数（0 のこともある。Chrome の MediaRecorder は、区切って止めた時の最後の断片に、
 //   サンプルのない音声のトラックを、時刻 0 で入れることがある。時刻の計算には使わない）
 type TrackFragment = { trackId: number, tfdtOffset: number, tfdtVersion: number, baseTime: number, duration: number, startsWithSync: boolean, sampleCount: number }
 type MoofInfo = { sequenceOffset: number, trackFragments: TrackFragment[] }

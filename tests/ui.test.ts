@@ -140,7 +140,7 @@ describe('録画バー', () => {
     it('状態と録画ボタンには説明を付ける（狭い時は文字を隠して丸やアイコンだけになるため）', () => {
         insertRecorderBar(options())
         setRecorderState('preparing')
-        expect($('.npr-status').title).toContain('動画の読み込みを待っています')
+        expect($('.npr-status').title).toContain('再生が落ち着くのを待っています')
 
         setRecorderState('recording')
         expect($('.npr-status').title).toBe('録画中')
